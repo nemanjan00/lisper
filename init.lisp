@@ -13,6 +13,9 @@
 (load-file "lisp/tui-render.lisp")
 (load-file "lisp/tui-input.lisp")
 
+;; Self-serve agent tools (todo list et al.).
+(load-file "lisp/tools.lisp")
+
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
 (tui-start)
