@@ -75,7 +75,7 @@ user's terminal forever."
 (todo-load)
 
 (lisping-core::register-tool
- "todo" "Manage a persistent todo list (state/todos.txt). Actions: add (needs text), done (needs index, 1-based), list, clear. Items survive restarts."
+ "todo" "Manage the persistent todo list in state/todos.txt (survives restarts). add: append an open item (needs text). done: mark an item done (needs index, 1-based as shown by list). list: numbered items, [ ] open / [x] done. clear: remove all items. Returns a confirmation line; list returns the items."
  (lisping-core::obj "type" "object"
         "properties" (lisping-core::obj
                       "action" (lisping-core::obj "type" "string"
