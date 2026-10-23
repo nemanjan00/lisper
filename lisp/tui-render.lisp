@@ -445,11 +445,11 @@ and empty messages are skipped."
         (panes-draw *panes-canvas*)
         (replace (uigrid-chars g) (uigrid-chars *panes-canvas*))
         (replace (uigrid-attrs g) (uigrid-attrs *panes-canvas*))
-        (tui-draw-input g ui pane-h w)
         (tui-draw-status g ui (1- h) w)
-        (let* ((prompt-len (length (if (tui-ui-prefix ui) "*> " "> ")))
-               (row (1- h))
-               (col (min w (+ prompt-len *tui-input-cursor* 1)))
+        (let* ((row (1- h))
+               ;; TUI-DRAW-INPUT returns the cursor column: with
+               ;; horizontal scroll it is not prompt-len + cursor + 1.
+               (col (tui-draw-input g ui pane-h w))
                (full (or (null *tui-prev-grid*)
                          (/= (uigrid-w *tui-prev-grid*) w)
                          (/= (uigrid-h *tui-prev-grid*) h)))
