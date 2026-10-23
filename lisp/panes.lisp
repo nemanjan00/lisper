@@ -625,7 +625,7 @@ itself here or vanishes on UI restart."
                          (format nil "layout set: ~S" *layout*))
                   "refused: layout has unknown panes (create them first)")))
       (:reset (setf *layout* '(:hsplit 0.78 (leaf "chat") (leaf "todo")))
-              (panes-save) (panes-mark-all-dirty) (tui-dirty)
+              (panes-save) (tui-drop-frame) (tui-dirty)
               (format nil "layout reset: ~S" *layout*)))))
 
 (lisping-core::register-tool
