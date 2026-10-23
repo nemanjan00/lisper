@@ -221,9 +221,11 @@ embedded newlines must never reach the grid."
                 (t
                  (when full (incf *tui-frames-full*))
                  ;; One synchronized update per frame: the terminal shows
-                 ;; it atomically, so the cursor does not flicker.
-                 (let ((frame (format nil "~C[?2026h~A~C[~D;~DH~C[?2026l"
-                                      #\Esc body #\Esc row col #\Esc)))
+                 ;; it atomically, so the cursor does not flicker. ?25h
+                 ;; re-shows the cursor hidden by ?25l at UI start — it
+                 ;; must be inside the sync wrap, after positioning.
+                 (let ((frame (format nil "~C[?2026h~A~C[~D;~DH~C[?25h~C[?2026l"
+                                      #\Esc body #\Esc row col #\Esc #\Esc)))
                    (incf *tui-bytes-total* (length frame))
                    (tty-write frame))))
           (setf *tui-prev-grid* g
