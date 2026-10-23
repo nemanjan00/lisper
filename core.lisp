@@ -1114,13 +1114,19 @@ try again, so the session can't get stuck with a history that never fits."
         while item
         do (add-message (inbox-message item))))
 
+(defun usage-number (&rest keys)
+  "A number from *LAST-USAGE* following KEYS, or NIL."
+  (let ((v *last-usage*))
+    (dolist (k keys (and (integerp v) v))
+      (setf v (and (hash-table-p v) (gethash k v))))))
+
 (defun run-turn ()
   (loop
     (take-queued-messages)
-    (emit :thinking :text (format nil "~A is thinking...~@[ (context ~:D tokens)~]" *model*
-                                  (and (hash-table-p *last-usage*)
-                                       (integerp (gethash "prompt_tokens" *last-usage*))
-                                       (gethash "prompt_tokens" *last-usage*))))
+    (emit :thinking :text (format nil "~A is thinking...~@[ (context ~:D tokens~@[, ~:D cached~])~]" *model*
+                                  (usage-number "prompt_tokens")
+                                  (or (usage-number "prompt_tokens_details" "cached_tokens")
+                                      (usage-number "cached_tokens"))))
     (let* ((message (complete))
            (text (gethash "content" message))
            (calls (gethash "tool_calls" message)))
