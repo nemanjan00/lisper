@@ -14,7 +14,7 @@
            ;; persistence
            #:persist #:save-form #:commit #:restart-image #:*boot-errors*
            ;; conversation and I/O
-           #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit #:default-emit
+           #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
            ;; settings
            #:*model* #:*api-base* #:*max-tokens* #:*eval-timeout* #:*output-limit* #:*root*
@@ -469,12 +469,20 @@ function updates the tool."
   "Queue TEXT as a message from the user."
   (sb-concurrency:send-message *inbox* text))
 
-(defun default-emit (event)
+(defun fallback-emit (event)
+  "Plain terminal output, used only when *EMIT* itself fails."
+  (format t "~&[~(~A~)] ~A~%" (getf event :type) (or (getf event :text) event))
+  (finish-output))
+
+;;; The terminal display lives in the unlocked LISPING package, so the AI can
+;;; redefine it like any of its own functions.
+(defun lisping::terminal-emit (event)
   "Print EVENT, a plist with :type and fields, to the terminal."
   (let ((type (getf event :type))
         (text (getf event :text)))
     (case type
       (:assistant (format t "~&~%~A~%" text))
+      (:thinking (format t "~&~C[2m~A~C[0m~%" #\Esc text #\Esc))
       (:tool-call
        (let ((args (getf event :args)))
          (format t "~&~%[~A]~%~A~%" (getf event :name)
@@ -485,20 +493,19 @@ function updates the tool."
        (format t "~&~A~%" (if (> (length text) 1500)
                               (format nil "~A~%... [~D characters]" (subseq text 0 1500) (length text))
                               text)))
-      (:thinking (format t "~&~C[2m~A~C[0m~%" #\Esc text #\Esc))
       (t (format t "~&[~(~A~)] ~A~%" type (or text event)))))
   (finish-output))
 
-(defvar *emit* 'default-emit
+(defvar *emit* 'lisping::terminal-emit
   "Function called with every event (a plist with :type). Replace it to drive your own UI.")
 
 (defun emit (type &rest fields)
-  "Send an event to *EMIT*. Falls back to the terminal if *EMIT* fails."
+  "Send an event to *EMIT*. Falls back to plain terminal output if *EMIT* fails."
   (let ((event (list* :type type fields)))
     (handler-case (funcall *emit* event)
       (serious-condition (c)
-        (default-emit event)
-        (default-emit (list :type :error :text (format nil "*emit* failed: ~A" c)))))))
+        (fallback-emit event)
+        (fallback-emit (list :type :error :text (format nil "*emit* failed: ~A" c)))))))
 
 (defun add-message (message)
   (setf *messages* (append *messages* (list message)))
@@ -520,8 +527,8 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *system-prompt*: this text. A string, or a function returning one. You may rewrite it.
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context.
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
-- *emit*: function receiving every event as a plist (:type :assistant/:thinking/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). default-emit prints to the terminal.
-- *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events by wrapping *emit* (keep calling default-emit too, so the terminal still works).
+- *emit*: function receiving every event as a plist (:type :assistant/:thinking/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
+- *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events by wrapping *emit* (keep calling terminal-emit too, so the terminal still works).
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
 Persistence. Your image restarts sometimes, so keep what matters:
