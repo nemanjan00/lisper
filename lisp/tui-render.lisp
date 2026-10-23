@@ -454,7 +454,7 @@ the top."
     (let* ((now (multiple-value-list (decode-universal-time (get-universal-time))))
            (time (format nil "~2,'0d:~2,'0d " (nth 2 now) (nth 1 now)))
            (hint (if (tui-ui-prefix ui)
-                     "C-b cancel | q quit | r redraw | PgUp/PgDn scroll"
+                     "C-b cancel | q quit | r redraw | Left/Right pane | 1-9 pane"
                      "C-b prefix")))
       (ui-grid-write g (max 1 (- w (length hint) (length time) 1)) y
                      (concatenate 'string hint " " time) attr w))))
