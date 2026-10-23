@@ -817,6 +817,10 @@ Rules:
                                             :parameters (tool-schema tool))))
           'vector))
 
+(defvar *last-usage* nil
+  "The usage object of the last model response (prompt_tokens, completion_tokens,
+total_tokens), as the API returned it; prompt_tokens is the size of your context.")
+
 (defun chat-url () (format nil "~A/chat/completions" *api-base*))
 
 (defun api-headers ()
@@ -854,10 +858,6 @@ got into *messages*, since the API rejects them and would fail every request."
                (when (>= attempt 4) (error c))
                (emit :error :text (format nil "model call failed (attempt ~D, retrying): ~A" attempt c))
                (sleep (* 2 attempt))))))
-
-(defvar *last-usage* nil
-  "The usage object of the last model response (prompt_tokens, completion_tokens,
-total_tokens), as the API returned it; prompt_tokens is the size of your context.")
 
 (defvar *complete* 'default-complete
   "Function taking a request body (an OBJ) and returning the assistant message as an OBJ
