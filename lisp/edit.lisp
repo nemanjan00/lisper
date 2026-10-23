@@ -44,3 +44,82 @@ Writes and loads the result via the core; returns a status string."
                       "new" (lisping-core::obj "type" "string"))
         "required" #("path" "old" "new"))
  'edit-file-tool)
+
+;;; ---------------------------------------------------------------
+;;; replace_form: swap a whole top-level form by NAME. The old form's
+;;; character range comes from reading the file with the Lisp reader;
+;;; the replacement must read as exactly one form. No text matching,
+;;; no paren-count slips.
+
+(defun rf-read-file-string (path)
+  "Whole file as a string (LF-normalized)."
+  (with-open-file (s path :direction :input :external-format :utf-8)
+    (with-output-to-string (out)
+      (loop for line = (read-line s nil nil)
+            while line do (write-line line out)))))
+
+(defun rf-form-ranges (text)
+  "Read TEXT with the Lisp reader; return (form start end) per top-level
+form, START/END being character positions into TEXT."
+  (let ((*read-eval* nil))
+    (with-input-from-string (s text)
+      (loop for start = (file-position s)
+            for form = (read s nil :eof)
+            until (eq form :eof)
+            collect (list form start (file-position s))))))
+
+(defun rf-defines-p (form name)
+  (and (consp form)
+       (symbolp (car form))
+       (member (car form)
+               '(defun defvar defparameter defconstant defmacro defclass
+                 defgeneric defmethod defstruct deftype)
+               :test #'eq)
+       (symbolp (cadr form))
+       (string-equal (symbol-name (cadr form)) name)))
+
+(defun rf-check-one-form (new-source)
+  "NEW-SOURCE must read as exactly one complete form."
+  (let ((*read-eval* nil))
+    (with-input-from-string (s new-source)
+      (let ((first (read s nil :eof)))
+        (when (eq first :eof) (error "replace_form: new_source is empty"))
+        (unless (eq (read s nil :eof) :eof)
+          (error "replace_form: new_source holds more than one form"))))))
+
+(defun replace-form (path name new-source)
+  "Replace the whole top-level form defining NAME in PATH with
+NEW-SOURCE, by character range found with the reader. NEW-SOURCE must
+read as exactly one complete form; the result goes through the core's
+write-and-load check."
+  (let* ((text (rf-read-file-string path))
+         (hits (remove-if-not (lambda (r) (rf-defines-p (first r) name))
+                              (rf-form-ranges text))))
+    (unless hits (error "replace_form: no top-level form defines ~A in ~A" name path))
+    (when (cdr hits) (error "replace_form: ~A is defined ~D times in ~A" name (length hits) path))
+    (rf-check-one-form new-source)
+    (destructuring-bind (form start end) (first hits)
+      (declare (ignore form))
+      (let ((result (lisping-core::write-file-and-load
+                     path (concatenate 'string (subseq text 0 start)
+                                       new-source
+                                       (subseq text end)))))
+        (if (and (stringp result) (search "NOT SAVED" result))
+            result
+            (format nil "replaced ~A in ~A (~A)" name path (or result "loaded and committed")))))))
+
+(defun replace-form-tool (args)
+  (replace-form (lisping-core::arg args "path")
+                (lisping-core::arg args "name")
+                (lisping-core::arg args "new_source")))
+
+(lisping-core::register-tool
+ "replace_form"
+ "Replace the whole top-level form (defun, defvar, defmacro, ...) defining `name` in `path` with `new_source`. The old form's character range is found by reading the file with the Lisp reader, and `new_source` must read as exactly one complete form — both checked before writing. The result then goes through the core's boot-checked write-and-load, like edit_file. Use this instead of edit_file when replacing an entire definition: no text matching, no paren-count slips."
+ (lisping-core::obj "type" "object"
+      "properties" (lisping-core::obj
+                    "path" (lisping-core::obj "type" "string")
+                    "name" (lisping-core::obj "type" "string")
+                    "new_source" (lisping-core::obj "type" "string"))
+      "required" #("path" "name" "new_source"))
+ 'replace-form-tool)
