@@ -322,6 +322,8 @@ load-file also reaches the outer one's handlers, and should be listed once.")
         (subseq text 0 (read-sequence text in))))))
 
 (defun write-text (path text)
+  (when (and (equalp (pathname-type (pathname path)) "lisp") (find (code-char 0) text))
+    (error "Refusing to write ~A: it contains NUL characters (often from a string made with (make-string (file-length ...)) on a UTF-8 file, where bytes outnumber characters)." path))
   (ensure-directories-exist path)
   (with-open-file (out path :direction :output :if-exists :supersede
                             :if-does-not-exist :create :external-format :utf-8)
@@ -341,11 +343,16 @@ load-file also reaches the outer one's handlers, and should be listed once.")
           do (if (char= c #\') (write-string "'\\''" s) (write-char c s)))
     (write-char #\' s)))
 
-(defun commit (message)
-  "Commit everything under the project directory. Does nothing during boot."
+(defun commit (message &optional path)
+  "Commit under the project directory: just PATH when given (so the commit holds
+exactly the file that was checked), else everything. Does nothing during boot.
+A git pre-commit hook boot-checks every commit, however it's made."
   (unless *booting*
-    (shell "git add -A")
-    (shell (format nil "git commit -q -m ~A" (shell-quote message)))))
+    (if path
+        (progn (shell (format nil "git add -- ~A" (shell-quote path)))
+               (shell (format nil "git commit -q -m ~A -- ~A" (shell-quote message) (shell-quote path))))
+        (progn (shell "git add -A")
+               (shell (format nil "git commit -q -m ~A" (shell-quote message)))))))
 
 (defun skip-to-next-toplevel-form (in start)
   "Move IN past the form starting at START, to the next line that begins with (."
@@ -654,7 +661,7 @@ ever holds code that loaded cleanly. Commits what sticks."
        (format nil "~A is part of the core and can't be written from here." name))
       ((not (equalp (pathname-type file) "lisp"))
        (write-text file code)
-       (commit (format nil "~:[add~;update~] ~A" old name))
+       (commit (format nil "~:[add~;update~] ~A" old name) name)
        (format nil "Wrote ~A (~D characters)." name (length code)))
       (t
        (write-text file code)
@@ -672,7 +679,7 @@ ever holds code that loaded cleanly. Commits what sticks."
               (output (limit-output (get-output-stream-string out))))
          (cond
            ((null problems)
-            (commit (format nil "~:[add~;update~] ~A" old name))
+            (commit (format nil "~:[add~;update~] ~A" old name) name)
             (let ((init (read-text (init-path))))
               (format nil "~@[~A~%~]Wrote and loaded ~A; committed.~:[~%Note: init.lisp doesn't mention ~A, so it won't be loaded at boot.~;~]"
                       (and (string/= output "") output) name
@@ -828,6 +835,7 @@ Files and persistence, the way Emacs does it:
 - At boot the core loads init.lisp, like Emacs loads init.el. init.lisp is yours: from it, load the other files you write with (load-file \"lisp/ui.lisp\"). load-file reports a form that fails and goes on with the rest, like a forgiving load.
 - eval with only `code` is like M-: or *scratch*: it changes the running image and nothing else. Use it to explore and test.
 - eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. Before your running image sees it, a fresh SBCL boots with the new file in place (init.lisp plus this file); only if that's clean is it loaded into your image. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
+- Every git commit is boot-checked by a pre-commit hook, however it's made (your own shell git commit too): a commit whose files don't boot cleanly is refused. Prefer eval's file argument and edit_file; they check before writing, not just before committing.
 - (test-boot) loads init.lisp in a fresh SBCL process, like a boot but with no UI and no agent, and returns its problems (NIL when clean). Your running image can pass a check only because of state left from earlier edits (a variable defined in a file that loads later, say); run test-boot after changing files and before restarting.
 - *test-boot* is true inside test-boot's fresh process; check it before any load-time side effect.
 - Loading a file should only define things. Side effects (starting threads, writing state/, opening ports) belong in an explicit start function that init.lisp calls, because files are also loaded by test-boot's fresh check, with the same state/ directory.
@@ -1231,7 +1239,10 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
   (sb-sys:enable-interrupt sb-unix:sigusr1
                            (lambda (&rest args)
                              (declare (ignore args))
-                             (restart-image "[supervisor] Restarted from outside with SIGUSR1.")))
+                             ;; Not in the handler itself: restart-image writes a file.
+                             (sb-thread:make-thread
+                              (lambda () (restart-image "[supervisor] Restarted from outside with SIGUSR1."))
+                              :name "sigusr1-restart")))
   (configure)
   ;; Terminal input starts before init.lisp, so a UI loaded from it can stop it and take over.
   (unless (sb-ext:posix-getenv "LISPING_HEADLESS")
