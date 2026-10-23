@@ -414,39 +414,42 @@ hsplit reserves one uncovered column — see hsplit-left-width)."
           (when p (pane-draw-into g p x y w h)))))
     (panes-draw-gap-columns g rects)))
 
+(defun panes-grid-char (g x y)
+  "Char at (X, Y) in G, or #\\Space out of bounds."
+  (if (and (<= 0 x) (< x (uigrid-w g)) (<= 0 y) (< y (uigrid-h g)))
+      (char (uigrid-chars g) (+ x (* y (uigrid-w g))))
+      #\Space))
+
+(defun box-v-p (c) (and c (find c "│┬┴├┤┼")))  ; connects vertically
+(defun box-h-p (c) (and c (find c "─┬┴├┤┼")))  ; connects horizontally
+
 (defun panes-gap-junction-char (g x y)
   "The box-drawing char for an uncovered (gap) cell, from the
 connectivity of its neighbours: where the vertical gap bar meets a
 pane's horizontal title line it becomes ┬/┴/├/┤/┼ instead of the line
 just stopping or crossing awkwardly."
-  (flet ((char-at (cx cy)
-           (if (and (<= 0 cx) (< cx (uigrid-w g))
-                    (<= 0 cy) (< cy (uigrid-h g)))
-               (char (uigrid-chars g) (+ cx (* cy (uigrid-w g))))
-               #\Space))
-         (vp (c) (find c "│┬┴├┤┼"))   ; connects vertically
-         (hp (c) (find c "─┬┴├┤┼")))  ; connects horizontally
-    (let ((u (vp (char-at x (1- y))))
-          (d (vp (char-at x (1+ y))))
-          (l (hp (char-at (1- x) y)))
-          (r (hp (char-at (1+ x) y))))
-      (cond ((and u d l r) #\┼)
-            ((and u d r)   #\├)
-            ((and u d l)   #\┤)
-            ((and d l r)   #\┬)
-            ((and u l r)   #\┴)
-            (t             #\│)))))
+  (let ((u (box-v-p (panes-grid-char g x (1- y))))
+        (d (box-v-p (panes-grid-char g x (1+ y))))
+        (l (box-h-p (panes-grid-char g (1- x) y)))
+        (r (box-h-p (panes-grid-char g (1+ x) y))))
+    (cond ((and u d l r) #\┼)
+          ((and u d r)   #\├)
+          ((and u d l)   #\┤)
+          ((and d l r)   #\┬)
+          ((and u l r)   #\┴)
+          (t             #\│))))
 
 (defun panes-draw-gap-columns (g rects)
   "Fill every cell no pane rect covers with a dim vertical bar — the
 1-column gaps hsplit leaves between side-by-side panes, at any depth.
 Where the bar meets a pane's horizontal title line the cell becomes the
 proper junction (┬ ┴ ├ ┤ ┼; PANES-GAP-JUNCTION-CHAR reads the
-neighbours).  Coverage is checked PER CELL: a column partially covered
-(e.g. by a full-width pane below a vsplit) must still get its bar in
-the uncovered rows — the old per-column SOME let the context pane's
-full-width rect suppress the separators above it.  (A cell is either
-pane-covered or a gap; vsplit reserves no gap rows.)"
+neighbours), and a title-line cell a gap bar runs into from above or
+below becomes ┴/┬/┼ too.  Coverage is checked PER CELL: a column
+partially covered (e.g. by a full-width pane below a vsplit) must still
+get its bar in the uncovered rows — the old per-column SOME let the
+context pane's full-width rect suppress the separators above it.
+(A cell is either pane-covered or a gap; vsplit reserves no gap rows.)"
   (let ((w (uigrid-w g))
         (h (uigrid-h g)))
     (flet ((gap-p (x y)
@@ -456,7 +459,7 @@ pane-covered or a gap; vsplit reserves no gap rows.)"
                                (<= (third r) y)
                                (< y (+ (third r) (fifth r)))))
                         rects))))
-      ;; Bars first, so the junction pass sees its vertical neighbours.
+      ;; Bars first, so the junction passes see their vertical neighbours.
       (dotimes (x w)
         (dotimes (y h)
           (when (gap-p x y)
@@ -464,7 +467,21 @@ pane-covered or a gap; vsplit reserves no gap rows.)"
       (dotimes (x w)
         (dotimes (y h)
           (when (gap-p x y)
-            (ui-grid-put g x y (panes-gap-junction-char g x y) 8)))))))
+            (ui-grid-put g x y (panes-gap-junction-char g x y) 8))))
+      ;; Title rows: a gap bar ending at a pane's ─ title line from
+      ;; above (or starting below it) turns that ─ into ┴/┬/┼.
+      (dolist (r rects)
+        (destructuring-bind (name rx ry rw rh) r
+          (declare (ignore name rh))
+          (dotimes (i rw)
+            (let ((cx (+ rx i)))
+              (when (eql (panes-grid-char g cx ry) #\─)
+                (let ((u (box-v-p (panes-grid-char g cx (1- ry))))
+                      (d (box-v-p (panes-grid-char g cx (1+ ry)))))
+                  (when (or u d)
+                    (ui-grid-put g cx ry
+                                 (cond ((and u d) #\┼) (u #\┴) (t #\┬))
+                                 (aref (uigrid-attrs g) (+ cx (* ry w))))))))))))))
 
 
 ;;; ---------------------------------------------------------------
