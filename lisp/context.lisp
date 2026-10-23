@@ -477,21 +477,34 @@ budget), not of the whole window."
         (format s "- e~D ≈ ~D est tokens: context_offload {\"entry\": \"e~D\"}~%"
                 (car c) (cdr c) (car c)))
       (format s "Collapse finished stretches with context_rewind {from, to, summary}; summaries keep what later work needs verbatim (paths, ids, decisions).~%"))))
-(defun ctx-emit-watch (event)
-  "Notice finished tasks (a todo marked done) for the next nudge; retire
-the nudge only when a response actually arrives (clearing it at
+(progn
+  (defvar *ctx-note-in-flight* nil
+    "T when the pending note was injected into a request; cleared when
+the response to that request arrives — as text (:assistant) or as tool
+calls with no text (:tool-call).")
+
+  (defun ctx-emit-watch (event)
+    "Notice finished tasks (a todo marked done) for the next nudge;
+retire the nudge only when a response actually arrives (clearing it at
 injection would lose it on a failed request)."
-  (case (getf event :type)
-    (:tool-result
-     (when (and (equal (getf event :name) "todo")
-                (ctx-head-p "done:" (getf event :text)))
-       (setf *ctx-pending-note*
-             (format nil "[context: a task is done] ~A The work for it above is finished; once nothing below needs it verbatim, collapse it with context_rewind {from, to, summary} (summaries keep paths, ids, decisions later work needs), or offload its big results with context_offload {entry, text}."
-                     (ctx-short (getf event :text))))))
-    (:assistant
-     (setf *ctx-pending-note* nil)))
-  event)
-(defun ctx-local-estimate ()
+    (case (getf event :type)
+      (:tool-result
+       (when (and (equal (getf event :name) "todo")
+                  (ctx-head-p "done:" (getf event :text)))
+         (setf *ctx-pending-note*
+               (format nil "[context: a task is done] ~A The work for it above is finished; once nothing below needs it verbatim, collapse it with context_rewind {from, to, summary} (summaries keep paths, ids, decisions later work needs), or offload its big results with context_offload {entry, text}."
+                       (ctx-short (getf event :text))))))
+      ;; A response arrived.  Only retire the note if it was actually
+      ;; injected into the request this response answers; a :tool-call
+      ;; can also arrive interleaved in the same turn that SET the note.
+      (:assistant
+       (setf *ctx-pending-note* nil
+             *ctx-note-in-flight* nil))
+      (:tool-call
+       (when *ctx-note-in-flight*
+         (setf *ctx-pending-note* nil
+               *ctx-note-in-flight* nil))))
+    event))(defun ctx-local-estimate ()
   "Estimated tokens of the next request: system prompt, tool specs, and
 every message (content + reasoning_content + tool-call arguments),
 at the calibrated chars-per-token.  The endpoint's prompt_tokens of the
