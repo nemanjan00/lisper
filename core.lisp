@@ -12,6 +12,7 @@
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
            ;; files
+           #:home-path #:session-path #:*home* #:*session* #:*cwd* #:session-save #:session-forget
            #:load-file #:write-files-and-load #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
@@ -28,10 +29,28 @@
 
 (in-package :lisping-core)
 
-(declaim (ftype function emit client-error-p complete-once without-x-kind synthetic-message-p)) ; used before their definitions further down
+(declaim (ftype function emit client-error-p complete-once without-x-kind synthetic-message-p session-save)) ; used before their definitions further down
 
 (defvar *root* (make-pathname :name nil :type nil :version nil :defaults *load-truename*)
-  "Project directory: core.lisp, init.lisp and the files it loads, state/, .git.")
+  "The harness's code: core.lisp, init.lisp and the files it loads, .git. Runtime
+state lives in *HOME*, not here.")
+
+(defvar *home* nil
+  "Your state directory, outside the code repo: LISPER_HOME, else ~/.lisper/. Holds
+sessions/<id>/ (conversation snapshot, transcripts, trace, queue), tmp/, and your
+own data files (notes, todos, layout).")
+(defvar *session* "main" "This process's session id (LISPER_SESSION). One process is one session.")
+(defvar *cwd* nil
+  "Working directory for shell and project work (LISPER_CWD, else the session's
+saved cwd, else *ROOT*). Saved with the session.")
+
+(defun home-path (name)
+  "NAME inside *HOME* (directories are created on demand)."
+  (let ((path (merge-pathnames name *home*))) (ensure-directories-exist path) path))
+(defun session-dir () (merge-pathnames (format nil "sessions/~A/" *session*) *home*))
+(defun session-path (name)
+  "NAME inside this session's directory."
+  (let ((path (merge-pathnames name (session-dir)))) (ensure-directories-exist path) path))
 
 ;;; ------------------------------------------------------------------
 ;;; Settings
@@ -234,8 +253,9 @@
 ;;; ------------------------------------------------------------------
 ;;; Processes and HTTP (through curl, so the core needs no libraries)
 
-(defun shell (command &key (directory *root*))
-  "Run COMMAND with sh -c in DIRECTORY. Return (values output exit-code)."
+(defun shell (command &key (directory (or *cwd* *root*)))
+  "Run COMMAND with sh -c in DIRECTORY (default: *CWD*, the session's working
+directory). Return (values output exit-code)."
   (let* ((out (make-string-output-stream))
          (process (sb-ext:run-program "/bin/sh" (list "-c" command)
                                       :directory (namestring directory)
@@ -244,10 +264,7 @@
     (values (get-output-stream-string out) (sb-ext:process-exit-code process))))
 
 (defun tmp-path (name type)
-  (let ((path (merge-pathnames (format nil "state/tmp/~A-~D-~D.~A" name (get-universal-time) (random 1000000) type)
-                               *root*)))
-    (ensure-directories-exist path)
-    path))
+  (home-path (format nil "tmp/~A-~D-~D.~A" name (get-universal-time) (random 1000000) type)))
 
 (defun curl-quote (string)
   (with-output-to-string (s)
@@ -303,8 +320,8 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
 
 (defvar *booting* nil "True while init.lisp is loaded at boot.")
 (defvar *test-boot* nil
-  "True only inside TEST-BOOT's fresh process, which shares state/ with the running
-image. Skip side effects (writing state/, starting things) when it's true.")
+  "True only inside TEST-BOOT's fresh process, which shares the files with the running
+image (and *HOME*). Skip side effects (writing files, starting things) when it's true.")
 (defvar *boot-errors* '() "Problems reported while loading init.lisp at the last boot.")
 (defvar *load-problems* nil "Problems collected by LOAD-FILE, including nested loads.")
 (defvar *reported-conditions* nil
@@ -312,7 +329,7 @@ image. Skip side effects (writing state/, starting things) when it's true.")
 load-file also reaches the outer one's handlers, and should be listed once.")
 
 (defun init-path () (merge-pathnames "init.lisp" *root*))
-(defun resume-path () (merge-pathnames "state/resume.txt" *root*))
+(defun resume-path () (session-path "resume.txt"))
 
 (defun read-text (path)
   "The contents of PATH as a string, or NIL if it doesn't exist."
@@ -343,18 +360,26 @@ load-file also reaches the outer one's handlers, and should be listed once.")
           do (if (char= c #\') (write-string "'\\''" s) (write-char c s)))
     (write-char #\' s)))
 
+(defun git (command)
+  "Run a git COMMAND in the code repo, retrying while another session's git holds
+the index lock. Return (values output exit-code)."
+  (loop repeat 8
+        do (multiple-value-bind (out code) (shell command :directory *root*)
+             (unless (and (/= code 0) (search "index.lock" out))
+               (return-from git (values out code))))
+           (sleep 0.4))
+  (shell command :directory *root*))
+
 (defun commit (message &optional path)
   "Commit under the project directory: just PATH when given (so the commit holds
 exactly the file that was checked), else everything. Does nothing during boot.
 A git pre-commit hook boot-checks every commit, however it's made."
   (unless *booting*
     (if path
-        ;; The checked file, plus the data under state/ (notes, todos, layout),
-        ;; which tools write directly and which isn't code.
-        (progn (shell (format nil "git add -- ~A state" (shell-quote path)))
-               (shell (format nil "git commit -q -m ~A -- ~A state" (shell-quote message) (shell-quote path))))
-        (progn (shell "git add -A")
-               (shell (format nil "git commit -q -m ~A" (shell-quote message)))))))
+        (progn (git (format nil "git add -- ~A" (shell-quote path)))
+               (git (format nil "git commit -q -m ~A -- ~A" (shell-quote message) (shell-quote path))))
+        (progn (git "git add -A")
+               (git (format nil "git commit -q -m ~A" (shell-quote message)))))))
 
 (defun skip-to-next-toplevel-form (in start)
   "Move IN past the form starting at START, to the next line that begins with (."
@@ -376,6 +401,7 @@ followed by any user messages that were still held, waiting for the turn to end.
             (format nil "~@[~A~%~%~]Messages that were waiting when the image restarted, oldest first:~{~%- ~A~}"
                     resume-message
                     (mapcar (lambda (item) (if (consp item) (car item) item)) held)))))
+  (ignore-errors (session-save))
   (when resume-message
     (with-open-file (out (resume-path) :direction :output :if-exists :supersede
                                        :if-does-not-exist :create :external-format :utf-8)
@@ -646,7 +672,8 @@ agent and no commits, and return its problems as a list of strings (NIL when
 clean). The running image can pass a check only because of state left over
 from earlier; this shows whether the files work from scratch."
   (multiple-value-bind (out code)
-      (shell (format nil "LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
+      (shell (format nil "cd ~A && LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
+                     (shell-quote (namestring *root*))
                      timeout
                      (shell-quote (namestring sb-ext:*runtime-pathname*))
                      (shell-quote (namestring sb-ext:*core-pathname*))
@@ -689,8 +716,8 @@ everything is committed together."
         (let ((out (make-string-output-stream)) (problems '()))
           (dolist (e lisp)
             (setf problems (append problems (load-collecting (second e) out))))
-          (shell (format nil "git add -- ~{~A ~}state" (mapcar (lambda (e) (shell-quote (first e))) entries)))
-          (shell (format nil "git commit -q -m ~A -- ~{~A ~}state"
+          (git (format nil "git add -- ~{~A ~}" (mapcar (lambda (e) (shell-quote (first e))) entries)))
+          (git (format nil "git commit -q -m ~A -- ~{~A ~}"
                          (shell-quote (format nil "update ~{~A~^, ~}" (mapcar #'first entries)))
                          (mapcar (lambda (e) (shell-quote (first e))) entries)))
           (format nil "Wrote~:[~; and loaded~] ~{~A~^, ~}; committed together.~@[~%Loading into the running image reported (the files are kept: they boot cleanly):~%~{- ~A~%~}~]"
@@ -756,7 +783,7 @@ running image come from state in that image, not the file, so the file is kept
 (defvar *session-log* nil)
 (defvar *previous-session* nil
   "Transcript (JSONL, one message per line) of the session before this boot, or NIL.")
-(defvar *trace-file* nil "Human-readable log of every event; state/trace.log points at the current one.")
+(defvar *trace-file* nil "Human-readable log of every event; <session dir>/trace.log points at the current one.")
 (defvar *trace-lock* (sb-thread:make-mutex :name "trace"))
 
 (defun trace-event (event)
@@ -807,7 +834,7 @@ it's kept as the message's x-kind and never sent to the model API."
     (case type
       (:assistant (format t "~&~%~A~%" text))
       (:thinking (format t "~&~C[2m~A~C[0m~%" #\Esc text #\Esc))
-      (:reasoning nil)                  ; long; it is in state/trace.log
+      (:reasoning nil)                  ; long; it is in the session's trace.log
       (:user nil)                       ; the user typed it; no need to echo
       (:queued nil)
       (:tool-call
@@ -862,7 +889,7 @@ You start with almost nothing. You have one tool, `eval`, which evaluates Common
 Core API (package LISPING-CORE, already used by LISPING):
 - (register-tool name description schema fn): expose a new tool to yourself. schema is a JSON Schema as a JSON string or an (obj ...). fn receives a hash table of arguments, read it with (arg args \"key\"). Pass a symbol as fn so redefining the function updates the tool. (unregister-tool name) removes one.
 - (obj :key value ...) builds a JSON object; json-encode, json-decode, http-post-json.
-- (shell \"command\") runs sh in the project directory, returns (values output exit-code). Its commands get no standard input, so they can't steal the user's keystrokes; that also means tty, stty and friends report \"not a tty\". The terminal is /dev/tty: use stty -F /dev/tty, or redirect from it.
+- (shell \"command\") runs sh in *cwd* (the session's working directory; pass :directory *root* for the harness), returns (values output exit-code). Its commands get no standard input, so they can't steal the user's keystrokes; that also means tty, stty and friends report \"not a tty\". The terminal is /dev/tty: use stty -F /dev/tty, or redirect from it.
 - *system-prompt*: this text. A string, or a function returning one. You may rewrite it.
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context. *last-usage* is the token usage of the last response; its prompt_tokens is how big your context is (it's also shown in each :thinking event).
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
@@ -872,7 +899,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones). A message starting with ! is urgent and goes in before your next model call. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
-- The queue: text appended to state/queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
+- The queue: text appended to the session's queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
 - *complete*: the function that calls the model, given the request body; it returns the assistant message. Replace it to stream or call the model differently; chat-url and api-headers give you the endpoint and auth. If yours fails, the core falls back to default-complete.
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
@@ -884,11 +911,13 @@ Files and persistence, the way Emacs does it:
 - (write-files-and-load '((\"lisp/a.lisp\" . \"...\") (\"lisp/b.lisp\" . \"...\"))) writes several files as ONE change: one fresh boot checks them together, so a change spanning files (a rename, a moved definition) needn't pass through broken intermediate states. All or nothing; committed together. Your edit tools can build on it.
 - (test-boot) loads init.lisp in a fresh SBCL process, like a boot but with no UI and no agent, and returns its problems (NIL when clean). Your running image can pass a check only because of state left from earlier edits (a variable defined in a file that loads later, say); run test-boot after changing files and before restarting.
 - *test-boot* is true inside test-boot's fresh process; check it before any load-time side effect.
-- Loading a file should only define things. Side effects (starting threads, writing state/, opening ports) belong in an explicit start function that init.lisp calls, because files are also loaded by test-boot's fresh check, with the same state/ directory.
+- Loading a file should only define things. Side effects (starting threads, writing files, opening ports) belong in an explicit start function that init.lisp calls, because files are also loaded by test-boot's fresh check, with the same *home*.
 - So, to keep something, put it in a file that init.lisp loads. The image and the files can drift apart while you work, as in Emacs; at boot, the files win.
 - Writing a whole file to change one function gets slow as files grow. Keep files small and focused, and consider building yourself what Emacs users have: buffers, editing part of a file, and re-evaluating just the form you changed (C-M-x). Tools you register get their arguments as plain JSON strings, so a file-editing tool avoids escaping code inside Lisp strings.
-- Your conversation does NOT survive a restart, and the user may restart you at any moment. Whatever you learn by exploring (facts about your environment, what works and what doesn't) is lost unless you write it down, e.g. in state/notes.md. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
-- Files under state/ are committed too (except state/tmp and state/sessions). Use it for notes, memory and data.
+- Your conversation is resumed after a restart (see Sessions), but write down what you learn anyway, e.g. in (home-path \"notes.md\"): a fresh session, or another session, won't have it. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
+- State lives outside the code repo, in *home* (~/.lisper/ by default): (home-path \"notes.md\") for your own data files, (session-path \"x\") for this session's files. *home* is not in git. The code repo (*root*) holds only code.
+- Sessions: one process is one session (*session*, from LISPER_SESSION; default \"main\"). After every turn the core saves the conversation (as compacted) and *cwd*; the next boot of the same session resumes it, so a restart no longer loses the conversation. (session-forget) makes the next boot start fresh; LISPER_FRESH=1 does too. Several sessions can run at once, each in its own process and terminal, sharing the code and git.
+- *cwd* is the session's working directory (LISPER_CWD): shell runs there by default, for work on a project outside the harness. Your own code stays in *root*.
 - (restart-image \"message\") restarts the image; the message is sent to you after boot. Use it to check that what you built comes back.
 - A supervisor restarts the image if it crashes, and if it crashes while booting, rolls your files back to the last commit that booted.
 
@@ -903,7 +932,7 @@ Rules:
 - The core (package LISPING-CORE) is locked. Use setf for its variables; don't redefine its functions.
 - eval calls time out after *eval-timeout* seconds. Run servers and other long-lived work in threads (sb-thread:make-thread).
 - Build in small steps and check each one. When something breaks, read the error and fix it.
-- Everything you do (your reasoning, tool calls and results) is written to state/trace.log for the user to read. The core writes it; it is not yours to change.
+- Everything you do (your reasoning, tool calls and results) is written to the session's trace.log for the user to read. The core writes it; it is not yours to change.
 - Never print, save or send the API key.
 - Talk to the user briefly. They are curious to watch you grow; tell them what you built and how to use it.")
 
@@ -1206,6 +1235,8 @@ in before the next model call. When true, every message goes in mid-turn.")
            (text (gethash "content" message))
            (calls (gethash "tool_calls" message)))
       (add-message message)
+      ;; Before its tool calls run: one of them may end the process.
+      (ignore-errors (session-save))
       (let ((reasoning (or (gethash "reasoning_content" message) (gethash "reasoning" message))))
         (when (and (stringp reasoning) (string/= "" reasoning))
           (emit :reasoning :text reasoning)))
@@ -1214,7 +1245,42 @@ in before the next model call. When true, every message goes in mid-turn.")
       (if (and (vectorp calls) (plusp (length calls)))
           (loop for call across calls
                 do (add-message (run-tool-call call)))
-          (return)))))
+          (return)))
+      ;; After every step, not only at the end of the turn: a turn can be cut
+      ;; short (a crash, a kill, an exit from inside a tool call).
+      (ignore-errors (session-save))))
+
+(defun session-save ()
+  "Save this session: the conversation as it stands (after any compaction) and
+its working directory. Written atomically; resumed at the next boot."
+  (let ((file (session-path "messages.json"))
+        (tmp (session-path "messages.json.tmp")))
+    (with-open-file (out tmp :direction :output :if-exists :supersede :external-format :utf-8)
+      (json-encode (coerce *messages* 'vector) out))
+    (rename-file tmp file)
+    (write-text (session-path "meta.json")
+                (json-encode (obj :session *session* :cwd (namestring (or *cwd* *root*))
+                                  :model *model* :saved (get-universal-time)
+                                  :messages (length *messages*))))
+    t))
+
+(defun session-forget ()
+  "Drop the saved conversation, so the next boot starts this session fresh."
+  (ignore-errors (delete-file (session-path "messages.json")))
+  t)
+
+(defun session-load ()
+  "Restore the saved conversation and working directory, if any. Returns the
+number of messages restored."
+  (let ((text (read-text (session-path "messages.json")))
+        (meta (ignore-errors (json-decode (read-text (session-path "meta.json"))))))
+    (when (and (hash-table-p meta) (null *cwd*) (stringp (gethash "cwd" meta)))
+      (setf *cwd* (pathname (gethash "cwd" meta))))
+    (if (and text (not (sb-ext:posix-getenv "LISPER_FRESH")))
+        (let ((messages (json-decode text)))
+          (setf *messages* (coerce messages 'list))
+          (length *messages*))
+        0)))
 
 (defun agent-loop ()
   (loop
@@ -1222,7 +1288,10 @@ in before the next model call. When true, every message goes in mid-turn.")
       (add-message (inbox-message (if (urgent-item-p item) (strip-urgent item) item)))
       (handler-case (run-turn)
         (serious-condition (c)
-          (emit :error :text (format nil "turn failed: ~A" c)))))))
+          (emit :error :text (format nil "turn failed: ~A" c))))
+      (handler-case (session-save)
+        (serious-condition (c)
+          (emit :error :text (format nil "saving the session failed: ~A" c)))))))
 
 ;;; ------------------------------------------------------------------
 ;;; Terminal input. Like terminal-emit, these live in the unlocked LISPING
@@ -1253,19 +1322,19 @@ in before the next model call. When true, every message goes in mid-turn.")
     t))
 
 ;;; ------------------------------------------------------------------
-;;; Queue input: anyone can queue messages by appending to state/queue.txt.
+;;; Queue input: anyone can queue messages by appending to the session's queue.txt.
 ;;; Like terminal input, this lives in LISPING and is the AI's to change.
 
-(defvar *queue-thread* nil "The thread moving state/queue.txt into *inbox*, or NIL.")
+(defvar *queue-thread* nil "The thread moving the session's queue.txt into *inbox*, or NIL.")
 
-(defun lisping::queue-path () (merge-pathnames "state/queue.txt" *root*))
+(defun lisping::queue-path () (session-path "queue.txt"))
 
 (defun lisping::take-queue ()
-  "Take the queued messages out of state/queue.txt: messages are separated by a
+  "Take the queued messages out of the session's queue.txt: messages are separated by a
 line containing only ---. The file is renamed before it is read, so text
 appended meanwhile lands in a fresh queue.txt instead of being lost."
   (let ((path (lisping::queue-path))
-        (taken (merge-pathnames "state/queue.taking" *root*)))
+        (taken (session-path "queue.taking")))
     (when (probe-file path)
       (rename-file path taken)
       (sleep 0.1)                       ; let a writer that already opened it finish
@@ -1280,7 +1349,7 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
               do (setf start (min (length text) (+ sep 4))))))))
 
 (defun lisping::queue-input-loop ()
-  "Every second, send what was queued in state/queue.txt to the agent."
+  "Every second, send what was queued in the session's queue.txt to the agent."
   (loop
     (handler-case (dolist (message (lisping::take-queue))
                     (send-user-message message))
@@ -1289,12 +1358,12 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
     (sleep 1)))
 
 (defun lisping::start-queue-input ()
-  "Start watching state/queue.txt, unless already watching."
+  "Start watching the session's queue.txt, unless already watching."
   (unless (and *queue-thread* (sb-thread:thread-alive-p *queue-thread*))
     (setf *queue-thread* (sb-thread:make-thread 'lisping::queue-input-loop :name "queue-input"))))
 
 (defun lisping::stop-queue-input ()
-  "Stop watching state/queue.txt."
+  "Stop watching the session's queue.txt."
   (let ((thread *queue-thread*))
     (setf *queue-thread* nil)
     (when (and thread (sb-thread:thread-alive-p thread))
@@ -1324,6 +1393,14 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
                              (sb-thread:make-thread
                               (lambda () (restart-image "[supervisor] Restarted from outside with SIGUSR1."))
                               :name "sigusr1-restart")))
+  (setf *home* (pathname (let ((h (or (sb-ext:posix-getenv "LISPER_HOME")
+                                       (namestring (merge-pathnames ".lisper/" (user-homedir-pathname))))))
+                           (if (char= (char h (1- (length h))) #\/) h (concatenate 'string h "/"))))
+        *session* (let ((id (sb-ext:posix-getenv "LISPER_SESSION")))
+                    (if (and id (plusp (length id)) (every (lambda (c) (or (alphanumericp c) (find c "-_"))) id))
+                        id "main"))
+        *cwd* (let ((d (sb-ext:posix-getenv "LISPER_CWD"))) (and d (plusp (length d)) (pathname (if (char= (char d (1- (length d))) #\/) d (concatenate 'string d "/"))))))
+  (ensure-directories-exist (session-dir))
   (configure)
   ;; Terminal input starts before init.lisp, so a UI loaded from it can stop it and take over.
   (unless (sb-ext:posix-getenv "LISPING_HEADLESS")
@@ -1334,19 +1411,22 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
           (if (probe-file (init-path))
               (load-collecting (init-path) (make-broadcast-stream))
               '())))
-  (shell "git tag -f last-good HEAD")
+  (git "git tag -f last-good HEAD")
   (let ((stamp (multiple-value-bind (s m h d mo y) (get-decoded-time)
                  (format nil "~D~2,'0D~2,'0D-~2,'0D~2,'0D~2,'0D" y mo d h m s))))
     (setf *previous-session*
-          (first (sort (directory (merge-pathnames "state/sessions/*.jsonl" *root*))
+          (first (sort (directory (merge-pathnames "*.jsonl" (session-dir)))
                        #'string> :key #'namestring)))
-    (setf *session-log* (merge-pathnames (format nil "state/sessions/~A.jsonl" stamp) *root*))
-    (ensure-directories-exist *session-log*)
-    (setf *trace-file* (merge-pathnames (format nil "state/sessions/~A.trace.log" stamp) *root*))
-    (shell (format nil "ln -sfn sessions/~A.trace.log state/trace.log" stamp)))
+    (setf *session-log* (session-path (format nil "~A.jsonl" stamp)))
+    (setf *trace-file* (session-path (format nil "~A.trace.log" stamp)))
+    (shell (format nil "ln -sfn ~A.trace.log trace.log" stamp) :directory (session-dir)))
+  (let ((restored (session-load)))
+    (when (plusp restored)
+      (emit :info :text (format nil "resumed session ~A: ~D messages, cwd ~A" *session* restored (or *cwd* *root*)))))
   (sb-ext:lock-package :lisping-core)
-  (emit :info :text (format nil "lisping-ai on ~A, ~D tool~:P, ~D boot error~:P. Type a message and press Enter; replies can take a minute. Ctrl-D quits.~%Watch what it does: tail -f state/trace.log"
-                            *model* (hash-table-count *tools*) (length *boot-errors*)))
+  (emit :info :text (format nil "lisping-ai on ~A, ~D tool~:P, ~D boot error~:P. Type a message and press Enter; replies can take a minute. Ctrl-D quits.~%Session ~A in ~A. Watch it: tail -f ~Atrace.log"
+                            *model* (hash-table-count *tools*) (length *boot-errors*)
+                            *session* (namestring (or *cwd* *root*)) (namestring (session-dir))))
   (dolist (e *boot-errors*) (emit :error :text e))
   (let ((agent (sb-thread:make-thread #'agent-loop :name "agent"))
         (resume (take-resume-message)))

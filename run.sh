@@ -14,7 +14,9 @@ MAX_BOOT_CRASHES=3
 
 trap 'exit 0' INT
 
-resume() { mkdir -p state && printf '%s\n' "$1" >> state/resume.txt; }
+LISPER_HOME="${LISPER_HOME:-$HOME/.lisper}"
+SESSION_DIR="$LISPER_HOME/sessions/${LISPER_SESSION:-main}"
+resume() { mkdir -p "$SESSION_DIR" && printf '%s\n' "$1" >> "$SESSION_DIR/resume.txt"; }
 
 # The pre-commit hook boot-checks every commit, however it's made. It's kept in
 # hooks/ and (re)installed on every start, so a clone gets it and deleting it
