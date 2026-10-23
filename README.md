@@ -76,6 +76,8 @@ OpenAI-compatible Chat Completions endpoint works; it was built against Kimi.
 - `LISPING_DOTENV=path` reads settings from another file.
 - `LISPING_HEADLESS=1` starts it without terminal input.
 - `LISPING_NO_TUI=1` skips the UI the model built for itself.
+- `pkill -USR1 -f boot.lisp` restarts the image through the supervisor;
+  SIGTERM stops it (and the supervisor with it).
 
 ## How persistence works
 

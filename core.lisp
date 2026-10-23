@@ -1226,6 +1226,12 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
 
 (defun main ()
   (setf *random-state* (make-random-state t))
+  ;; SIGUSR1 asks for a restart from outside (pkill -USR1 -f boot.lisp): exit 42,
+  ;; which the supervisor treats as a restart. SIGTERM still means stop.
+  (sb-sys:enable-interrupt sb-unix:sigusr1
+                           (lambda (&rest args)
+                             (declare (ignore args))
+                             (restart-image "[supervisor] Restarted from outside with SIGUSR1.")))
   (configure)
   ;; Terminal input starts before init.lisp, so a UI loaded from it can stop it and take over.
   (unless (sb-ext:posix-getenv "LISPING_HEADLESS")
