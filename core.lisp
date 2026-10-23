@@ -257,6 +257,14 @@
              (write-char c s))
     (write-char #\" s)))
 
+(define-condition http-error (error)
+  ((status :initarg :status :reader http-error-status)
+   (url :initarg :url :reader http-error-url)
+   (body :initarg :body :reader http-error-body))
+  (:report (lambda (c stream)
+             (format stream "HTTP ~A from ~A: ~A"
+                     (http-error-status c) (http-error-url c) (http-error-body c)))))
+
 (defun http-post-json (url body &key headers (timeout 600))
   "POST BODY encoded as JSON to URL. Return (values decoded-response status).
 Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings."
@@ -284,7 +292,7 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
            (unless (zerop (sb-ext:process-exit-code process))
              (error "curl failed: ~A" (get-output-stream-string err)))
            (when (or (null status) (>= status 400))
-             (error "HTTP ~A from ~A: ~A" status url (subseq text 0 (min 2000 (length text)))))
+             (error 'http-error :status status :url url :body (subseq text 0 (min 2000 (length text)))))
            (values (json-decode text) status))
       (ignore-errors (delete-file request)))))
 
@@ -591,9 +599,11 @@ that did resolve through, and catches the ones that never will."
         (found '()))
     (do-symbols (s package)
       (when (and (eq (symbol-package s) package)
-                 ;; SBCL records an assumed type only when it compiles a call to
-                 ;; a function it doesn't know; defining the function clears it.
-                 (sb-int:info :function :assumed-type s)
+                 ;; SBCL records an assumed type when it compiles a call to a
+                 ;; function it doesn't know; a (declaim (ftype function f)) forward
+                 ;; declaration instead marks it :declared. Defining it clears both.
+                 (or (sb-int:info :function :assumed-type s)
+                     (eq (sb-int:info :function :where-from s) :declared))
                  (not (fboundp s)))
         (push (format nil "~(~A~) is called but never defined" s) found)))
     (sort found #'string<)))
@@ -819,7 +829,6 @@ Why Lisp, and how to work in it:
 - An error doesn't hurt the image. Read it, fix the one form, try again.
 
 Rules:
-- The core (package LISPING-CORE) is locked.Rules:
 - The core (package LISPING-CORE) is locked. Use setf for its variables; don't redefine its functions.
 - eval calls time out after *eval-timeout* seconds. Run servers and other long-lived work in threads (sb-thread:make-thread).
 - Build in small steps and check each one. When something breaks, read the error and fix it.
@@ -895,8 +904,13 @@ both and would fail every later request."
                                             (remove-if #'blank-user-message-p *messages*)))
                                      'vector)
                    :tools (tool-specs))))
-    (dolist (hook *before-request* body)
-      (setf body (funcall hook body)))))
+    (dolist (hook *before-request*)
+      (setf body (funcall hook body)))
+    ;; Pair again after the hooks, in case one of them broke it.
+    (let ((messages (gethash "messages" body)))
+      (when (vectorp messages)
+        (setf (gethash "messages" body) (coerce (pair-tool-results (coerce messages 'list)) 'vector))))
+    body))
 
 (defun default-complete (body)
   "POST BODY to the model API, retrying failures; return the assistant message."
@@ -914,15 +928,24 @@ both and would fail every later request."
                (sleep (* 2 attempt))))))
 
 (defun client-error-p (condition)
-  (let ((text (princ-to-string condition)))
-    (and (search "HTTP 4" text) (not (search "HTTP 429" text)))))
+  "A 4xx other than 429: the request itself is wrong, so retrying it can't help."
+  (and (typep condition 'http-error)
+       (integerp (http-error-status condition))
+       (<= 400 (http-error-status condition) 499)
+       (/= 429 (http-error-status condition))))
+
+(defparameter +context-overflow-phrases+
+  '("context length" "context_length" "context window" "maximum context"
+    "prompt is too long" "input is too long" "too many tokens" "reduce the length")
+  "How providers word an over-long request. Single words like \"maximum\" also
+appear in unrelated 400s (a max_tokens limit, say), which history-dropping can't fix.")
 
 (defun context-too-long-p (condition)
   "True when the API rejected the request for being longer than the model's context."
-  (let ((text (string-downcase (princ-to-string condition))))
-    (and (client-error-p condition)
-         (some (lambda (word) (search word text))
-               '("context" "too long" "too many tokens" "maximum" "exceed")))))
+  (and (client-error-p condition)
+       (let ((body (string-downcase (princ-to-string (http-error-body condition)))))
+         (and (some (lambda (phrase) (search phrase body)) +context-overflow-phrases+)
+              (not (search "max_tokens" body))))))
 
 (defun drop-oldest-messages ()
   "Make *messages* smaller after a context-length error: drop about the oldest
@@ -931,7 +954,10 @@ leave a note saying what went. Returns the number dropped (0 if nothing could be
   (let* ((n (length *messages*))
          (cut (max 1 (floor n 4)))
          (rest (nthcdr cut *messages*)))
-    (loop while (and rest (not (equal (gethash "role" (car rest)) "user")))
+    ;; Cut where a complete unit starts: a user message, or an assistant message
+    ;; (its tool results follow it). An agentic task can run hundreds of tool
+    ;; calls with no user message in between, so user messages alone are too rare.
+    (loop while (and rest (not (member (gethash "role" (car rest)) '("user" "assistant") :test #'equal)))
           do (setf rest (cdr rest)) (incf cut))
     (cond
       (rest
@@ -946,7 +972,8 @@ leave a note saying what went. Returns the number dropped (0 if nothing could be
        (let ((shortened 0))
          (dolist (m *messages* shortened)
            (let ((content (gethash "content" m)))
-             (when (and (equal (gethash "role" m) "tool") (stringp content) (> (length content) 2000))
+             (when (and (equal (gethash "role" m) "tool") (stringp content) (> (length content) 2000)
+                        (not (search "[core] cut from" content)))
                (setf (gethash "content" m)
                      (format nil "~A~%[core] cut from ~D characters: the context was too long."
                              (subseq content 0 2000) (length content)))
@@ -961,14 +988,19 @@ the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
   "Send the conversation to the model and return its message. If the API says
 the conversation is longer than the model's context, drop the oldest part and
 try again, so the session can't get stuck with a history that never fits."
-  (loop for tries from 1
-        do (handler-case (return (complete-once))
-             (error (c)
-               (unless (and (context-too-long-p c) (< tries 6))
-                 (error c))
-               (let ((dropped (drop-oldest-messages)))
-                 (when (zerop dropped) (error c))
-                 (emit :error :text (format nil "context too long for the model: dropped ~D old messages and retrying" dropped)))))))
+  (let ((previous nil) (repeats 0))
+    (loop for tries from 1
+          do (handler-case (return (complete-once))
+               (error (c)
+                 (unless (and (context-too-long-p c) (< tries 6))
+                   (error c))
+                 ;; The same rejection after dropping twice means it isn't about length.
+                 (let ((text (princ-to-string (http-error-body c))))
+                   (if (equal text previous) (incf repeats) (setf repeats 0 previous text))
+                   (when (>= repeats 2) (error c)))
+                 (let ((dropped (drop-oldest-messages)))
+                   (when (zerop dropped) (error c))
+                   (emit :error :text (format nil "context too long for the model: dropped ~D old messages and retrying" dropped))))))))
 
 (defun complete-once ()
   (let ((body (request-body)))
