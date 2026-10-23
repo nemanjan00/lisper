@@ -15,23 +15,34 @@
 ;;; Key reading. Returns a character or a keyword (:up :down :left
 ;;; :right :home :end :pgup :pgdn :delete :escape).
 
-(defun tui-key-loop ()
+(defun tui-log-key (key)
+  (ignore-errors
+    (with-open-file (s (merge-pathnames "state/tmp/keys.log" *root*)
+                       :direction :output :if-exists :append
+                       :if-does-not-exist :create)
+      (format s "~S~%" key))))
+
+(defun tui-key-loop (ui)
   (setf *tui-quit* nil)
-  (loop while *tui*
+  (loop while (and *tui* (eq *tui* ui))
         do (handler-case
-               (let ((key (tui-read-key)))
+               (let ((key (tui-read-key ui)))
+                 (tui-log-key key)
                  (sb-thread:with-mutex (*tui-lock*)
-                   (when *tui*
-                     (if (tui-state-prefix *tui*)
-                         (tui-prefix-key key)
-                         (tui-normal-key key))))
+                   (when (and *tui* (eq *tui* ui))
+                     (if (tui-state-prefix ui)
+                         (tui-prefix-key ui key)
+                         (tui-normal-key ui key))))
                  (tui-dirty)
                  (when *tui-quit* (return)))
-             (serious-condition (c) (tui-crash c))))
-  (when *tui-quit* (setf *tui-quit* nil) (tui-stop)))
+             (serious-condition (c)
+               (when (eq *tui* ui) (tui-crash c)))))
+  (when (and *tui* (eq *tui* ui) *tui-quit*)
+    (setf *tui-quit* nil)
+    (tui-stop)))
 
-(defun tui-read-key ()
-  (let ((tty (tui-state-tty *tui*)))
+(defun tui-read-key (ui)
+  (let ((tty (tui-state-tty ui)))
     (let ((c (read-char tty)))
       (if (char= c #\Esc) (tui-read-escape tty) c))))
 
