@@ -12,7 +12,7 @@
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
            ;; files
-           #:load-file #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
+           #:load-file #:write-files-and-load #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request* #:*held* #:*deliver-mid-turn*
@@ -623,7 +623,8 @@ that did resolve through, and catches the ones that never will."
 name, so a file init.lisp doesn't load yet is checked too), and print the problems."
   (let* ((problems (let ((*booting* t) (*test-boot* t))
                     (append (load-collecting (init-path) (make-broadcast-stream))
-                            (and extra (load-collecting extra (make-broadcast-stream))))))
+                            (loop for file in (if (listp extra) extra (list extra))
+                                  append (load-collecting file (make-broadcast-stream))))))
         ;; EXTRA is usually loaded by init.lisp too, so the same problem can come twice.
         (problems (append (remove-duplicates problems :test #'string= :from-end t)
                           (undefined-function-problems))))
@@ -640,13 +641,51 @@ from earlier; this shows whether the files work from scratch."
                      timeout
                      (shell-quote (namestring sb-ext:*runtime-pathname*))
                      (shell-quote (namestring sb-ext:*core-pathname*))
-                     (shell-quote (format nil "(lisping-core::print-boot-problems ~S)" extra))))
+                     (shell-quote (format nil "(lisping-core::print-boot-problems '~S)" extra))))
     (let ((mark (search "BOOT-PROBLEMS:" out)))
       (if mark
           (let ((*read-eval* nil))
             (read-from-string out t nil :start (+ mark (length "BOOT-PROBLEMS:"))))
           (list (format nil "the test boot didn't finish (exit ~A): ~A" code
                         (subseq out (max 0 (- (length out) 1500)))))))))
+
+(defun write-files-and-load (files)
+  "Write several files as ONE change. FILES is a list of (path . code). All are
+written, then a single fresh boot checks them together, so a change spanning
+files (a rename, a moved definition) never has to pass through a broken
+intermediate state. On any problem every file is put back and the running image
+isn't touched; otherwise the .lisp files are loaded into the image and
+everything is committed together."
+  (let* ((entries (loop for (path . code) in files
+                        for file = (merge-pathnames path *root*)
+                        collect (list (enough-namestring file *root*) file code (read-text file))))
+         (core (find-if (lambda (e) (member (first e) +core-files+ :test #'string=)) entries)))
+    (when core
+      (return-from write-files-and-load
+        (format nil "~A is part of the core and can't be written from here." (first core))))
+    (flet ((restore ()
+             (dolist (e entries)
+               (destructuring-bind (name file code old) e
+                 (declare (ignore name code))
+                 (if old (write-text file old) (ignore-errors (delete-file file)))))))
+      (handler-case (dolist (e entries) (write-text (second e) (third e)))
+        (error (c) (restore) (return-from write-files-and-load (format nil "NOT SAVED: ~A" c))))
+      (let* ((lisp (remove-if-not (lambda (e) (equalp (pathname-type (second e)) "lisp")) entries))
+             (fresh (and lisp (test-boot :timeout 60 :extra (mapcar #'first lisp)))))
+        (when fresh
+          (restore)
+          (return-from write-files-and-load
+            (format nil "NOT SAVED. In a fresh boot with these ~D files, loading reported:~%~{- ~A~%~}Every file was put back; the running image was not touched."
+                    (length entries) fresh)))
+        (let ((out (make-string-output-stream)) (problems '()))
+          (dolist (e lisp)
+            (setf problems (append problems (load-collecting (second e) out))))
+          (shell (format nil "git add -- ~{~A ~}" (mapcar (lambda (e) (shell-quote (first e))) entries)))
+          (shell (format nil "git commit -q -m ~A -- ~{~A ~}"
+                         (shell-quote (format nil "update ~{~A~^, ~}" (mapcar #'first entries)))
+                         (mapcar (lambda (e) (shell-quote (first e))) entries)))
+          (format nil "Wrote~:[~; and loaded~] ~{~A~^, ~}; committed together.~@[~%Loading into the running image reported (the files are kept: they boot cleanly):~%~{- ~A~%~}~]"
+                  lisp (mapcar #'first entries) problems))))))
 
 (defun write-file-and-load (path code)
   "Write CODE verbatim to PATH, relative to *root*. A .lisp file is then loaded,
@@ -837,6 +876,7 @@ Files and persistence, the way Emacs does it:
 - eval with only `code` is like M-: or *scratch*: it changes the running image and nothing else. Use it to explore and test.
 - eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. Before your running image sees it, a fresh SBCL boots with the new file in place (init.lisp plus this file); only if that's clean is it loaded into your image. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
 - Every git commit is boot-checked by a pre-commit hook, however it's made (your own shell git commit too): a commit whose files don't boot cleanly is refused. Prefer eval's file argument and edit_file; they check before writing, not just before committing.
+- (write-files-and-load '((\"lisp/a.lisp\" . \"...\") (\"lisp/b.lisp\" . \"...\"))) writes several files as ONE change: one fresh boot checks them together, so a change spanning files (a rename, a moved definition) needn't pass through broken intermediate states. All or nothing; committed together. Your edit tools can build on it.
 - (test-boot) loads init.lisp in a fresh SBCL process, like a boot but with no UI and no agent, and returns its problems (NIL when clean). Your running image can pass a check only because of state left from earlier edits (a variable defined in a file that loads later, say); run test-boot after changing files and before restarting.
 - *test-boot* is true inside test-boot's fresh process; check it before any load-time side effect.
 - Loading a file should only define things. Side effects (starting threads, writing state/, opening ports) belong in an explicit start function that init.lisp calls, because files are also loaded by test-boot's fresh check, with the same state/ directory.
