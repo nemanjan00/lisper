@@ -82,6 +82,7 @@
 (defun tui-prefix-key (ui key)
   (setf (tui-state-prefix ui) nil)
   (cond ((and (characterp key) (char-equal key #\q)) (setf *tui-quit* t))
+        ((and (characterp key) (char-equal key #\r)) (tui-force-redraw))
         ((and (characterp key) (char= key #\1)) (setf (tui-state-active ui) 0))
         ((and (characterp key) (char= key #\2)) (setf (tui-state-active ui) 1))
         ((member key '(:left :right)) (tui-cycle-pane ui key))
