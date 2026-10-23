@@ -94,13 +94,14 @@ queued echo of the same text instead of duplicating it."
   (sb-thread:with-recursive-lock (*tui-lock*)
     (when (and (eq *tui* ui)
                (not (equal text (tui-ui-shown-user ui))))
-      (when (equal text *tui-queued-text*)
+      (when (member text *tui-queued-text* :test #'equal)
         (uibuf-remove-matching
          (tui-ui-chat ui)
          (lambda (ln)
            (string= (chunks-text (uline-chunks ln))
                     (concatenate 'string "you (queued)> " text))))
-        (setf *tui-queued-text* nil))
+        (setf *tui-queued-text* (delete text *tui-queued-text*
+                                        :test #'equal :count 1)))
       (setf (tui-ui-shown-user ui) text
             (tui-ui-pending-user ui) nil
             (tui-ui-scroll ui) 0)
