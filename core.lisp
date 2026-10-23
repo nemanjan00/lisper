@@ -12,7 +12,7 @@
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
            ;; persistence
-           #:persist #:save-form #:commit #:restart-image #:*boot-errors*
+           #:persist #:save-form #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
@@ -335,6 +335,17 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
      (save-form '(progn ,@forms))
      (commit ,(format nil "persist ~A" (form-label (first forms))))))
 
+(defun skip-to-next-toplevel-form (in start)
+  "Move IN past the form starting at START, to the next line that begins with (."
+  (file-position in start)
+  (read-line in nil)
+  (loop
+    (let ((here (file-position in))
+          (line (read-line in nil)))
+      (when (or (null line) (and (plusp (length line)) (char= (char line 0) #\()))
+        (file-position in here)
+        (return line)))))
+
 (defun replay-extensions ()
   (setf *boot-errors* '())
   (let ((*replaying* t)
@@ -344,10 +355,11 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
     (with-open-file (in (extensions-path) :if-does-not-exist nil :external-format :utf-8)
       (when in
         (loop
-          (let ((form (handler-case (read in nil in)
-                        (serious-condition (c)
-                          (push (format nil "read error, rest of file skipped: ~A" c) *boot-errors*)
-                          (return)))))
+          (let* ((start (file-position in))
+                 (form (handler-case (read in nil in)
+                         (serious-condition (c)
+                           (push (format nil "read error, form skipped: ~A" c) *boot-errors*)
+                           (if (skip-to-next-toplevel-form in start) '(progn) in)))))
             (when (eq form in) (return))
             (handler-case (eval form)
               (serious-condition (c)
@@ -395,11 +407,11 @@ function updates the tool."
       text))
 
 (defun auto-persisted-p (form)
-  "Top-level def* forms and REGISTER-TOOL calls sent to eval are saved automatically."
+  "Top-level def* forms, REQUIRE and REGISTER-TOOL calls sent to eval are saved automatically."
   (and (consp form) (symbolp (car form))
        (let ((name (symbol-name (car form))))
          (or (and (> (length name) 3) (string= "DEF" name :end2 3))
-             (string= name "REGISTER-TOOL")))))
+             (member name '("REQUIRE" "REGISTER-TOOL") :test #'string=)))))
 
 (defun user-backtrace ()
   "The current backtrace, cut off where the harness's own frames begin."
@@ -464,6 +476,8 @@ function updates the tool."
 (defvar *before-request* '()
   "Functions called with the request body (an OBJ) before each model call; each returns the body to use.")
 (defvar *session-log* nil)
+(defvar *previous-session* nil
+  "Transcript (JSONL, one message per line) of the session before this boot, or NIL.")
 (defvar *trace-file* nil "Human-readable log of every event; state/trace.log points at the current one.")
 (defvar *trace-lock* (sb-thread:make-mutex :name "trace"))
 
@@ -555,7 +569,8 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
 Persistence. Your image restarts sometimes, so keep what matters:
-- Top-level def* forms (defun, defvar, defparameter, defmacro, defclass, defstruct, ...) and register-tool calls you send to eval are saved automatically to extensions.lisp and committed to git.
+- Your conversation does NOT survive a restart, and the user may restart you at any moment. Whatever you learn by exploring (facts about your environment, what works and what doesn't) is lost unless you write it down, e.g. in state/notes.md. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
+- Top-level def* forms (defun, defvar, defparameter, defmacro, defclass, defstruct, ...), require and register-tool calls you send to eval are saved automatically to extensions.lisp and committed to git. A def* nested inside let or progn is not; wrap such things in (persist ...).
 - Anything else is temporary unless you wrap it in (persist ...), e.g. (persist (setf *emit* 'my-emit)). persist evaluates now and saves the form only if it succeeds.
 - On boot, the core replays extensions.lisp in order; the last definition wins. Forms that fail are skipped and reported to you.
 - Files you write under state/ are committed too (except state/tmp and state/sessions). Use it for notes, memory and data.
@@ -668,6 +683,9 @@ Rules:
   (shell "git tag -f last-good HEAD")
   (let ((stamp (multiple-value-bind (s m h d mo y) (get-decoded-time)
                  (format nil "~D~2,'0D~2,'0D-~2,'0D~2,'0D~2,'0D" y mo d h m s))))
+    (setf *previous-session*
+          (first (sort (directory (merge-pathnames "state/sessions/*.jsonl" *root*))
+                       #'string> :key #'namestring)))
     (setf *session-log* (merge-pathnames (format nil "state/sessions/~A.jsonl" stamp) *root*))
     (ensure-directories-exist *session-log*)
     (setf *trace-file* (merge-pathnames (format nil "state/sessions/~A.trace.log" stamp) *root*))
