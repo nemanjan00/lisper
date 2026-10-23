@@ -80,10 +80,19 @@
   (maphash (lambda (_ p) (declare (ignore _)) (setf (pane-needs-redraw p) 1))
            *panes*))
 
+(defun pane-of-kind (kind)
+  "First registered pane of KIND in layout order, or NIL."
+  (loop for name in (layout-pane-names)
+        for p = (pane-get name)
+        when (and p (eq (pane-kind p) kind)) return p))
+
 (defun pane-scroll-by (name delta)
   (let ((p (pane-get name)))
     (when p
       (setf (pane-scroll p) (max 0 (+ (pane-scroll p) delta)))
+      ;; Reaching the bottom clears the "N new" marker.
+      (when (and (eq (pane-kind p) :chat) (zerop (pane-scroll p)))
+        (setf *tui-chat-new* 0))
       (setf (pane-needs-redraw p) 1)))
   (tui-dirty))
 
