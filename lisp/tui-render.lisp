@@ -5,6 +5,31 @@
 (in-package :lisping)
 
 ;;; ---------------------------------------------------------------
+;;; Frame state and perf counters. Only the redraw thread touches these.
+;;; The previous frame's grid is kept so frames can be diffed: a full
+;;; redraw (~18KB) happens only when *TUI-PREV-GRID* is NIL — on UI
+;;; start, on resize, on C-b r — never per keystroke.
+
+(defvar *tui-prev-grid* nil "Grid of the last frame written to the tty.")
+(defvar *tui-prev-cursor* nil "Last (row . col) the cursor was placed at.")
+(defvar *tui-clock-minute* nil "Minute value drawn in the status bar.")
+(defvar *tui-frames-total* 0 "TUI-DRAW calls, including skipped ones.")
+(defvar *tui-frames-skipped* 0 "Frames where nothing needed writing.")
+(defvar *tui-frames-full* 0 "Frames written as full renders.")
+(defvar *tui-bytes-total* 0 "Bytes written to the tty by TUI-DRAW.")
+
+(defun tui-perf ()
+  "Plist of frame counters for measuring redraw cost."
+  (list :frames *tui-frames-total*
+        :skipped *tui-frames-skipped*
+        :full *tui-frames-full*
+        :bytes *tui-bytes-total*))
+
+(defun tui-force-redraw ()
+  "Drop the remembered frame so the next draw is a full render (C-b r)."
+  (setf *tui-prev-grid* nil))
+
+;;; ---------------------------------------------------------------
 ;;; Hooks: events in, chat buffer out.
 
 (defun tui-install-hooks ()
