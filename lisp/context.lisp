@@ -685,7 +685,7 @@ Idempotent."
                         :required (vector "entry" "text"))
                    #'ctx-tool-offload)
     (register-tool "context_restore"
-                   "With offset/length: read that character range of the original entry (no change to the conversation). Without them: put the original back into the conversation (an offloaded result at its place; a collapsed entry as a quoted message after its collapse marker)."
+                   "Read back an original entry; `entry` is the id from [entry N]. With `offset` and `length` (characters; `length` at most 16000): read just that range of the original — the conversation is unchanged. Without them: put the original back into the conversation (an offloaded result at its place; a collapsed entry as a quoted message after its collapse marker)."
                    (obj :type "object" :properties
                         (obj :entry (obj :type "string" :description "entry id")
                              :offset (obj :type "string" :description "character offset into the original")
