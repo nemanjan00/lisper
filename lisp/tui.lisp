@@ -6,7 +6,8 @@
 
 (in-package :lisping)
 
-(declaim (ftype function tui-install-hooks tui-key-loop tui-redraw-loop))
+(declaim (ftype function tui-install-hooks tui-key-loop tui-redraw-loop
+                tui-replay-history))
 
 (defvar *tui* nil "The live TUI-UI, or NIL when the UI is not running.")
 (defvar *tui-lock* (sb-thread:make-mutex))
