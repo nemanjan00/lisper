@@ -202,7 +202,8 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (setf *emit* 'terminal-emit)
       (tui-kill-threads)
       (ignore-errors
-        (write-string (format nil "~C[0m~C[?25h~C[?1049l" #\Esc #\Esc #\Esc)
+        (write-string (format nil "~C[?1000l~C[?1006l~C[0m~C[?25h~C[?1049l"
+                              #\Esc #\Esc #\Esc #\Esc #\Esc)
                       (tui-ui-tty ui))
         (finish-output (tui-ui-tty ui)))
       ;; Restore the terminal BEFORE dropping *TUI*: the saved termios
