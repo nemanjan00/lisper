@@ -150,6 +150,21 @@ messages (x-kind) and the older text-marked markers don't count."
       (format s "- … ~D more, find them with context_search~%"
               (- (length stretch) *ctx-index-max*)))))
 
+(defun ctx-snap-range (i j)
+  "Expand [I,J] to whole tool-call units, so no tool call loses its
+result (the core would fill the hole with a false \"interrupted\"
+stub): back up over a leading run of tool results to the assistant
+that owns them; a trailing assistant carries its tool results along."
+  (let ((n (length *messages*)))
+    (loop while (and (> i 0)
+                     (equal (gethash "role" (nth i *messages*)) "tool"))
+          do (decf i))
+    (loop while (and (< j (1- n))
+                     (equal (gethash "role" (nth j *messages*)) "assistant")
+                     (gethash "tool_calls" (nth j *messages*)))
+          do (incf j))
+    (values i j)))
+
 (defun ctx-do-rewind (from-msg to-msg summary)
   (let* ((i (position from-msg *messages* :test #'eq))
          (j (position to-msg *messages* :test #'eq))
@@ -161,7 +176,11 @@ messages (x-kind) and the older text-marked markers don't count."
        "[ctx] ERROR: that stretch is the current task — rewind only FINISHED work before the latest user message.")
       (t
        (when (> i j) (rotatef i j))
+       (multiple-value-setq (i j) (ctx-snap-range i j))
        (when (and guard (> j (1- guard))) (setf j (1- guard)))
+       (when (and guard (>= i guard))
+         (return-from ctx-do-rewind
+           "[ctx] ERROR: snapped to whole tool-call units, the stretch reaches into the current task — rewind less, or finish the task first."))
        (let* ((stretch (subseq *messages* i (1+ j)))
               (from-id (ctx-entry-id (first stretch)))
               (to-id (ctx-entry-id (car (last stretch))))
