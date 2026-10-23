@@ -1156,10 +1156,14 @@ sent to the model."
                  (return (gethash "message" (aref (gethash "choices" response) 0))))
              (error (c)
                ;; A 4xx other than 429 is the request's fault: retrying the same
-               ;; request can only fail again.
-               (when (or (>= attempt 4) (client-error-p c)) (error c))
-               (emit :error :text (format nil "model call failed (attempt ~D, retrying): ~A" attempt c))
-               (sleep (* 2 attempt))))))
+               ;; request can only fail again. A 429 (rate or quota limit) only
+               ;; needs time, possibly hours for a quota window, so it's retried
+               ;; until it passes, backing off to every 5 minutes.
+               (let ((limited (and (typep c 'http-error) (eql (http-error-status c) 429))))
+                 (when (or (client-error-p c) (and (not limited) (>= attempt 4))) (error c))
+                 (let ((wait (if limited (min 300 (expt 2 (min attempt 9))) (* 2 attempt))))
+                   (emit :error :text (format nil "model call failed (attempt ~D, retrying in ~Ds): ~A" attempt wait c))
+                   (sleep wait)))))))
 
 (defun client-error-p (condition)
   "A 4xx other than 429: the request itself is wrong, so retrying it can't help."
