@@ -15,7 +15,7 @@
            #:load-file #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
-           #:send-user-message #:*before-request*
+           #:send-user-message #:*before-request* #:*held* #:*deliver-mid-turn*
            ;; the model call, replaceable (e.g. to stream)
            #:*complete* #:*last-usage* #:default-complete #:chat-url #:api-headers #:*terminal-thread* #:*queue-thread*
            ;; settings
@@ -825,6 +825,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *observers*: functions called with every event, before *emit*. The UI owns *emit*; anything else that needs to see events (your compactor, a logger) belongs in *observers*, so a UI restart can't drop it.
 - Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix.
+- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones). A message starting with ! is urgent and goes in before your next model call. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
 - The queue: text appended to state/queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
@@ -1111,11 +1112,37 @@ try again, so the session can't get stuck with a history that never fits."
         m)
       (obj :role "user" :content item)))
 
+(defvar *held* '()
+  "Messages that arrived mid-turn and wait for the turn to end, oldest first.")
+
+(defvar *deliver-mid-turn* nil
+  "When NIL (the default), messages arriving mid-turn wait until the turn is over
+and are then delivered one per turn; only urgent ones (text starting with !) go
+in before the next model call. When true, every message goes in mid-turn.")
+
+(defun urgent-item-p (item)
+  (let ((text (if (consp item) (car item) item)))
+    (and (stringp text) (plusp (length text)) (char= (char text 0) #\!))))
+
+(defun strip-urgent (item)
+  "ITEM without the leading ! that marked it urgent."
+  (flet ((strip (text) (string-left-trim " " (subseq text 1))))
+    (if (consp item) (cons (strip (car item)) (cdr item)) (strip item))))
+
 (defun take-queued-messages ()
-  "Move user messages that arrived mid-turn into the conversation."
+  "Between model calls in a turn: let urgent messages (and, with
+*DELIVER-MID-TURN*, all of them) into the conversation; hold the rest."
   (loop for item = (sb-concurrency:receive-message-no-hang *inbox*)
         while item
-        do (add-message (inbox-message item))))
+        do (cond ((urgent-item-p item) (add-message (inbox-message (strip-urgent item))))
+                 (*deliver-mid-turn* (add-message (inbox-message item)))
+                 (t (setf *held* (append *held* (list item)))))))
+
+(defun next-message ()
+  "The next message to start a turn with: a held one first, else wait for one."
+  (if *held*
+      (pop *held*)
+      (sb-concurrency:receive-message *inbox*)))
 
 (defun usage-number (&rest keys)
   "A number from *LAST-USAGE* following KEYS, or NIL."
@@ -1146,8 +1173,8 @@ try again, so the session can't get stuck with a history that never fits."
 
 (defun agent-loop ()
   (loop
-    (let ((item (sb-concurrency:receive-message *inbox*)))
-      (add-message (inbox-message item))
+    (let ((item (next-message)))
+      (add-message (inbox-message (if (urgent-item-p item) (strip-urgent item) item)))
       (handler-case (run-turn)
         (serious-condition (c)
           (emit :error :text (format nil "turn failed: ~A" c)))))))

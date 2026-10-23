@@ -76,6 +76,9 @@ OpenAI-compatible Chat Completions endpoint works; it was built against Kimi.
 - `LISPING_DOTENV=path` reads settings from another file.
 - `LISPING_HEADLESS=1` starts it without terminal input.
 - `LISPING_NO_TUI=1` skips the UI the model built for itself.
+- Messages sent while the model is mid-turn wait until it's done, then arrive
+  one per turn. Start a message with `!` to interrupt: it goes in before the
+  model's next call.
 - `pkill -USR1 -f boot.lisp` restarts the image through the supervisor;
   SIGTERM stops it (and the supervisor with it).
 
