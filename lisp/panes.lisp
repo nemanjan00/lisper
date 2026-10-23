@@ -267,10 +267,13 @@ region-width); the node's CADR is the ratio to mutate.")
   "get-internal-real-time of the last drag repaint (throttle).")
 
 (defun split-gap-at (x0 y0)
-  "The hsplit whose 1-column separator gap contains the 0-based point,
-as (node region-x region-width), or NIL. Walks the layout tree with the
-same arithmetic as LAYOUT-LEAVES, so the column found is the one
-PANES-DRAW-GAP-COLUMNS painted."
+  "The split whose separator contains the 0-based point, as
+(node region-x region-y region-w region-h direction), or NIL. For an
+:hsplit the separator is its 1-column gap; for a :vsplit there is no
+gap row, so the handle is the FIRST ROW of the lower child (its title
+row) — that row sits exactly on the boundary. Same arithmetic as
+LAYOUT-LEAVES, so the cell found is the one the user sees as the
+separator."
   (when *panes-canvas*
     (labels ((walk (tree x y w h)
                (when (consp tree)
@@ -279,7 +282,7 @@ PANES-DRAW-GAP-COLUMNS painted."
                        (declare (ignore _))
                        (let ((wa (hsplit-left-width w ratio)))
                          (if (and (= x0 (+ x wa)) (<= y y0) (< y0 (+ y h)))
-                             (list tree x w)
+                             (list tree x y w h :hsplit)
                              (or (walk a x y wa h)
                                  (walk b (+ x wa 1) y (- w wa 1) h)))))
                      (when (eq (car tree) :vsplit)
@@ -287,8 +290,10 @@ PANES-DRAW-GAP-COLUMNS painted."
                          (declare (ignore _))
                          (let ((ha (min (max 3 (round (* h (or ratio 0.5))))
                                         (- h 3))))
-                           (or (walk a x y w ha)
-                               (walk b x (+ y ha) w (- h ha))))))))))
+                           (if (and (= y0 (+ y ha)) (<= x x0) (< x0 (+ x w)))
+                               (list tree x y w h :vsplit)
+                               (or (walk a x y w ha)
+                                   (walk b x (+ y ha) w (- h ha)))))))))))
       (walk *layout* 0 0 (uigrid-w *panes-canvas*) (uigrid-h *panes-canvas*)))))
 
 (defun pane-drag-to (x0)
