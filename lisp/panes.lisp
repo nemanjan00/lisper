@@ -507,9 +507,11 @@ pane-register forms) is accepted for migration."
   (when (consp form)
     (cond
       ((eq (car form) :layout)
-       (let ((tree (getf (cdr form) :layout)))
+       ;; form = (:layout tree :panes specs); (cdr form) is (tree :panes specs),
+       ;; not a plist, so getf on it fails. Take the tree positionally.
+       (let ((tree (second form)))
          (when (consp tree) (setf *layout* tree)))
-       (dolist (spec (getf (cdr form) :panes))
+       (dolist (spec (fourth form))
          (when (and (consp spec) (stringp (getf spec :name)))
            (pane-register (getf spec :name)
                           :title (getf spec :title)
