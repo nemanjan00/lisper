@@ -625,6 +625,15 @@ the request just answered) against the chars we counted for it."
           (pane-dirty "context")
           body)))))
 
+(defun ctx-fmt-size (n)
+  "Human token counts for the context line: 1048576 -> \"1M\", 8192 -> \"8K\";
+anything not an exact multiple keeps the full ~:D form."
+  (cond ((and (>= n 1048576) (zerop (mod n 1048576)))
+         (format nil "~DM" (/ n 1048576)))
+        ((and (>= n 1024) (zerop (mod n 1024)))
+         (format nil "~DK" (/ n 1024)))
+        (t (format nil "~:D" n))))
+
 (defun pane-context-render (pane w h)
   "Context size and what the compactor has collapsed, for the pane.
 Returns chunk LISTS (a chunk is (text . attr)).  Main number is the
@@ -641,9 +650,9 @@ shown as what has grown since."
             (list
              (line
               (if pt
-                  (format nil "context: ~:D tokens (~D% of ~:D, ~D% of budget)"
+                  (format nil "context: ~:D tokens (~D% of ~A, ~D% of budget)"
                           pt
-                          (round (* 100 pt) *ctx-window*) *ctx-window*
+                          (round (* 100 pt) *ctx-window*) (ctx-fmt-size *ctx-window*)
                           (round (* 100 pt) *ctx-budget*))
                   (format nil "context: ~:D est tokens" est))
               7)
