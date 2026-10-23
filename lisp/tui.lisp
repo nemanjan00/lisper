@@ -37,17 +37,6 @@
    ;; once the text is wider than the input row (TUI-INPUT-WINDOW).
    (input-cursor :initform 0 :accessor tui-ui-input-cursor)
    (input-hscroll :initform 0 :accessor tui-ui-input-hscroll)))
-;;; The input line is an adjustable string with a fill-pointer (in the
-;;; UI struct); the cursor is the index where typing inserts and where
-;;; the terminal cursor is drawn. Kept outside the struct so the struct
-;;; definition never has to change (a live redefinition with different
-;;; slots breaks existing instances).
-
-(defvar *tui-input-cursor* 0 "Cursor index into *tui*'s input buffer.")
-(defvar *tui-input-hscroll* 0
-  "Index of the leftmost visible input character once the text is wider
-than the input row. Adjusted by TUI-INPUT-WINDOW at draw time.")
-
 (defun tui-dirty ()
   "Ask the redraw thread to redraw."
   (sb-thread:with-recursive-lock (*tui-lock*)
