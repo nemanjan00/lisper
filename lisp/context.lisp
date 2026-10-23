@@ -587,27 +587,37 @@ the request just answered) against the chars we counted for it."
                         'vector))
           (pane-dirty "context")
           body)))))
-;;; ----------------------------------------------------------- the pane
-
 (defun pane-context-render (pane w h)
   "Context size and what the compactor has collapsed, for the pane.
-Returns chunk LISTS (a chunk is (text . attr))."
+Returns chunk LISTS (a chunk is (text . attr)).  Main number is the
+REAL prompt_tokens of the last request; the local estimate is only
+shown as what has grown since."
   (declare (ignore pane w))
   (flet ((line (text attr) (list (cons text attr))))
     (let* ((usage *last-usage*)
-           (pt (and (hash-table-p usage) (gethash "prompt_tokens" usage)))
-           (est-visible (reduce #'+ (mapcar (lambda (m) (ctx-est-tokens (or (gethash "content" m) "")))
-                                            *messages*)))
-           (lines (list (line (format nil "context: ~:[?~;~:D~] / ~:D tokens (~D%)"
-                                      pt pt *ctx-window*
-                                      (if pt (round (* 100 pt) *ctx-window*) 0))
-                              7)
-                        (line (format nil "visible: ~D messages (~DK est)"
-                                      (length *messages*) (round est-visible 1000))
-                              8))))
+           (pt (and (hash-table-p usage)
+                    (integerp (gethash "prompt_tokens" usage))
+                    (gethash "prompt_tokens" usage)))
+           (est *ctx-last-est*)
+           (lines
+            (list
+             (line
+              (if pt
+                  (format nil "context: ~:D tokens (~D% of ~:D, ~D% of budget)"
+                          pt
+                          (round (* 100 pt) *ctx-window*) *ctx-window*
+                          (round (* 100 pt) *ctx-budget*))
+                  (format nil "context: ~:D est tokens" est))
+              7)
+             (line
+              (format nil "+~:D est since · ~D messages"
+                      (if pt (max 0 (- est pt)) 0)
+                      (length *messages*))
+              8))))
       (dolist (st *ctx-stretches*)
         (push (line (format nil "rewind e~D…e~D: ~A (~DK)"
-                            (first st) (second st) (third st) (round (sixth st) 1000))
+                            (first st) (second st) (third st)
+                            (round (sixth st) 1000))
                     8)
               lines))
       (when (plusp *ctx-offloaded-count*)
@@ -616,7 +626,6 @@ Returns chunk LISTS (a chunk is (text . attr))."
         (push (line "milestone note: pending" 3) lines))
       (setf lines (nreverse lines))
       (subseq lines 0 (min h (length lines))))))
-
 ;;; --------------------------------------------------------------- start
 
 (defun ctx-init-panes ()
