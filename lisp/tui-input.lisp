@@ -105,6 +105,11 @@ modifier/motion bits we ignore."
 
 (defun tui-normal-key (ui key)
   (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-ui-prefix ui) t))
+        ;; The terminal wheel becomes Up/Down arrows when the host tmux
+        ;; has mouse mode off — scroll a few lines per notch.
+        ((eq key :up) (tui-scroll-chat-by ui 3))
+        ((eq key :down) (tui-scroll-chat-by ui -3))
+        ((and (consp key) (eq (first key) :mouse)) (tui-mouse ui key))
         ((eq key :pgup) (tui-scroll-chat ui :pgup))
         ((eq key :pgdn) (tui-scroll-chat ui :pgdn))
         ((and (characterp key)
