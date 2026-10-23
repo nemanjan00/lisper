@@ -4,7 +4,7 @@
 
 (in-package :lisping)
 
-(declaim (ftype function tui-draw-chat tui-draw-separator
+(declaim (ftype function tui-draw-separator
                 tui-tool-call-line tui-tool-summary tui-chat-result
                 tui-replay-history panes-ensure-canvas panes-draw))
 (declaim (special *todos* *panes-canvas*))

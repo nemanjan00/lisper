@@ -5,3 +5,4 @@
 [x] test: live pane update
 [ ] Todo pane: render [ ]/[x] checkboxes, done ones dimmed
 [ ] Input line: cursor movement with Left/Right/Home/End, insert/backspace at cursor, draw terminal cursor there; move pane switching to C-b Left/Right and C-b 1/2/...
+[ ] Notes hygiene: annotate each lesson in state/notes.md with evidence (commit hash / tui-crash.log timestamp); drop unverifiable ones on next review
