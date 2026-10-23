@@ -96,13 +96,36 @@ read-char on their own /dev/tty stream and would steal keystrokes."
                (search "tui-" (or (sb-thread:thread-name th) "")))
       (ignore-errors (sb-thread:terminate-thread th)))))
 
+(defvar *tui-size-checked-at* 0 "Last time the terminal size was probed.")
+(sb-ext:defglobal *tui-sigwinch-tick* 0 "Bumped by the SIGWINCH handler.")
+(defvar *tui-sigwinch-seen* 0 "Value of *TUI-SIGWINCH-TICK* last handled.")
+
+(defun tui-install-sigwinch ()
+  "Notice terminal resizes promptly instead of waiting for the poll."
+  (ignore-errors
+    (sb-sys:enable-interrupt sb-unix:sigwinch
+      (lambda (sig code scp)
+        (declare (ignore sig code scp))
+        (sb-ext:atomic-incf *tui-sigwinch-tick*)))))
+
+(defun tui-maybe-update-size (ui)
+  "Probe the terminal size at most every 2 seconds, or right away after
+a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
+  (let ((now (get-universal-time)))
+    (when (or (>= now (+ *tui-size-checked-at* 2))
+              (> *tui-sigwinch-tick* *tui-sigwinch-seen*))
+      (setf *tui-size-checked-at* now
+            *tui-sigwinch-seen* *tui-sigwinch-tick*)
+      (tui-update-size ui))))
+
 (defun tui-update-size (ui)
   (multiple-value-bind (rows cols) (tty-size)
     (when (and rows cols (plusp rows) (plusp cols)
                (or (/= rows (tui-state-height ui))
                    (/= cols (tui-state-width ui))))
       (setf (tui-state-height ui) rows
-            (tui-state-width ui) cols)
+            (tui-state-width ui) cols
+            *tui-prev-grid* nil)         ; size changed: next frame is full
       (tty-write (format nil "~C[2J" #\Esc)))))
 
 (defun tui-open-tty ()
