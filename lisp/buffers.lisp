@@ -150,16 +150,23 @@
               (setf (char chars (+ x (* y w))) fixed))))))))
 
 (defun ui-grid-render (g)
-  "Render a grid to a string with SGR codes, row by row."
+  "Render a grid to a string with SGR codes. The cursor is positioned
+explicitly at the start of every row, so one bad row cannot shift or
+scroll the rest of the screen."
   (with-output-to-string (out)
     (let ((w (uigrid-w g))
           (prev -1))
       (dotimes (y (uigrid-h g))
+        (format out "~C[~D;1H" #\Esc (1+ y))
         (dotimes (x w)
           (let ((i (+ x (* y w))))
             (write-string (ui-attr-string (aref (uigrid-attrs g) i) prev) out)
             (setf prev (aref (uigrid-attrs g) i))
             (write-char (char (uigrid-chars g) i) out)))
         (write-string (ui-attr-string 7 prev) out)
-        (setf prev 7)
-        (terpri out)))))
+        (setf prev 7)))))
+
+(defun ui-safe-char (ch)
+  "Control characters never go into a cell: they would move the cursor
+mid-frame. Map them (and NUL) to a space."
+  (if (or (char< ch #\Space) (char= ch #\Rubout)) #\Space ch))
