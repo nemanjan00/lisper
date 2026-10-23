@@ -29,8 +29,11 @@ for a message object removed by a rewind.")
 (defvar *ctx-stretches* nil
   "List of (from-id to-id short-summary marker-message count est-tokens).")
 (defvar *ctx-offloaded-count* 0)
-(defvar *ctx-window* 1048576 "Assumed context window in tokens (K3: 1M).")
-(defvar *ctx-note-at* 70 "Percent of the window at which to note.")
+(defvar *ctx-window* 1048576 "Context window in tokens (K3: 1M).")
+(defvar *ctx-budget* 200000
+  "Working budget in tokens: cost, latency and quality suffer long
+before the window is full, so thresholds are percents of THIS.")
+(defvar *ctx-note-at* 70 "Percent of the budget at which to note.")
 (defvar *ctx-near-at* 80 "Percent at which the note becomes an instruction.")
 (defvar *ctx-noted-percent* 0 "Last noted percent (ratchets +5; resets on drops).")
 (defvar *ctx-pending-note* nil "Milestone note waiting to be injected.")
