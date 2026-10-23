@@ -181,12 +181,42 @@ modifier/motion bits we ignore."
       (tui-show-queued ui text)
       (send-user-message text))))
 
-(defun tui-input-backspace (ui)
+(defun tui-cursor-move (ui delta)
+  "Move the input cursor DELTA characters, clamped to the buffer."
+  (let ((len (length (tui-ui-input ui))))
+    (setf *tui-input-cursor* (max 0 (min len (+ *tui-input-cursor* delta))))))
+
+(defun tui-input-insert (ui c)
+  "Insert C at the cursor, shifting the tail right. REPLACE copies as if
+via an intermediate, so the overlapping shift is safe."
+  (let* ((in (tui-ui-input ui))
+         (len (length in)))
+    (vector-push-extend #\Nul in)     ; grow one slot at the end
+    (replace in in :start1 (1+ *tui-input-cursor*)
+             :start2 *tui-input-cursor* :end2 len)
+    (setf (char in *tui-input-cursor*) c)
+    (incf *tui-input-cursor*)))
+
+(defun tui-input-delete (ui)
+  "Delete the character under the cursor (the Delete key)."
   (let ((in (tui-ui-input ui)))
-    (when (plusp (length in)) (decf (fill-pointer in)))))
+    (when (< *tui-input-cursor* (length in))
+      (replace in in :start1 *tui-input-cursor*
+               :start2 (1+ *tui-input-cursor*))
+      (decf (fill-pointer in)))))
+
+(defun tui-input-backspace (ui)
+  "Delete the character before the cursor."
+  (let ((in (tui-ui-input ui)))
+    (when (plusp *tui-input-cursor*)
+      (replace in in :start1 (1- *tui-input-cursor*)
+               :start2 *tui-input-cursor*)
+      (decf (fill-pointer in))
+      (decf *tui-input-cursor*))))
 
 (defun tui-clear-input (ui)
-  (setf (fill-pointer (tui-ui-input ui)) 0))
+  (setf (fill-pointer (tui-ui-input ui)) 0
+        *tui-input-cursor* 0))
 
 (defun tui-ctrl-d (ui)
   (if (zerop (length (tui-ui-input ui)))
