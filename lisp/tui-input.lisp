@@ -150,6 +150,19 @@ modifier/motion bits we ignore."
       (setf *tui-quit* t)
       (tui-input-backspace ui)))
 
+(defun tui-scroll-chat-by (ui delta)
+  (setf (tui-ui-scroll ui) (max 0 (+ (tui-ui-scroll ui) delta))))
+
+(defun tui-mouse (ui key)
+  "Handle an SGR mouse event (:mouse b x y kind). Only the wheel scrolls,
+and only while the pointer is over the chat pane (not input or status)."
+  (destructuring-bind (_ b x y kind) key
+    (declare (ignore _))
+    (when (and (eq kind :press)
+               (<= 64 b 67)                    ; wheel up/down (h-wheel too)
+               (<= 2 y (- (tui-ui-height ui) 2))) ; chat rows, 1-based
+      (tui-scroll-chat-by ui (if (evenp b) 3 -3)))))
+
 (defun tui-scroll-chat (ui key)
   (let* ((h (max 1 (- (tui-ui-height ui) 4)))
          (delta (max 1 (floor h 2)))
