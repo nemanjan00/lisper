@@ -58,15 +58,48 @@ Writes and loads the result via the core; returns a status string."
       (loop for line = (read-line s nil nil)
             while line do (write-line line out)))))
 
+(defun rf-form-start (text pos)
+  "Advance POS past whitespace, ;-to-EOL comments and (nested) #|...|#
+blocks: the position of the next form's opening character. READ skips
+the same trivia, so the char at the result is what it consumed first —
+a quoting prefix (', #', #,) included."
+  (let ((n (length text)))
+    (loop
+      (when (>= pos n) (return pos))
+      (let ((c (char text pos)))
+        (cond ((member c '(#\Space #\Tab #\Newline #\Return) :test #'char=)
+               (incf pos))
+              ((char= c #\;)
+               (let ((nl (position #\Newline text :start pos)))
+                 (setf pos (if nl (1+ nl) n))))
+              ((and (char= c #\#) (< (1+ pos) n)
+                    (char= (char text (1+ pos)) #\|))
+               (let ((depth 1) (i (+ pos 2)))
+                 (loop while (and (< i n) (plusp depth))
+                       do (cond ((and (char= (char text i) #\#)
+                                      (< (1+ i) n)
+                                      (char= (char text (1+ i)) #\|))
+                                 (incf depth) (incf i 2))
+                                ((and (char= (char text i) #\|)
+                                      (< (1+ i) n)
+                                      (char= (char text (1+ i)) #\#))
+                                 (decf depth) (incf i 2))
+                                (t (incf i))))
+                 (setf pos i)))
+              (t (return pos)))))))
+
 (defun rf-form-ranges (text)
   "Read TEXT with the Lisp reader; return (form start end) per top-level
-form, START/END being character positions into TEXT."
+form, START/END being character positions into TEXT. START is advanced
+past inter-form whitespace and comments (RF-FORM-START): the raw
+position before READ is the previous form's end, and replacing from
+there would silently delete blank lines and comment headers."
   (let ((*read-eval* nil))
     (with-input-from-string (s text)
-      (loop for start = (file-position s)
+      (loop for raw = (file-position s)
             for form = (read s nil :eof)
             until (eq form :eof)
-            collect (list form start (file-position s))))))
+            collect (list form (rf-form-start text raw) (file-position s))))))
 
 (defun rf-defines-p (form name)
   (and (consp form)
