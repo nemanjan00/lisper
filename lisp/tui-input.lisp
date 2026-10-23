@@ -136,26 +136,37 @@
 ;;; ---------------------------------------------------------------
 ;;; Weather pane: wttr.in/Belgrade, refreshed every few minutes.
 
-(defun tui-weather-loop ()
-  (loop while *tui*
+(defun tui-weather-loop (ui)
+  (loop while (and *tui* (eq *tui* ui))
         do (handler-case
                (progn
-                 (tui-weather-refresh)
+                 (tui-weather-refresh ui)
                  (dotimes (k 300)
-                   (unless *tui* (return))
+                   (unless (and *tui* (eq *tui* ui)) (return))
                    (sleep 1)))
-             (serious-condition (c) (tui-crash c)))))
+             (serious-condition (c)
+               (when (eq *tui* ui) (tui-crash c))))))
 
-(defun tui-weather-refresh ()
+(defun tui-narrow-line (line)
+  "Replace characters that are wide or ambiguous on a terminal with a
+space: anything above Latin-1 except the box-drawing range."
+  (map 'string (lambda (ch)
+                 (let ((code (char-code ch)))
+                   (if (or (< code 256)
+                           (<= #x2500 code #x257f))
+                       ch #\Space)))
+       line))
+
+(defun tui-weather-refresh (ui)
   (multiple-value-bind (out code) (shell "curl -s --max-time 20 'wttr.in/Belgrade?n'")
     (declare (ignore code))
     (when (and (stringp out) (plusp (length out)))
       (let ((buf (make-uibuf :align :top)))
         (dolist (line (ui-split-lines out))
           (unless (or (search "Follow" line) (search "igor_chubin" line))
-            (uibuf-append buf (ui-parse-ansi line) :fresh t)))
+            (uibuf-append buf (ui-parse-ansi (tui-narrow-line line)) :fresh t)))
         (sb-thread:with-mutex (*tui-lock*)
-          (when *tui*
-            (setf (tui-state-weather *tui*) buf
-                  (tui-state-weather-at *tui*) (get-universal-time))))
+          (when (eq *tui* ui)
+            (setf (tui-state-weather ui) buf
+                  (tui-state-weather-at ui) (get-universal-time))))
         (tui-dirty)))))
