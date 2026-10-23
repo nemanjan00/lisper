@@ -11,6 +11,7 @@
 (in-package :lisping)
 
 (declaim (ftype function tui-visible-lines tui-chat-add tui-dirty))
+
 (declaim (special *tui* *tui-lock* *todos* *tui-prev-grid*))
 
 ;;; PANE is a DEFCLASS (not defstruct) so slots can be added and
@@ -42,6 +43,7 @@
 ;;; user was scrolled up (the "↓ N new" marker), and the width the chat
 ;;; pane last rendered at (for wrapping new lines when pinning).
 (defvar *tui-chat-new* 0)
+
 (defvar *tui-chat-pane-width* nil)
 
 (defvar *panes-canvas* nil "Persistent grid holding the panes' area.")
@@ -263,6 +265,7 @@ PANES-DRAW-SEPARATOR)."
 (defvar *pane-drag* nil
   "While an hsplit separator is dragged: (split-node region-x
 region-width); the node's CADR is the ratio to mutate.")
+
 (defvar *pane-drag-last-draw* 0
   "get-internal-real-time of the last drag repaint (throttle).")
 
