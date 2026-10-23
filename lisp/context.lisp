@@ -700,6 +700,11 @@ Idempotent."
       (setf *system-prompt*
             (concatenate 'string *system-prompt* "
 - [context:compactor] Keep your context small from the start: as soon as a part of the work is done (files read and understood, a step completed), collapse it with context_rewind {from, to, summary}, keeping in the summary what later work needs verbatim (paths, line numbers, ids, decisions). Big tool results you no longer need: context_offload {entry, text}. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
+    (when (and (stringp *system-prompt*)
+               (not (search "[eval:docs]" *system-prompt*)))
+      (setf *system-prompt*
+            (concatenate 'string *system-prompt* "
+- [eval:docs] eval returns the forms' values as the tool result (\"=> value, ...\", or an error backtrace); with `file` it returns a status line (\"Wrote and loaded ...; committed\", or NOT SAVED with the boot problems). Example: {\"code\":\"(+ 1 2)\"} => 3.")))
     (register-tool "context_rewind"
                    "Collapse a finished stretch of the conversation — entries `from` through `to` inclusive (`to` defaults to `from`; ids are the N in [entry N] marks, e.g. \"12\" or \"e12\") — replacing it with your `summary` plus an index of what it replaced. Rewind only FINISHED work before the latest user message. The originals stay in the session log: context_search finds them, context_restore reads them back. The summary keeps what later work needs verbatim (paths, line numbers, ids, decisions) and ends with a Keywords: line. Example: {\"from\":\"40\",\"to\":\"52\",\"summary\":\"Weather pane done, lisp/panes.lisp ...\\nKeywords: weather pane\"}. Returns a confirmation naming the collapsed range."
                    (obj :type "object" :properties
