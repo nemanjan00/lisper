@@ -187,8 +187,6 @@ rows belong to no pane and are ignored."
              (pane-focus-pane target))))))
 
 (defun tui-scroll-chat (ui key)
-  (let* ((h (max 1 (- (tui-ui-height ui) 4)))
-         (delta (max 1 (floor h 2)))
-         (s (tui-ui-scroll ui)))
-    (setf (tui-ui-scroll ui)
-          (max 0 (if (eq key :pgup) (+ s delta) (- s delta))))))
+  (declare (ignore ui))
+  "Page the FOCUSED pane up or down."
+  (pane-scroll-by *pane-focus* (if (eq key :pgup) 15 -15)))
