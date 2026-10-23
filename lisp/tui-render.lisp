@@ -81,22 +81,6 @@ escalates to TUI-CRASH, which stops and supervises a restart."
               (when (eq *tui* ui) (tui-display-error ui c))))))))
 
 
-(defun tui-before-request (body)
-  "Show the newest user message (covers the queue and the pre-restart core
-that does not emit :user events)."
-  (let ((ui *tui*))
-    (when ui
-      (handler-bind ((serious-condition #'tui-log-crash-at-signal))
-        (handler-case
-            (let* ((msgs (gethash "messages" body))
-                   (last (and (vectorp msgs) (plusp (length msgs))
-                              (aref msgs (1- (length msgs))))))
-              (when (and last (string= (gethash "role" last) "user")
-                         (stringp (gethash "content" last)))
-                (tui-show-user ui (gethash "content" last))))
-          (serious-condition (c) (when (eq *tui* ui) (tui-crash c))))))
-  body))
-
 (defun tui-show-user (ui text)
   "Log a user message unless it is already on screen. Upgrades the dimmed
 queued echo of the same text instead of duplicating it."
