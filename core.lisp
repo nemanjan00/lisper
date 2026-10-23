@@ -494,10 +494,23 @@ also added to *LOAD-PROBLEMS*, so nested loads are reported to the outer one."
                                (if (skip-to-next-toplevel-form in start) '(progn) in)))))
                 (when (eq form in) (return))
                 (handler-case
-                    (handler-bind ((warning (lambda (w)
-                                              (unless (typep w 'style-warning)
-                                                (problem start (form-label form) w)))))
-                      (eval form))
+                    (let ((compile-errors '()))
+                      ;; A form that fails to compile (say, a bad macro call inside a
+                      ;; defun) still evaluates: SBCL only signals sb-c:compiler-error,
+                      ;; which is neither an error nor a warning, and the function then
+                      ;; fails when called. Count it as a problem.
+                      (handler-bind ((warning (lambda (w)
+                                                (unless (typep w 'style-warning)
+                                                  (problem start (form-label form) w))))
+                                     (sb-c:compiler-error
+                                       (lambda (c)
+                                         (let ((inner (ignore-errors (sb-int:encapsulated-condition c))))
+                                           (unless (member (princ-to-string (or inner c)) compile-errors
+                                                           :test #'string=)
+                                             (push (princ-to-string (or inner c)) compile-errors)
+                                             (problem start (format nil "~A (compile error)" (form-label form))
+                                                      (or inner c)))))))
+                        (eval form)))
                   (serious-condition (c)
                     (problem start (form-label form) c))))))))
     (nreverse problems)))
