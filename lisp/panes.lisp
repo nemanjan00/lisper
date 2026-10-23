@@ -257,6 +257,50 @@ PANES-DRAW-SEPARATOR)."
           (return name))))))
 
 ;;; ---------------------------------------------------------------
+;;; Separator dragging (mouse): press on an hsplit's gap column grabs
+;;; that split; motion updates its ratio; release saves the layout.
+
+(defvar *pane-drag* nil
+  "While an hsplit separator is dragged: (split-node region-x
+region-width); the node's CADR is the ratio to mutate.")
+(defvar *pane-drag-last-draw* 0
+  "get-internal-real-time of the last drag repaint (throttle).")
+
+(defun split-gap-at (x0 y0)
+  "The hsplit whose 1-column separator gap contains the 0-based point,
+as (node region-x region-width), or NIL. Walks the layout tree with the
+same arithmetic as LAYOUT-LEAVES, so the column found is the one
+PANES-DRAW-GAP-COLUMNS painted."
+  (when *panes-canvas*
+    (labels ((walk (tree x y w h)
+               (when (consp tree)
+                 (if (eq (car tree) :hsplit)
+                     (destructuring-bind (_ ratio a b) tree
+                       (declare (ignore _))
+                       (let ((wa (hsplit-left-width w ratio)))
+                         (if (and (= x0 (+ x wa)) (<= y y0) (< y0 (+ y h)))
+                             (list tree x w)
+                             (or (walk a x y wa h)
+                                 (walk b (+ x wa 1) y (- w wa 1) h)))))
+                     (when (eq (car tree) :vsplit)
+                       (destructuring-bind (_ ratio a b) tree
+                         (declare (ignore _))
+                         (let ((ha (min (max 3 (round (* h (or ratio 0.5))))
+                                        (- h 3))))
+                           (or (walk a x y w ha)
+                               (walk b x (+ y ha) w (- h ha))))))))))
+      (walk *layout* 0 0 (uigrid-w *panes-canvas*) (uigrid-h *panes-canvas*)))))
+
+(defun pane-drag-to (x0)
+  "Move the dragged split's separator so its gap column is at 0-based
+X0, clamped so both children keep HSPLIT-LEFT-WIDTH's 10-column
+minimum."
+  (when *pane-drag*
+    (destructuring-bind (node rx rw) *pane-drag*
+      (let ((wa (min (max 10 (- x0 rx)) (- rw 11))))
+        (setf (cadr node) (/ (float wa 1.0d0) (float (max 1 (1- rw)) 1.0d0)))))))
+
+;;; ---------------------------------------------------------------
 ;;; Drawing
 
 (defun panes-ensure-canvas (w h)
