@@ -131,6 +131,12 @@ modifier/motion bits we ignore."
   (setf (tui-ui-prefix ui) nil)
   (cond ((and (characterp key) (char-equal key #\q)) (setf *tui-quit* t))
         ((and (characterp key) (char-equal key #\r)) (tui-force-redraw))
+        ;; Pane switching: arrows step through panes in layout order,
+        ;; digits focus the Nth pane directly.
+        ((eq key :left) (pane-focus-step -1))
+        ((eq key :right) (pane-focus-step 1))
+        ((and (characterp key) (digit-char-p key))
+         (pane-focus-nth (digit-char-p key)))
         (t nil)))
 
 (defun tui-normal-key (ui key)
