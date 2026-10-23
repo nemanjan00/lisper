@@ -174,16 +174,14 @@ dim) so a shortened line never passes for a complete one."
 
 (defun tui-chat-result (ui name text)
   "Short form of a tool result, set apart from the conversation: dim,
-indented. Up to 2 lines are shown; more collapses into a single
-\"<- N lines\" count line so machine output never reads as chat."
+indented. Up to 2 lines are shown; longer output collapses into a
+single \"<- N lines\" count line so machine output (especially screen
+captures of the UI itself) never reads as chat."
   (declare (ignore name))
   (when (stringp text)
     (let* ((lines (tui-chunk-lines (ui-parse-ansi (str-truncate text 2000))))
            (n (length lines)))
       (cond ((> n 2)
-             (tui-chat-add ui (list (cons (concatenate 'string
-                                                       "  " (chunks-text (first lines)))
-                                          8)))
              (tui-chat-add ui (list (cons (format nil "  <- ~D lines" n) 8))))
             (t
              (dolist (line lines)
