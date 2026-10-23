@@ -44,14 +44,44 @@ not enough — it would faithfully re-blit a corrupted *panes-canvas*."
   (unless (member 'tui-before-request *before-request*)
     (setf *before-request* (append *before-request* (list 'tui-before-request)))))
 
+(defvar *tui-display-error-times* nil
+  "Recent universal-times of display (per-event formatting) errors, for
+the flood detector in TUI-DISPLAY-ERROR.")
+
+(defun tui-display-error (ui condition)
+  "One event failed to render: log it, note it in the chat, stay alive.
+Ten in a minute means the renderer itself is broken — escalate to
+TUI-CRASH so the supervised-restart path engages."
+  (tui-log-crash condition)
+  (let ((now (get-universal-time)))
+    (setf *tui-display-error-times*
+          (remove-if (lambda (t0) (> (- now t0) 60)) *tui-display-error-times*))
+    (push now *tui-display-error-times*)
+    (if (>= (length *tui-display-error-times*) 10)
+        (tui-crash (format nil "display error flood: ~A" condition))
+        (ignore-errors
+          (sb-thread:with-recursive-lock (*tui-lock*)
+            (when (eq *tui* ui)
+              (uibuf-append (tui-ui-chat ui)
+                            (list (cons (format nil "[display error: ~A]" condition) 8))
+                            :fresh t)))
+          (tui-dirty))))
+  nil)
+
 (defun tui-emit (event)
-  "Receives every agent event. With no UI running, print like the core."
+  "Receives every agent event.  A failure to FORMAT one event must not
+take the UI down (21:26: an unlucky eval arg string killed the whole
+display): log it, count it, show a '[display error]' line in the chat
+and keep going.  Only a flood of display errors (10 in a minute)
+escalates to TUI-CRASH, which stops and supervises a restart."
   (let ((ui *tui*))
     (if (null ui)
         (terminal-emit event)
         (handler-bind ((serious-condition #'tui-log-crash-at-signal))
           (handler-case (tui-log-event ui event)
-            (serious-condition (c) (when (eq *tui* ui) (tui-crash c))))))))
+            (serious-condition (c)
+              (when (eq *tui* ui) (tui-display-error ui c))))))))
+
 
 (defun tui-before-request (body)
   "Show the newest user message (covers the queue and the pre-restart core
@@ -224,8 +254,9 @@ the first real form inside — \"(progn\" alone says nothing."
   form)
 
 (defun tui-collect-defs (form &optional acc)
-  "Names of definitions anywhere in FORM: \"defun foo\", \"defmacro
-bar\", ... ACCUM is accumulated in reverse."
+  "Names of definitions anywhere in FORM: 'defun foo', 'defmacro
+bar', ... ACCUM is accumulated in reverse.  Same dotted-pair rule as
+TUI-COLLECT-CALLS: never dolist a raw subform."
   (cond ((not (consp form)) acc)
         ((and (symbolp (car form))
               (member (car form) '(defun defmacro defvar defparameter defstruct)))
@@ -235,26 +266,32 @@ bar\", ... ACCUM is accumulated in reverse."
                acc))
         ((and (symbolp (car form))
               (member (car form) '(progn let let* labels flet handler-case)))
-         (dolist (sub (cdr form))
-           (setf acc (tui-collect-defs sub acc)))
+         (loop for x on (cdr form) while (consp x)
+               do (setf acc (tui-collect-defs (car x) acc)))
          acc)
         (t acc)))
 
+
 (defun tui-collect-calls (form &optional acc (depth 0))
   "Function symbols called by FORM, unique, discovery order, for
-summaries like \"tui-start, sleep, shell\"."
+summaries like 'tui-start, sleep, shell'.  Never DOLISTs a subform:
+eval args may hold alists whose CDRs are source STRINGS, and LISTP is
+vacuous on conses (true for dotted pairs) — walk the cdr chain with
+'for x on' instead, stopping at the first atom (the 21:26 UI kill)."
   (cond ((or (not (consp form)) (> depth 4)) acc)
         ((and (symbolp (car form))
               (not (member (car form) '(quote lambda function block return-from
                                        prog1 multiple-value-progn))))
          (unless (member (car form) acc) (setf acc (cons (car form) acc)))
-         (dolist (arg (cdr form))
-           (setf acc (tui-collect-calls arg acc (1+ depth))))
+         (loop for x on (cdr form) while (consp x)
+               do (setf acc (tui-collect-calls (car x) acc (1+ depth))))
          acc)
         (t
-         (dolist (sub form)
-           (setf acc (tui-collect-calls sub acc (1+ depth))))
+         (loop for x on form while (consp x)
+               do (setf acc (tui-collect-calls (car x) acc (1+ depth))))
          acc)))
+
+
 
 (defun tui-eval-summary (code)
   "One line describing an eval's CODE: the definitions it makes, else
@@ -290,8 +327,19 @@ path; eval -> what it defines or calls; otherwise the short args."
 
 (defun tui-tool-call-line (name args)
   "Chunk-list for a tool-call line: dim and indented, set apart from
-the conversation."
-  (list (cons (format nil "  -> ~A" (tui-tool-summary name args)) 8)))
+the conversation.  Summarizing must never kill the emit path: on any
+error fall back to the eval code's first line (or just the name)."
+  (list (cons (format nil "  -> ~A"
+                      (handler-case (tui-tool-summary name args)
+                        (serious-condition ()
+                          (let ((code (and (hash-table-p args)
+                                           (gethash "code" args))))
+                            (if (stringp code)
+                                (format nil "eval: ~A"
+                                        (str-truncate (first-line code) 60))
+                                (format nil "~A" name))))))
+              8)))
+
 
 (defun tui-tool-name (tc)
   "Tool name of a *messages* tool_call entry (OpenAI layout: under

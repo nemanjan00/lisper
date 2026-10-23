@@ -214,6 +214,15 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (tui-dirty)
       t)))
 
+(defvar *tui-crash-times* nil
+  "Universal-times of recent TUI-CRASH calls; 3 within a minute give up
+the auto-restart (the renderer is broken, a human must look).")
+
+(defvar *tui-stop-token* 0
+  "Bumped by TUI-STOP/TUI-CRASH; a pending auto-restart thread only
+restarts the UI if the token is unchanged, so a manual stop is not
+undone by a stale timer.")
+
 (defun tui-stop ()
   "Stop the UI and give the terminal back in a sane state."
   (let ((ui *tui*))
@@ -233,6 +242,7 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (setf (tui-ui-threads ui) nil)
       (start-terminal-input))
     (setf *tui* nil)
+    (incf *tui-stop-token*)
     (not (null ui))))
 
 (defun tui-log-crash (condition)
@@ -245,9 +255,43 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (format s "~A~%" condition)
       (sb-debug:print-backtrace :count 20 :stream s))))
 
+(defun tui-schedule-restart (condition)
+  "After TUI-CRASH: restart the UI a few seconds later with backoff,
+unless crashes are piling up (3 in a minute -> give up and say so).
+Announces both decisions on the (text) terminal."
+  (let ((now (get-universal-time)))
+    (setf *tui-crash-times*
+          (remove-if (lambda (t0) (> (- now t0) 60)) *tui-crash-times*))
+    (push now *tui-crash-times*)
+    (cond ((>= (length *tui-crash-times*) 3)
+           (terminal-emit
+            (list :type :error
+                  :text (format nil "TUI crashed ~A times in a minute; giving up on auto-restart. Fix the cause, then run (tui-start). Last crash: ~A"
+                                (length *tui-crash-times*) condition))))
+          (t
+           (let* ((attempt (length *tui-crash-times*))
+                  (delay (min 15 (expt 2 attempt)))
+                 (token *tui-stop-token*))
+             (terminal-emit
+              (list :type :info
+                    :text (format nil "TUI crashed (~A); restarting in ~As (attempt ~A)."
+                                  condition delay attempt)))
+             (sb-thread:make-thread
+              (lambda ()
+                (sleep delay)
+                (when (and (null *tui*) (= token *tui-stop-token*))
+                  (unless (ignore-errors (tui-start))
+                    (terminal-emit
+                     (list :type :error
+                           :text "TUI auto-restart failed; run (tui-start) manually once the cause is fixed.")))))
+              :name "tui-restart"))))))
+
 (defun tui-crash (condition)
-  "The UI broke: restore the terminal, keep the agent alive."
+  "The UI broke: restore the terminal, keep the agent alive, schedule a
+supervised restart (TUI-SCHEDULE-RESTART) instead of dying silently —
+the user used to be the crash detector."
   (tui-log-crash condition)
+  (incf *tui-stop-token*)
   (let ((ui *tui*))
     (tui-kill-threads)
     (when ui
@@ -264,5 +308,5 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (setf *emit* 'terminal-emit)
       (start-terminal-input))
     (setf *tui* nil))
-  (terminal-emit (list :type :error
-                       :text (format nil "TUI died and was stopped: ~A" condition))))
+  (tui-schedule-restart condition))
+

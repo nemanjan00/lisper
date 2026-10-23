@@ -1,5 +1,9 @@
 ;;;; init.lisp: loaded at boot, like Emacs's init.el.
 
+;; The user chose the bigger model (K3, 1M-token context); keep it across
+;; restarts.  "kimi-k3" is an accepted alias for the same endpoint.
+(setf lisping-core:*model* "k3")
+
 ;; Terminal/UI toolkit: ANSI attribute parsing, then line buffers and the
 ;; character-cell grid, then the terminal UI built on top of them.
 (load-file "lisp/ansi.lisp")

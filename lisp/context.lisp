@@ -29,7 +29,7 @@ for a message object removed by a rewind.")
 (defvar *ctx-stretches* nil
   "List of (from-id to-id short-summary marker-message count est-tokens).")
 (defvar *ctx-offloaded-count* 0)
-(defvar *ctx-window* 131072 "Assumed context window in tokens (Kimi k2: 128k).")
+(defvar *ctx-window* 1048576 "Assumed context window in tokens (K3: 1M).")
 (defvar *ctx-note-at* 70 "Percent of the window at which to note.")
 (defvar *ctx-near-at* 80 "Percent at which the note becomes an instruction.")
 (defvar *ctx-noted-percent* 0 "Last noted percent (ratchets +5; resets on drops).")
