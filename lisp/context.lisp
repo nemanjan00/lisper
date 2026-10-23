@@ -464,11 +464,24 @@ injection would lose it on a failed request)."
      (setf *ctx-pending-note* nil)))
   event)
 
+(defun ctx-local-estimate ()
+  "Rough token estimate of what the next request carries: message
+contents AND tool-call arguments — the part content-only estimates
+miss, and the part that dominated before the first collapse."
+  (reduce #'+ (mapcar (lambda (m)
+                        (+ (ctx-est-tokens (or (gethash "content" m) ""))
+                           (reduce #'+ (mapcar (lambda (tc)
+                                                 (ctx-est-tokens (or (gethash "arguments" tc) "")))
+                                               (gethash "tool_calls" m))
+                                   :initial-value 0)))
+                      *messages*)))
+
 (defun ctx-before-request (body)
   "The compactor's view of every request: assign entry ids, offload
 over-long tool results (originals kept), prefix [entry N] marks on tool
-results and user messages, and inject threshold/milestone notes.  Only
-the request copy is prefixed; stored messages stay clean."
+results and user messages, and inject threshold / truncation /
+milestone notes.  Only the request copy is prefixed; stored messages
+stay clean."
   (let ((messages (gethash "messages" body)))
     (when (vectorp messages)
       (let ((notes '()))
@@ -477,19 +490,37 @@ the request copy is prefixed; stored messages stay clean."
               do (ctx-entry-id m)
                  (ctx-auto-offload m))
         (let* ((usage *last-usage*)
-               (pt (and (hash-table-p usage) (gethash "prompt_tokens" usage)))
-               (percent (and (integerp pt) (plusp pt)
-                             (round (* 100 pt) *ctx-window*))))
-          (when percent
-            (let ((note (ctx-threshold-note percent)))
-              (when note (push note notes)))))
+               (pt (and (hash-table-p usage) (integerp (gethash "prompt_tokens" usage))
+                        (gethash "prompt_tokens" usage)))
+               (est (ctx-local-estimate))
+               ;; Threshold on whichever says MORE: once the endpoint
+               ;; starts truncating, prompt_tokens freezes and hides it.
+               (basis (max (or pt 0) est))
+               (percent (round (* 100 basis) *ctx-window*))
+               (grew (and pt
+                          (<= pt (or *ctx-last-prompt-tokens* 0))
+                          (> (length *messages*) (or *ctx-last-visible-count* 0)))))
+          ;; Ratchet reset: a collapse dropped us below the threshold —
+          ;; let the nudges fire again.
+          (when (< percent *ctx-note-at*)
+            (setf *ctx-noted-percent* 0))
+          (setf *ctx-last-prompt-tokens* pt
+                *ctx-last-visible-count* (length *messages*))
+          (when grew
+            (push (format nil "[context: TRUNCATION SUSPECTED] prompt_tokens ~D flat or falling while the conversation grew to ~D messages — the endpoint may be silently dropping the middle. Rewind the biggest finished stretch NOW: context_rewind {from, to, summary}."
+                          pt (length *messages*))
+                  notes))
+          (let ((note (ctx-threshold-note percent)))
+            (when note (push note notes))))
         (when *ctx-pending-note*
-          (push *ctx-pending-note* notes)
-          (setf *ctx-pending-note* nil))
+          (push *ctx-pending-note* notes))
         (setf (gethash "messages" body)
               (coerce (append (loop for m across messages
                                     collect (ctx-prefix-message m (ctx-entry-id m)))
-                              (mapcar (lambda (n) (obj :role "user" :content n))
+                              (mapcar (lambda (n)
+                                        (let ((m (obj :role "user" :content n)))
+                                          (setf (gethash "x-kind" m) "note")
+                                          m))
                                       (reverse notes)))
                       'vector))
         (pane-dirty "context")
