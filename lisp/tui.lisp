@@ -103,7 +103,7 @@ the original termios for TUI-RESTORE-MODE."
   (let ((tty (tui-open-tty)))
     (unless tty (return-from tui-start nil))
     (stop-terminal-input)
-    (tui-stty "raw -echo")
+    (tui-raw-mode)
     (setf *tui* (make-tui-state :tty tty))
     (multiple-value-bind (rows cols) (tty-size)
       (when (and rows cols)
