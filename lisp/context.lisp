@@ -613,20 +613,20 @@ shown as what has grown since."
               (format nil "+~:D est since · ~D messages"
                       (if pt (max 0 (- est pt)) 0)
                       (length *messages*))
-              8))))
+              8)))
+           (extra '()))
       (dolist (st *ctx-stretches*)
         (push (line (format nil "rewind e~D…e~D: ~A (~DK)"
                             (first st) (second st) (third st)
                             (round (sixth st) 1000))
                     8)
-              lines))
+              extra))
       (when (plusp *ctx-offloaded-count*)
-        (push (line (format nil "offloaded results: ~D" *ctx-offloaded-count*) 8) lines))
+        (push (line (format nil "offloaded results: ~D" *ctx-offloaded-count*) 8) extra))
       (when *ctx-pending-note*
-        (push (line "milestone note: pending" 3) lines))
-      (setf lines (nreverse lines))
-      (subseq lines 0 (min h (length lines))))))
-;;; --------------------------------------------------------------- start
+        (push (line "milestone note: pending" 3) extra))
+      (setf lines (append lines (nreverse extra)))
+      (subseq lines 0 (min h (length lines))))));;; --------------------------------------------------------------- start
 
 (defun ctx-init-panes ()
   "Re-register the context pane after every PANES-INIT (the init wipes
