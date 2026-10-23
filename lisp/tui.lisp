@@ -179,6 +179,9 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
           *tui-frames-full* 0
           *tui-bytes-total* 0)
     (setf *tui* (make-tui-ui :tty tty))
+    ;; History survives a UI restart: rebuild the chat from the
+    ;; conversation before the first frame draws.
+    (tui-replay-history *tui*)
     (unless (tui-raw-mode tty)
       (emit :error :text "TUI: terminal did not enter raw mode"))
     (let ((ui *tui*))
