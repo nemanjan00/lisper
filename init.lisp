@@ -25,9 +25,18 @@
 ;; search, entry ids, nudges, context pane).
 (load-file "lisp/context.lisp")
 
+;; Background tasks/monitors and the ask_user question pane.
+(load-file "lisp/tasks.lisp")
+(load-file "lisp/ask.lisp")
+
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
 (tui-start)
 
 ;; Install the compactor once the UI exists (registers the context pane).
 (context-start)
+
+;; Task/monitor tools + the tasks pane, and the ask_user tool + its
+;; key/mouse interceptors.
+(tasks-start)
+(ask-start)
