@@ -492,21 +492,19 @@ injection would lose it on a failed request)."
     (:assistant
      (setf *ctx-pending-note* nil)))
   event)
-
 (defun ctx-local-estimate ()
-  "Rough token estimate of what the next request carries: message
-contents AND tool-call arguments — the part content-only estimates
-miss, and the part that dominated before the first collapse."
+  "Estimated tokens of the next request: system prompt, tool specs, and
+every message (content + reasoning_content + tool-call arguments),
+at the calibrated chars-per-token.  The endpoint's prompt_tokens of the
+PREVIOUS request recalibrates the ratio, so this tracks reality."
   ;; *MESSAGES* is a list, but "tool_calls" arrives from the wire as a
   ;; VECTOR — iterate it with ACROSS, never mapcar/for-in.  (A mapcar
   ;; over it was the "#(...) is not of type LIST" that locked out every
   ;; request.)
-  (flet ((est (x) (ctx-est-tokens (if (stringp x) x ""))))
-    (loop for m in *messages*
-          sum (+ (est (gethash "content" m))
-                 (loop for tc across (or (gethash "tool_calls" m) #())
-                       sum (est (gethash "arguments" tc)))))))
-
+  (round (+ (length (ctx-system-prompt-text))
+            (or *ctx-tools-chars* 0)
+            (loop for m in *messages* sum (ctx-message-chars m)))
+         *ctx-chars-per-token*))
 (defun ctx-before-request (body)
   "The compactor's view of every request: assign entry ids, offload
 over-long tool results (originals kept), prefix [entry N] marks on tool
