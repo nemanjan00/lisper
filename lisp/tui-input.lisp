@@ -10,6 +10,7 @@
                 tui-cursor-move tui-input-insert tui-input-delete
                 pane-scroll-by pane-at pane-focus-pane
                 pane-focus-nth pane-focus-step))
+
 (declaim (special *pane-focus*))
 
 (defvar *tui-quit* nil "Set by prefix q / C-d: the key loop then stops the UI.")
@@ -157,6 +158,7 @@ modifier/motion bits we ignore."
         ((and (characterp key) (digit-char-p key))
          (pane-focus-nth (digit-char-p key)))
         (t nil)))
+
 (defun tui-normal-key (ui key)
   (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-ui-prefix ui) t))
         ;; The terminal wheel becomes Up/Down arrows when the host tmux
@@ -185,6 +187,7 @@ modifier/motion bits we ignore."
         ((and (characterp key) (graphic-char-p key))
          (tui-input-insert ui key))
         (t nil)))
+
 (defun tui-submit-input (ui)
   (let* ((in (tui-ui-input ui))
          ;; COPY-SEQ: IN is already a string, so COERCE returns the same
@@ -206,11 +209,13 @@ modifier/motion bits we ignore."
       ;; TUI-SHOW-USER dedupe and upgrade this line.
       (tui-show-queued ui text)
       (send-user-message text))))
+
 (defun tui-cursor-move (ui delta)
   "Move the input cursor DELTA characters, clamped to the buffer."
   (let ((len (length (tui-ui-input ui))))
     (setf (tui-ui-input-cursor ui)
           (max 0 (min len (+ (tui-ui-input-cursor ui) delta))))))
+
 (defun tui-input-insert (ui c)
   "Insert C at the cursor, shifting the tail right. REPLACE copies as if
 via an intermediate, so the overlapping shift is safe."
@@ -221,6 +226,7 @@ via an intermediate, so the overlapping shift is safe."
     (replace in in :start1 (1+ cur) :start2 cur :end2 len)
     (setf (char in cur) c)
     (setf (tui-ui-input-cursor ui) (1+ cur))))
+
 (defun tui-input-delete (ui)
   "Delete the character under the cursor (the Delete key)."
   (let ((in (tui-ui-input ui))
@@ -228,6 +234,7 @@ via an intermediate, so the overlapping shift is safe."
     (when (< cur (length in))
       (replace in in :start1 cur :start2 (1+ cur))
       (decf (fill-pointer in)))))
+
 (defun tui-input-backspace (ui)
   "Delete the character before the cursor."
   (let ((in (tui-ui-input ui))
@@ -236,9 +243,11 @@ via an intermediate, so the overlapping shift is safe."
       (replace in in :start1 (1- cur) :start2 cur)
       (decf (fill-pointer in))
       (setf (tui-ui-input-cursor ui) (1- cur)))))
+
 (defun tui-clear-input (ui)
   (setf (fill-pointer (tui-ui-input ui)) 0
         (tui-ui-input-cursor ui) 0))
+
 (defun tui-ctrl-d (ui)
   (if (zerop (length (tui-ui-input ui)))
       (setf *tui-quit* t)
@@ -248,6 +257,7 @@ via an intermediate, so the overlapping shift is safe."
   "Scroll the FOCUSED pane (the chat by default)."
   (declare (ignore ui))
   (pane-scroll-by *pane-focus* delta))
+
 (defun tui-mouse (ui key)
   "Handle an SGR mouse event (:mouse b x y kind). The wheel scrolls the
 pane under the pointer; a click focuses that pane. A press on an hsplit
@@ -286,6 +296,7 @@ and status rows belong to no pane and are ignored."
                  ((and target (<= (logand b 3) 2))
                   (pane-focus-pane target)))))
         (t nil)))))
+
 (defun tui-scroll-chat (ui key)
   "Page the FOCUSED pane up or down."
   (declare (ignore ui))
