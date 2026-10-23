@@ -642,6 +642,7 @@ ever holds code that loaded cleanly. Commits what sticks."
       (:assistant (format t "~&~%~A~%" text))
       (:thinking (format t "~&~C[2m~A~C[0m~%" #\Esc text #\Esc))
       (:reasoning nil)                  ; long; it is in state/trace.log
+      (:user nil)                       ; the user typed it; no need to echo
       (:tool-call
        (let ((args (getf event :args)))
          (format t "~&~%[~A]~%~A~%" (getf event :name)
@@ -670,7 +671,7 @@ ever holds code that loaded cleanly. Commits what sticks."
 (defun add-message (message)
   (setf *messages* (append *messages* (list message)))
   (when (equal (gethash "role" message) "user")
-    (trace-event (list :type :user :text (gethash "content" message))))
+    (emit :user :text (gethash "content" message)))
   (when *session-log*
     (with-open-file (out *session-log* :direction :output :if-exists :append
                                        :if-does-not-exist :create :external-format :utf-8)
@@ -689,7 +690,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *system-prompt*: this text. A string, or a function returning one. You may rewrite it.
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context.
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
-- *emit*: function receiving every event as a plist (:type :assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
+- *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
 - The queue: text appended to state/queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
