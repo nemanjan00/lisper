@@ -17,8 +17,11 @@
 
 ;;; ---------------------------------------------------------------- state
 
-(defvar *ctx-ids* (make-hash-table :test #'eq) "message object -> entry id (integer)")
-(defvar *ctx-id-messages* (make-hash-table) "entry id -> message object")
+(defvar *ctx-ids* (make-hash-table :test #'eq :weakness :key)
+  "message object -> entry id (integer).  Weak on the message: stubs and
+dropped messages GC away instead of leaking an id each request.")
+(defvar *ctx-id-messages* (make-hash-table :weakness :value)
+  "entry id -> message object.  Weak on the value, for the same reason.")
 (defvar *ctx-next-id* 0)
 (defvar *ctx-originals* (make-hash-table)
   "entry id -> (kind . value): :content for an offloaded string, :message
