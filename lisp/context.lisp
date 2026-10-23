@@ -709,7 +709,7 @@ Idempotent."
                         :required (vector "from" "summary"))
                    #'ctx-tool-rewind)
     (register-tool "context_offload"
-                   "Replace one message (usually a big tool result) in the conversation with your one-line pointer `text` — what the entry was and what matters about it. `entry` is the id from its [entry N] mark. The original stays retrievable with context_restore. Do not offload the latest user message or anything you still need verbatim. Returns a confirmation."
+                   "Replace one message (usually a big tool result) in the conversation with your one-line pointer `text` — what the entry was and what matters about it. `entry` is the id from its [entry N] mark. The original stays retrievable with context_restore. Do not offload the latest user message or anything you still need verbatim. Returns a confirmation. Example: {\"entry\":\"57\",\"text\":\"pane drag test output: ratio moved and saved\"}."
                    (obj :type "object" :properties
                         (obj :entry (obj :type "string" :description "entry id")
                              :text (obj :type "string" :description "one line saying what this was and what matters about it"))
