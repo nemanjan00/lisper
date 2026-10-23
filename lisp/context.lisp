@@ -542,14 +542,23 @@ the request just answered) against the chars we counted for it."
                           (gethash "prompt_tokens" usage)))
                  ;; Calibrate: PT describes the request whose chars we
                  ;; counted last time (*CTX-PREV-REQUEST-CHARS*).
-                 (dummy (when (and pt *ctx-prev-request-chars*
-                                   (plusp *ctx-prev-request-chars*) (plusp pt))
+                 ;; LOW-PT = PT came in far under the local estimate of
+                 ;; that same request (truncation suspected): do NOT
+                 ;; recalibrate from it — PT then reflects the
+                 ;; truncation, not the true size, and the ratio would
+                 ;; adapt the evidence away. The ratio also stays inside
+                 ;; sane bounds (2.5–5 chars/token) no matter what.
+                 (prev-est (and *ctx-prev-request-chars*
+                                (plusp *ctx-prev-request-chars*)
+                                (round *ctx-prev-request-chars*
+                                       *ctx-chars-per-token*)))
+                 (low-pt (and pt prev-est (< pt (* 7/10 prev-est))))
+                 (dummy (when (and pt prev-est (plusp pt) (not low-pt))
                           (setf *ctx-chars-per-token*
-                                (min 8.0 (max 1.5 (/ (float *ctx-prev-request-chars*) pt))))))
+                                (min 5.0 (max 2.5 (/ (float *ctx-prev-request-chars*) pt))))))
                  (est (max 1 (round chars *ctx-chars-per-token*)))
                  (basis (max (or pt 0) est))
-                 (percent (round (* 100 basis) *ctx-budget*))
-                 (low-pt (and pt (plusp est) (< pt (* 7/10 est)))))
+                 (percent (round (* 100 basis) *ctx-budget*)))
             (declare (ignore dummy))
             (setf *ctx-prev-request-chars* chars
                   *ctx-last-est* est)
