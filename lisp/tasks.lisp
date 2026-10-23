@@ -24,6 +24,9 @@
 
 (defvar *tasks* (make-hash-table :test 'equal) "name -> TASK.")
 
+;;; Forward references: BG-START starts threads running these, defined below.
+(declaim (ftype function task-watch monitor-read-loop monitor-flush tasks-init-panes))
+
 (defun task-list ()
   (sort (loop for v being the hash-values of *tasks* collect v)
         #'< :key #'task-start))
