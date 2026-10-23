@@ -659,7 +659,7 @@ must not depend on which package READ-FROM-STRING ran in."
  'pane-tool)
 
 (lisping-core::register-tool
- "layout" "Manage the TUI layout tree. Actions: get | set (sexpr: tree of (:hsplit ratio a b) / (:vsplit ratio a b) / (leaf name)) | reset."
+ "layout" "Manage the TUI layout tree. get: return the current tree as a printed sexpr. set: replace it — `sexpr` is a string holding one sexpr of this grammar: TREE := (leaf \"pane-name\") | (:hsplit RATIO TREE TREE) | (:vsplit RATIO TREE TREE); :hsplit puts the first child left of the second (1-column separator between), :vsplit stacks it above, RATIO is the first child's share of the space (0..1). Every leaf must name a registered pane (see the pane tool); set refuses unknown names, otherwise applies, saves state/layout.lisp and redraws. Example sexpr: (:vsplit 0.85 (:hsplit 0.75 (leaf \"chat\") (leaf \"todo\")) (leaf \"context\")) — chat left, todo right, context below. reset: back to the default chat+todo split. get's output is the same grammar (printed with package prefixes, e.g. lisping::leaf — both spellings are accepted on set)."
  (lisping-core::obj "type" "object"
         "properties" (lisping-core::obj
                       "action" (lisping-core::obj "type" "string"
