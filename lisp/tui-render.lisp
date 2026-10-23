@@ -457,7 +457,11 @@ build up past the top."
 (defun tui-draw-status (g ui y w)
   (let ((attr (ui-attr 7 :bright t :bg 4)))
     (dotimes (x w) (ui-grid-put g x y #\Space attr))
-    (ui-grid-write g 1 y (format nil " lisping-ai ~A" *model*) attr (1- w))
+    (ui-grid-write g 1 y (format nil " lisping-ai ~A [~D todo~:P open] ~A"
+                                 *model*
+                                 (count-if-not #'cdr *todos*)
+                                 *pane-focus*)
+                   attr (1- w))
     (let* ((now (multiple-value-list (decode-universal-time (get-universal-time))))
            (time (format nil "~2,'0d:~2,'0d " (nth 2 now) (nth 1 now)))
            (hint (if (tui-ui-prefix ui)
