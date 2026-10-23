@@ -12,7 +12,7 @@
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
            ;; files
-           #:load-file #:commit #:restart-image #:*boot-errors* #:*previous-session*
+           #:load-file #:test-boot #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
@@ -294,6 +294,9 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
 (defvar *booting* nil "True while init.lisp is loaded at boot.")
 (defvar *boot-errors* '() "Problems reported while loading init.lisp at the last boot.")
 (defvar *load-problems* nil "Problems collected by LOAD-FILE, including nested loads.")
+(defvar *reported-conditions* nil
+  "Conditions already reported during the current load: a warning from a nested
+load-file also reaches the outer one's handlers, and should be listed once.")
 
 (defun init-path () (merge-pathnames "init.lisp" *root*))
 (defun resume-path () (merge-pathnames "state/resume.txt" *root*))
@@ -482,6 +485,9 @@ also added to *LOAD-PROBLEMS*, so nested loads are reported to the outer one."
          (problems '())
          (*package* (find-package :lisping)))
     (flet ((problem (start what condition)
+             (when (member condition *reported-conditions* :test #'eq)
+               (return-from problem))
+             (push condition *reported-conditions*)
              (let ((message (format nil "~A:~D: ~A: ~A~@[ (Hint: ~A)~]" name
                                     (1+ (count #\Newline text :end (min start (length text))))
                                     what condition (ignore-errors (error-hint condition)))))
@@ -532,6 +538,7 @@ also added to *LOAD-PROBLEMS*, so nested loads are reported to the outer one."
 (defun load-collecting (file out)
   "Load FILE with its output going to OUT; return every problem, nested loads included."
   (let ((*load-problems* '())
+        (*reported-conditions* '())
         (*standard-output* out)
         (*error-output* out))
     (handler-case (sb-ext:with-timeout *eval-timeout* (load-file file))
@@ -572,6 +579,30 @@ Return printed output, values and errors."
     (limit-output (get-output-stream-string out))))
 
 (defparameter +core-files+ '("core.lisp" "boot.lisp" "run.sh"))
+
+(defun print-boot-problems ()
+  "Used by TEST-BOOT in the child process."
+  (let ((problems (let ((*booting* t)) (load-collecting (init-path) (make-broadcast-stream)))))
+    (format t "~&BOOT-PROBLEMS:~S~%" problems)
+    (finish-output)))
+
+(defun test-boot (&key (timeout 120))
+  "Load init.lisp in a fresh SBCL process, as a boot would but with no UI, no
+agent and no commits, and return its problems as a list of strings (NIL when
+clean). The running image can pass a check only because of state left over
+from earlier; this shows whether the files work from scratch."
+  (multiple-value-bind (out code)
+      (shell (format nil "LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
+                     timeout
+                     (shell-quote (namestring sb-ext:*runtime-pathname*))
+                     (shell-quote (namestring sb-ext:*core-pathname*))
+                     (shell-quote "(lisping-core::print-boot-problems)")))
+    (let ((mark (search "BOOT-PROBLEMS:" out)))
+      (if mark
+          (let ((*read-eval* nil))
+            (read-from-string out t nil :start (+ mark (length "BOOT-PROBLEMS:"))))
+          (list (format nil "the test boot didn't finish (exit ~A): ~A" code
+                        (subseq out (max 0 (- (length out) 1500)))))))))
 
 (defun write-file-and-load (path code)
   "Write CODE verbatim to PATH, relative to *root*. A .lisp file is then loaded,
@@ -735,6 +766,7 @@ Files and persistence, the way Emacs does it:
 - At boot the core loads init.lisp, like Emacs loads init.el. init.lisp is yours: from it, load the other files you write with (load-file \"lisp/ui.lisp\"). load-file reports a form that fails and goes on with the rest, like a forgiving load.
 - eval with only `code` is like M-: or *scratch*: it changes the running image and nothing else. Use it to explore and test.
 - eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
+- (test-boot) loads init.lisp in a fresh SBCL process, like a boot but with no UI and no agent, and returns its problems (NIL when clean). Your running image can pass a check only because of state left from earlier edits (a variable defined in a file that loads later, say); run test-boot after changing files and before restarting.
 - So, to keep something, put it in a file that init.lisp loads. The image and the files can drift apart while you work, as in Emacs; at boot, the files win.
 - Writing a whole file to change one function gets slow as files grow. Keep files small and focused, and consider building yourself what Emacs users have: buffers, editing part of a file, and re-evaluating just the form you changed (C-M-x). Tools you register get their arguments as plain JSON strings, so a file-editing tool avoids escaping code inside Lisp strings.
 - Your conversation does NOT survive a restart, and the user may restart you at any moment. Whatever you learn by exploring (facts about your environment, what works and what doesn't) is lost unless you write it down, e.g. in state/notes.md. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
