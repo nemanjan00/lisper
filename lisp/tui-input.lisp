@@ -14,9 +14,9 @@
 
 (defvar *tui-quit* nil "Set by prefix q / C-d: the key loop then stops the UI.")
 
-;;; The input cursor (*tui-input-cursor*) is defined in tui.lisp, next
-;;; to the input buffer it indexes — tui-render.lisp loads before this
-;;; file and already draws the terminal cursor from it.
+;;; The input cursor and hscroll are slots of TUI-UI (tui.lisp) —
+;;; tui-render.lisp loads before this file and already draws the
+;;; terminal cursor from them.
 
 ;;; ---------------------------------------------------------------
 ;;; Key reading. Returns a character or a keyword (:up :down :left
