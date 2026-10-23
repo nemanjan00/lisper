@@ -560,58 +560,11 @@ Returns chunk LISTS (a chunk is (text . attr))."
 
 ;;; --------------------------------------------------------------- start
 
-(defun context-start ()
-  "Install the compactor: before-request hook, emit watcher, the four
-context_* tools, the context pane, and the system-prompt guideline.
-Idempotent."
-  (unless *ctx-autoloaded*
-    (setf *ctx-autoloaded* t)
-    (pushnew 'ctx-before-request *before-request*)
-    (let ((old *emit*))
-      (setf *emit* (lambda (event) (ctx-emit-watch event) (funcall old event))))
-    (when (and (stringp *system-prompt*)
-               (not (search "[context:compactor]" *system-prompt*)))
-      (setf *system-prompt*
-            (concatenate
-             'string *system-prompt*
-             "
-- [context:compactor] Keep your context small from the start: as soon as a part of the work is done (files read and understood, a step completed), collapse it with context_rewind {from, to, summary}, keeping in the summary what later work needs verbatim (paths, line numbers, ids, decisions). Big tool results you no longer need: context_offload {entry, text}. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
-    (register-tool
-     "context_rewind"
-     "Collapse a finished stretch of the conversation (from entry `from` through entry `to`, inclusive; `to` defaults to `from`) replacing it with your summary plus an index of what it replaced. Rewind only FINISHED work before the latest user message. The originals stay in the session log; context_restore/context_search reach them. The summary should keep what later work needs verbatim (paths, line numbers, ids, decisions) and end with a Keywords: line."
-     (obj :type "object"
-          :properties (obj :from (obj :type "string" :description "entry id, as in [entry N] (e.g. \"12\" or \"e12\")")
-                           :to (obj :type "string" :description "entry id; defaults to `from`")
-                           :summary (obj :type "string" :description "your summary of the stretch, ending with a Keywords: line"))
-          :required (vector "from" "summary"))
-     #'ctx-tool-rewind)
-    (register-tool
-     "context_offload"
-     "Replace one message (usually a big tool result) in the conversation with your one-line pointer text. The original stays retrievable with context_restore {entry}. Do not offload the latest user message or anything you still need verbatim."
-     (obj :type "object"
-          :properties (obj :entry (obj :type "string" :description "entry id")
-                           :text (obj :type "string" :description "one line saying what this was and what matters about it"))
-          :required (vector "entry" "text"))
-     #'ctx-tool-offload)
-    (register-tool
-     "context_restore"
-     "With offset/length: read that character range of the original entry (no change to the conversation). Without them: put the original back into the conversation (an offloaded result at its place; a collapsed entry as a quoted message after its collapse marker)."
-     (obj :type "object"
-          :properties (obj :entry (obj :type "string" :description "entry id")
-                           :offset (obj :type "string" :description "character offset into the original")
-                           :length (obj :type "string" :description "how many characters to read, at most 16000"))
-          :required (vector "entry"))
-     #'ctx-tool-restore)
-    (register-tool
-     "context_search"
-     "Full-text search over the visible conversation, offloaded/collapsed originals, and the current and previous session logs. Each hit comes with a snippet and how to read it back."
-     (obj :type "object"
-          :properties (obj :text (obj :type "string" :description "text to find (words, not meaning)")
-                           :limit (obj :type "string" :description "max hits, default 10"))
-          :required (vector "text"))
-     #'ctx-tool-search)
-    ;; context pane: registered and given its render function every time,
-    ;; because panes-load may have re-registered it (kind :buffer) first.
+(defun ctx-init-panes ()
+  "Re-register the context pane after every PANES-INIT (the init wipes
+the registry and resets the layout, so this must run again on each UI
+restart — hooked via *PANES-INIT-HOOKS*).  Idempotent."
+  (block ctx-init-panes
     (unless (pane-get "context")
       (pane-register "context" :title "context" :kind :buffer))
     (setf (pane-render (pane-get "context")) #'pane-context-render)
@@ -619,5 +572,55 @@ Idempotent."
       (setf *layout* (list :vsplit 0.85 *layout* (list 'leaf "context")))
       (panes-save)
       (panes-mark-all-dirty)
-      (tui-dirty)))
+      (tui-dirty))))
+
+(defun context-start ()
+  "Install the compactor: before_request hook, the emit observer, the
+four context_* tools, the context pane (via the panes-init hook, so a
+UI restart cannot drop it), and the system-prompt guideline.
+Idempotent."
+  (pushnew 'ctx-init-panes *panes-init-hooks*)
+  (ctx-init-panes)
+  (unless *ctx-autoloaded*
+    (setf *ctx-autoloaded* t)
+    (pushnew 'ctx-before-request *before-request*)
+    ;; The todo-done watcher lives on *observers*, not an *emit* wrapper:
+    ;; tui-start rebinds *emit* at every UI (re)start and would drop it.
+    (pushnew 'ctx-emit-watch lisping-core:*observers*)
+    (when (and (stringp *system-prompt*)
+               (not (search "[context:compactor]" *system-prompt*)))
+      (setf *system-prompt*
+            (concatenate 'string *system-prompt* "
+- [context:compactor] Keep your context small from the start: as soon as a part of the work is done (files read and understood, a step completed), collapse it with context_rewind {from, to, summary}, keeping in the summary what later work needs verbatim (paths, line numbers, ids, decisions). Big tool results you no longer need: context_offload {entry, text}. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
+    (register-tool "context_rewind"
+                   "Collapse a finished stretch of the conversation (from entry `from` through entry `to`, inclusive; `to` defaults to `from`) replacing it with your summary plus an index of what it replaced. Rewind only FINISHED work before the latest user message. The originals stay in the session log; context_restore/context_search reach them. The summary should keep what later work needs verbatim (paths, line numbers, ids, decisions) and end with a Keywords: line."
+                   (obj :type "object" :properties
+                        (obj :from (obj :type "string" :description "entry id, as in [entry N] (e.g. \"12\" or \"e12\")")
+                             :to (obj :type "string" :description "entry id; defaults to `from`")
+                             :summary (obj :type "string" :description "your summary of the stretch, ending with a Keywords: line"))
+                        :required (vector "from" "summary"))
+                   #'ctx-tool-rewind)
+    (register-tool "context_offload"
+                   "Replace one message (usually a big tool result) in the conversation with your one-line pointer text. The original stays retrievable with context_restore {entry}. Do not offload the latest user message or anything you still need verbatim."
+                   (obj :type "object" :properties
+                        (obj :entry (obj :type "string" :description "entry id")
+                             :text (obj :type "string" :description "one line saying what this was and what matters about it"))
+                        :required (vector "entry" "text"))
+                   #'ctx-tool-offload)
+    (register-tool "context_restore"
+                   "With offset/length: read that character range of the original entry (no change to the conversation). Without them: put the original back into the conversation (an offloaded result at its place; a collapsed entry as a quoted message after its collapse marker)."
+                   (obj :type "object" :properties
+                        (obj :entry (obj :type "string" :description "entry id")
+                             :offset (obj :type "string" :description "character offset into the original")
+                             :length (obj :type "string" :description "how many characters to read, at most 16000"))
+                        :required (vector "entry"))
+                   #'ctx-tool-restore)
+    (register-tool "context_search"
+                   "Full-text search over the visible conversation, offloaded/collapsed originals, and the current and previous session logs. Each hit comes with a snippet and how to read it back."
+                   (obj :type "object" :properties
+                        (obj :text (obj :type "string" :description "text to find (words, not meaning)")
+                             :limit (obj :type "string" :description "max hits, default 10"))
+                        :required (vector "text"))
+                   #'ctx-tool-search))
   t)
+

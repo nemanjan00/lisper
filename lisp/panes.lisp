@@ -41,6 +41,12 @@
 
 (defvar *panes-canvas* nil "Persistent grid holding the panes' area.")
 
+(defvar *panes-init-hooks* nil
+  "Functions run at the end of PANES-INIT, after builtins and the saved
+layout are in place.  PANES-INIT wipes *panes* and *layout* on every
+UI (re)start, so any subsystem that owns a pane must re-register
+itself here (the compactor's context pane does).")
+
 (defvar *panes-layout-file* (merge-pathnames "state/layout.lisp" lisping-core:*root*))
 
 ;;; ---------------------------------------------------------------
@@ -96,22 +102,27 @@ pane content blank (2026-10-23)."
         when (and p (eq (pane-kind p) kind)) return p))
 
 (defun pane-scroll-by (name delta)
-  (let ((p (pane-get name)))
-    (when p
-      (setf (pane-scroll p) (max 0 (+ (pane-scroll p) delta)))
-      ;; Reaching the bottom clears the "N new" marker.
-      (when (and (eq (pane-kind p) :chat) (zerop (pane-scroll p)))
-        (setf *tui-chat-new* 0))
-      (setf (pane-needs-redraw p) 1)))
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (let ((p (pane-get name)))
+      (when p
+        (setf (pane-scroll p) (max 0 (+ (pane-scroll p) delta)))
+        ;; Reaching the bottom clears the §N new§ marker.
+        (when (and (eq (pane-kind p) :chat) (zerop (pane-scroll p)))
+          (setf *tui-chat-new* 0))
+        (setf (pane-needs-redraw p) 1))))
   (tui-dirty))
 
+
 (defun pane-focus-pane (name)
-  "Focus a pane (highlights its title); scrolling keys apply to it."
-  (when (pane-get name)
-    (setf *pane-focus* name)
-    (panes-mark-all-dirty)
-    (tui-dirty))
+  §Focus a pane (highlights its title); scrolling keys apply to it.
+Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them).§
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (when (pane-get name)
+      (setf *pane-focus* name)
+      (panes-mark-all-dirty)
+      (tui-dirty)))
   *pane-focus*)
+
 
 (defun layout-pane-names (&optional (tree *layout*))
   "Leaf names of the layout tree, in drawing order."
@@ -316,19 +327,26 @@ hsplit reserves one uncovered column — see hsplit-left-width)."
     (panes-draw-gap-columns g rects)))
 
 (defun panes-draw-gap-columns (g rects)
-  "Fill every column no pane rect covers with a dim │ — the 1-column
-gaps hsplit leaves between side-by-side panes, at any depth.  (With
-this geometry a column is either pane-covered or a gap for the whole
-height; vsplit reserves no gap rows.)"
+  "Fill every cell no pane rect covers with a dim \│ — the 1-column gaps
+hsplit leaves between side-by-side panes, at any depth.  Coverage is
+checked PER CELL: a column partially covered (e.g. by a full-width pane
+below a vsplit) must still get its \│ in the uncovered rows — the old
+per-column SOME let the context pane's full-width rect suppress the
+separators above it.  (A cell is either pane-covered or a gap; vsplit
+reserves no gap rows.)"
   (let ((w (uigrid-w g))
         (h (uigrid-h g)))
     (dotimes (x w)
-      (unless (some (lambda (r)
-                      (and (<= (second r) x)
-                           (< x (+ (second r) (fourth r)))))
-                    rects)
-        (dotimes (y h)
+      (dotimes (y h)
+        (unless (some (lambda (r)
+                        (and (<= (second r) x)
+                             (< x (+ (second r) (fourth r)))
+                             (<= (third r) y)
+                             (< y (+ (third r) (fifth r)))))
+                      rects)
           (ui-grid-put g x y #\│ 8))))))
+
+
 
 ;;; ---------------------------------------------------------------
 ;;; Operations (also exposed as tools)
@@ -338,64 +356,81 @@ height; vsplit reserves no gap rows.)"
 panes canvas, every pane dirty, no diff against the previous frame.
 Called after anything that moves, resizes or re-creates panes
 (split/add/remove, focus, resize); TUI-FORCE-REDRAW (C-b r) is this
-plus nothing else."
-  (setf *panes-canvas* nil
-        *tui-prev-grid* nil)
-  (panes-mark-all-dirty)
+plus nothing else.  Takes *TUI-LOCK*: the redraw thread reads
+*panes-canvas*/*layout* while holding it, so a mutation racing the
+draw used to leave it staring at NIL ('NIL is not of type UIGRID',
+tui-crash.log 21:05)."
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (setf *panes-canvas* nil
+          *tui-prev-grid* nil)
+    (panes-mark-all-dirty))
   (tui-dirty))
 
+
 (defun pane-add (name &key title kind cmd (interval 10))
-  (pane-register name :title title :kind kind :cmd cmd :interval interval)
-  (panes-save)
-  (tui-drop-frame)
-  (pane-dirty name))
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (pane-register name :title title :kind kind :cmd cmd :interval interval)
+    (panes-save)
+    (tui-drop-frame)
+    (pane-dirty name)))
+
 
 (defun pane-split (name direction ratio new-name
                    &key title kind cmd (interval 10))
   "Split pane NAME, putting a new pane beside it. DIRECTION is
-\"h\" (side by side) or \"v\" (stacked). NEW-NAME may already exist."
-  (unless (pane-get name) (error "no pane named ~A" name))
-  (unless (pane-get new-name)
-    (pane-register new-name :title title :kind kind :cmd cmd :interval interval))
-  (setf *layout* (layout-split-replace *layout* name
-                                       (if (equal direction "v") :vsplit :hsplit)
-                                       (or ratio 0.5) new-name))
-  (panes-save)
-  (tui-drop-frame)
-  (format nil "split ~A ~A: added ~A (~A/~A)" name direction new-name
-          (pane-kind (pane-get new-name))
-          (or (pane-cmd (pane-get new-name)) "buffer")))
+'h' (side by side) or 'v' (stacked). NEW-NAME may already exist.
+Takes *TUI-LOCK* (mutates *layout* while the redraw thread draws)."
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (unless (pane-get name) (error "no pane named ~A" name))
+    (unless (pane-get new-name)
+      (pane-register new-name :title title :kind kind :cmd cmd :interval interval))
+    (setf *layout* (layout-split-replace *layout* name
+                                         (if (equal direction "v") :vsplit :hsplit)
+                                         (or ratio 0.5) new-name))
+    (panes-save)
+    (tui-drop-frame)
+    (format nil "split ~A ~A: added ~A (~A/~A)" name direction new-name
+            (pane-kind (pane-get new-name))
+            (or (pane-cmd (pane-get new-name)) "buffer"))))
+
+
 
 (defun pane-remove (name)
-  (when (equal name "chat") (error "the chat pane cannot be removed"))
-  (setf *layout* (layout-remove-leaf *layout* name))
-  (pane-unregister name)
-  (when (equal *pane-focus* name) (setf *pane-focus* "chat"))
-  (panes-save)
-  (tui-drop-frame)
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (when (equal name "chat") (error "the chat pane cannot be removed"))
+    (setf *layout* (layout-remove-leaf *layout* name))
+    (pane-unregister name)
+    (when (equal *pane-focus* name) (setf *pane-focus* "chat"))
+    (panes-save)
+    (tui-drop-frame))
   (format nil "removed pane ~A" name))
+
 
 ;;; ---------------------------------------------------------------
 ;;; Persistence
 
 (defun panes-save ()
-  "Write layout + user pane definitions to state/layout.lisp."
-  (ignore-errors
-    ;; Downcase keywords: an upcased *print-case* would write :BUFFER,
-    ;; which old images load back as a kind the ticker never matches.
-    (let ((*print-case* :downcase))
-      (with-open-file (s *panes-layout-file* :direction :output
-                         :if-exists :supersede :if-does-not-exist :create)
-        (format s ";;; auto-generated by panes.lisp — edit via the layout/pane tools.~%")
-        (format s "(setf *layout* '~S)~%" *layout*)
-        (maphash
-         (lambda (_ p)
-           (declare (ignore _))
-           (when (member (pane-kind p) '(:buffer :cmd))
-             (format s "(pane-register ~S :title ~S :kind ~S :cmd ~S :interval ~S)~%"
-                     (pane-name p) (pane-title p) (pane-kind p)
-                     (pane-cmd p) (pane-interval p))))
-         *panes*)))))
+  "Write layout + user pane definitions to state/layout.lisp.
+Skips the write during test-boot's fresh process (same state/
+directory, and a transient file there would dirty the working tree)."
+  (unless lisping-core:*test-boot*
+    (ignore-errors
+      ;; Downcase keywords: an upcased *print-case* would write :BUFFER,
+      ;; which old images load back as a kind the ticker never matches.
+      (let ((*print-case* :downcase))
+        (with-open-file (s *panes-layout-file* :direction :output
+                           :if-exists :supersede :if-does-not-exist :create)
+          (format s ";;; auto-generated by panes.lisp — edit via the layout/pane tools.~%")
+          (format s "(setf *layout* '~S)~%" *layout*)
+          (maphash
+           (lambda (_ p)
+             (declare (ignore _))
+             (when (member (pane-kind p) '(:buffer :cmd))
+               (format s "(pane-register ~S :title ~S :kind ~S :cmd ~S :interval ~S)~%"
+                       (pane-name p) (pane-title p) (pane-kind p)
+                       (pane-cmd p) (pane-interval p)))
+           *panes*))))))
+
 
 (defun panes-load ()
   (when (probe-file *panes-layout-file*)
@@ -405,21 +440,30 @@ plus nothing else."
 ;;; Command ticker: re-runs :cmd panes every INTERVAL seconds.
 
 (defun panes-refresh-cmds ()
+  "Two-phase so the SHELL call happens OUTSIDE *tui-lock*
+(a slow command must not freeze the UI); only registry reads/writes
+and the buffer write hold the lock."
   (let ((now (get-universal-time)))
-    (maphash
-     (lambda (_ p)
-       (declare (ignore _))
-       (when (and (eq (pane-kind p) :cmd) (pane-cmd p)
-                  (>= (- now (pane-last-run p)) (pane-interval p)))
-         (setf (pane-last-run p) now)
-         (ignore-errors
-           (setf (pane-buf p) (make-uibuf :cap 500))
-           (multiple-value-bind (out code) (shell (pane-cmd p))
-             (uibuf-add-text (pane-buf p)
-                             (format nil "~A (exit ~A)" out code) 8)
-             (setf (pane-needs-redraw p) 1)
-             (tui-dirty)))))
-     *panes*)))
+    (let (due)
+      (sb-thread:with-recursive-lock (*tui-lock*)
+        (maphash
+         (lambda (_ p)
+           (declare (ignore _))
+           (when (and (eq (pane-kind p) :cmd) (pane-cmd p)
+                      (>= (- now (pane-last-run p)) (pane-interval p)))
+             (setf (pane-last-run p) now)
+             (push p due)))
+         *panes*))
+      (dolist (p due)
+        (ignore-errors
+          (multiple-value-bind (out code) (shell (pane-cmd p))
+            (sb-thread:with-recursive-lock (*tui-lock*)
+              (setf (pane-buf p) (make-uibuf :cap 500))
+              (uibuf-add-text (pane-buf p)
+                              (format nil "~A (exit ~A)" out code) 8)
+              (setf (pane-needs-redraw p) 1)
+              (tui-dirty))))))))
+
 
 (defun panes-ticker-loop ()
   (loop while *tui* do (ignore-errors (panes-refresh-cmds)) (sleep 1)))
@@ -428,7 +472,10 @@ plus nothing else."
 ;;; Init
 
 (defun panes-init ()
-  "Install builtins, load the saved layout, validate, start the ticker."
+  "Install builtins, load the saved layout, validate, start the ticker,
+then run *PANES-INIT-HOOKS*: the init wipes *PANES*/*LAYOUT*, so every
+subsystem that owns a pane (the compactor's context pane) re-registers
+itself here or vanishes on UI restart."
   (setf *panes* (make-hash-table :test 'equal)
         *pane-focus* "chat"
         *panes-canvas* nil)
@@ -441,7 +488,9 @@ plus nothing else."
   (unless (member "todo" (layout-names *layout*) :test #'equal)
     (setf *layout* `(:hsplit 0.78 ,*layout* (leaf "todo"))))
   (panes-mark-all-dirty)
-  (sb-thread:make-thread #'panes-ticker-loop :name "tui-panes"))
+  (sb-thread:make-thread #'panes-ticker-loop :name "tui-panes")
+  (dolist (hook *panes-init-hooks*) (funcall hook)))
+
 
 ;;; ---------------------------------------------------------------
 ;;; Tools

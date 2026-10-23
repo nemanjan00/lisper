@@ -20,7 +20,8 @@
 [ ] Compactor fix 5: provenance — tag synthetic messages with x-kind key + use core synthetic-message-p (restored entries currently become 'current task' and kill rewind protection)
 [ ] Compactor fix 6: threshold on max(prompt_tokens, local estimate); flag truncation when prompt_tokens flat/falling while *messages* grew; real window > 120k guess
 [ ] Compactor minors: pane-draw-into-1 log render errors (not silent ignore-errors); *ctx-ids* weak table (:weakness :key); clear *ctx-pending-note* only after request succeeds
-[ ] Resize fix: SIGWINCH handler calls tui-dirty; redraw loop wakes every 2s for cheap size check (no stty unless winch counter changed or 2s passed); full redraw on size change
-[ ] Frame integrity: tui-force-redraw drops *panes-canvas* + marks all panes dirty (C-b r repaints from scratch); pane split/add/remove also drop frame (prev-grid + canvas)
+[x] Resize fix: SIGWINCH handler calls tui-dirty; redraw loop wakes every 2s for cheap size check (no stty unless winch counter changed or 2s passed); full redraw on size change
+[x] Frame integrity: tui-force-redraw drops *panes-canvas* + marks all panes dirty (C-b r repaints from scratch); pane split/add/remove also drop frame (prev-grid + canvas)
 [ ] Weather pane: restore it, make :cmd ticker actually populate it (last-run stayed 0), fix save/load (state/layout.lisp had :BUFFER upcased kind; normalize kinds case-insensitively)
 [ ] Separators: panes-draw-gap-columns is committed but didn't render — re-verify after frame fixes and debug on a COPY of the canvas, never the live one
+[ ] LOW PRIORITY (timeboxed 21:10): nested-pane separators — top-level gap column verified rendering (capture-pane 21:04, per-cell fix in panes-draw-gap-columns). Nested case: with layout (vsplit (hsplit chat (hsplit todo scratch)) context), gap painting is correct in isolation but live canvas showed blank gaps after pane-split; likely the redraw ordering vs canvas recreate (tui-drop-frame) — revisit only if a user actually nests splits. Note: debug on a COPY of the canvas, never the live one.

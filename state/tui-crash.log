@@ -455,3 +455,57 @@ Backtrace for: #<SB-THREAD:THREAD tid=1517882 "tui-redraw" RUNNING {12029F2753}>
 7: (SB-THREAD::RUN)
 8: ("foreign function: call_into_lisp_")
 9: ("foreign function: funcall1")
+--- TUI crash 4001771105 ---
+The value
+  NIL
+is not of type
+  LISPING::UIGRID
+Backtrace for: #<SB-THREAD:THREAD tid=1851797 "tui-redraw" RUNNING {120403D6A3}>
+0: (LISPING::TUI-LOG-CRASH #<TYPE-ERROR expected-type: LISPING::UIGRID datum: NIL>)
+1: (LISPING::TUI-CRASH #<TYPE-ERROR expected-type: LISPING::UIGRID datum: NIL>)
+2: (LISPING::TUI-REDRAW-LOOP #S(LISPING::TUI-UI :TTY #<SB-SYS:FD-STREAM for "tui-tty" {1203F1ABE3}> :WIDTH 208 :HEIGHT 62 :CHAT #S(LISPING::UIBUF :NAME NIL :LINES #(#S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) ...) :CAP 2000 :ALIGN :BOTTOM :WRAP T :LAST-ATTR 8) :INPUT "" :PREFIX NIL :SCROLL 0 :SHOWN-USER #<(SIMPLE-ARRAY CHARACTER (539)) [developer] The UI crashed at 20:20:49, two seconds after boot, and has been down since. tui-crash.log says "The current thread is not holding #<MUTEX>" in tui-redraw-loop: sb-thread:condition-wait mu... {1204A96E4F}> :PENDING-USER NIL :THREADS (#<SB-THREAD:THREAD tid=1851796 "tui-keys" RUNNING {120403D4B3}> #<SB-THREAD:THREAD tid=1851797 "tui-redraw" RUNNING {120403D6A3}>)))
+3: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+4: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: (SB-THREAD::RUN)
+8: ("foreign function: call_into_lisp_")
+9: ("foreign function: funcall1")
+--- TUI crash 4001772391 ---
+The value
+  "(defun pane-remove (name)
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (when (equal name §chat§) (error §the chat pane cannot be removed§))
+    (setf *layout* (layout-remove-leaf *layout* name))
+    (pane-unregister name)
+    (when (equal *pane-focus* name) (setf *pane-focus* §chat§))
+    (panes-save)
+    (tui-drop-frame))
+  (format nil §removed pane ~A§ name))
+"
+
+is not of type
+  LIST
+Backtrace for: #<SB-THREAD:THREAD tid=1517886 "agent" RUNNING {1202A67DF3}>
+0: (LISPING::TUI-LOG-CRASH #<TYPE-ERROR expected-type: LIST datum: #<(SIMPLE-ARRAY CHARACTER (369)) (defun pane-remove (name)
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (when (equal name §chat§) (error §the chat pane cannot be removed§))
+    (setf *layout* (layout-remove-leaf *layout* name))
+... {120170492F}>>)
+1: (LISPING::TUI-CRASH #<TYPE-ERROR expected-type: LIST datum: #<(SIMPLE-ARRAY CHARACTER (369)) (defun pane-remove (name)
+  (sb-thread:with-recursive-lock (*tui-lock*)
+    (when (equal name §chat§) (error §the chat pane cannot be removed§))
+    (setf *layout* (layout-remove-leaf *layout* name))
+... {120170492F}>>)
+2: (LISPING::TUI-EMIT (:TYPE :TOOL-CALL :NAME "eval" :ARGS #<HASH-TABLE :TEST EQUAL :COUNT 1 {12016E4F73}>))
+3: (LISPING-CORE:EMIT :TOOL-CALL :NAME "eval" :ARGS #<HASH-TABLE :TEST EQUAL :COUNT 1 {12016E4F73}>)
+4: (LISPING-CORE::RUN-TOOL-CALL #<HASH-TABLE :TEST EQUAL :COUNT 4 {12016BD103}>)
+5: (LISPING-CORE::RUN-TURN)
+6: (LISPING-CORE::AGENT-LOOP)
+7: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+8: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+9: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+10: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+11: (SB-THREAD::RUN)
+12: ("foreign function: call_into_lisp_")
+13: ("foreign function: funcall1")
