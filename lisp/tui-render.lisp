@@ -232,7 +232,7 @@ embedded newlines must never reach the grid."
              ;; separator at h-3; input at h-2; status at h-1.
              (chat-h (max 3 (- h 3)))
              (g (ui-grid-make w h)))
-        (tui-draw-chat g 0 0 w chat-h "chat"
+        (tui-draw-chat g 0 0 w chat-h "chat" ui
                        (tui-ui-chat ui) (tui-ui-scroll ui))
         (tui-draw-separator g chat-h w)
         (tui-draw-input g ui (- h 2) w)

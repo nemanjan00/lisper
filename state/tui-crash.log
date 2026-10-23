@@ -396,3 +396,16 @@ Backtrace for: #<SB-THREAD:THREAD tid=628260 "tui-redraw" RUNNING {1203AB8793}>
 7: (SB-THREAD::RUN)
 8: ("foreign function: call_into_lisp_")
 9: ("foreign function: funcall1")
+--- TUI crash 4001763354 ---
+invalid number of arguments: 4
+Backtrace for: #<SB-THREAD:THREAD tid=722501 "tui-redraw" RUNNING {1202C65D63}>
+0: (LISPING::TUI-LOG-CRASH #<SB-INT:SIMPLE-PROGRAM-ERROR "invalid number of arguments: ~S" {1204D8ECF3}>)
+1: (LISPING::TUI-CRASH #<SB-INT:SIMPLE-PROGRAM-ERROR "invalid number of arguments: ~S" {1204D8ECF3}>)
+2: (LISPING::TUI-REDRAW-LOOP #S(LISPING::TUI-UI :TTY #<SB-SYS:FD-STREAM for "tui-tty" {1202C63073}> :WIDTH 188 :HEIGHT 53 :CHAT #S(LISPING::UIBUF :NAME NIL :LINES #(#S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) ...) :CAP 2000 :ALIGN :BOTTOM :WRAP T :LAST-ATTR 12) :INPUT "" :PREFIX NIL :SCROLL 0 :SHOWN-USER #<(SIMPLE-ARRAY CHARACTER (624)) [developer] Scroll bug, the user is annoyed: when the chat is shorter than the pane, scrolling up makes the newest lines disappear from the bottom. Cause: tui-scroll-chat-by and tui-scroll-chat only c... {12012FB32F}> :PENDING-USER NIL :THREADS (#<SB-THREAD:THREAD tid=722500 "tui-keys" RUNNING {1202C65B73}> #<SB-THREAD:THREAD tid=722501 "tui-redraw" RUNNING {1202C65D63}>)))
+3: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+4: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: (SB-THREAD::RUN)
+8: ("foreign function: call_into_lisp_")
+9: ("foreign function: funcall1")
