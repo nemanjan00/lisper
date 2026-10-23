@@ -17,7 +17,7 @@
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
            ;; the model call, replaceable (e.g. to stream)
-           #:*complete* #:default-complete #:chat-url #:api-headers #:*terminal-thread*
+           #:*complete* #:default-complete #:chat-url #:api-headers #:*terminal-thread* #:*queue-thread*
            ;; settings
            #:*model* #:*api-base* #:*max-tokens* #:*eval-timeout* #:*output-limit* #:*root*
            ;; helpers
@@ -692,6 +692,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *emit*: function receiving every event as a plist (:type :assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
+- The queue: text appended to state/queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
 - *complete*: the function that calls the model, given the request body; it returns the assistant message. Replace it to stream or call the model differently; chat-url and api-headers give you the endpoint and auth. If yours fails, the core falls back to default-complete.
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
@@ -853,6 +854,56 @@ the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
     t))
 
 ;;; ------------------------------------------------------------------
+;;; Queue input: anyone can queue messages by appending to state/queue.txt.
+;;; Like terminal input, this lives in LISPING and is the AI's to change.
+
+(defvar *queue-thread* nil "The thread moving state/queue.txt into *inbox*, or NIL.")
+
+(defun lisping::queue-path () (merge-pathnames "state/queue.txt" *root*))
+
+(defun lisping::take-queue ()
+  "Take the queued messages out of state/queue.txt: messages are separated by a
+line containing only ---. The file is renamed before it is read, so text
+appended meanwhile lands in a fresh queue.txt instead of being lost."
+  (let ((path (lisping::queue-path))
+        (taken (merge-pathnames "state/queue.taking" *root*)))
+    (when (probe-file path)
+      (rename-file path taken)
+      (sleep 0.1)                       ; let a writer that already opened it finish
+      (let ((text (read-text taken)))
+        (delete-file taken)
+        (loop with start = 0
+              for sep = (search (format nil "~%---~%") (format nil "~%~A~%" text) :start2 start)
+              for end = (if sep (max start (1- sep)) (length text))
+              for message = (string-trim '(#\Space #\Tab #\Newline #\Return) (subseq text start (min end (length text))))
+              when (string/= message "") collect message
+              while sep
+              do (setf start (min (length text) (+ sep 4))))))))
+
+(defun lisping::queue-input-loop ()
+  "Every second, send what was queued in state/queue.txt to the agent."
+  (loop
+    (handler-case (dolist (message (lisping::take-queue))
+                    (send-user-message message))
+      (serious-condition (c)
+        (fallback-emit (list :type :error :text (format nil "queue input: ~A" c)))))
+    (sleep 1)))
+
+(defun lisping::start-queue-input ()
+  "Start watching state/queue.txt, unless already watching."
+  (unless (and *queue-thread* (sb-thread:thread-alive-p *queue-thread*))
+    (setf *queue-thread* (sb-thread:make-thread 'lisping::queue-input-loop :name "queue-input"))))
+
+(defun lisping::stop-queue-input ()
+  "Stop watching state/queue.txt."
+  (let ((thread *queue-thread*))
+    (setf *queue-thread* nil)
+    (when (and thread (sb-thread:thread-alive-p thread))
+      (sb-thread:terminate-thread thread)
+      (sb-thread:join-thread thread :default nil :timeout 2))
+    t))
+
+;;; ------------------------------------------------------------------
 ;;; Boot
 
 (defun take-resume-message ()
@@ -869,6 +920,7 @@ the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
   ;; Terminal input starts before init.lisp, so a UI loaded from it can stop it and take over.
   (unless (sb-ext:posix-getenv "LISPING_HEADLESS")
     (lisping::start-terminal-input))
+  (lisping::start-queue-input)
   (setf *boot-errors*
         (let ((*booting* t))
           (if (probe-file (init-path))
