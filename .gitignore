@@ -4,3 +4,4 @@ state/resume.txt
 state/trace.log
 state/queue.txt
 state/queue.taking
+.env

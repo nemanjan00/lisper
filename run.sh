@@ -8,7 +8,7 @@
 set -u
 cd "$(dirname "$0")"
 
-export LISPING_DOTENV="${LISPING_DOTENV:-$HOME/meat-proxy/.env.backup-20261006-111533-kimi}"
+# Model settings come from ./.env (see .env.example), or the file named by LISPING_DOTENV.
 BOOT_GRACE=15      # seconds; a crash sooner than this counts as a boot crash
 MAX_BOOT_CRASHES=3
 
