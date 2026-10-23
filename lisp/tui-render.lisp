@@ -120,14 +120,30 @@ up; TUI-SHOW-USER replaces this line when the :user event arrives."
                  (tui-show-user ui text))))
       (t nil))))
 
+(defun tui-chat-note-new (n)
+  "N new wrapped lines arrived in the chat. With the user scrolled up,
+raise the scroll offset by N so the reading position stays put, and
+count toward the \"↓ N new\" marker; at the bottom (scroll 0) the chat
+stays at the bottom and nothing is counted."
+  (let ((p (pane-of-kind :chat)))
+    (when (and p (plusp n) (plusp (pane-scroll p)))
+      (sb-thread:with-recursive-lock (*tui-lock*)
+        (incf (pane-scroll p) n)
+        (incf *tui-chat-new* n)
+        (setf (pane-needs-redraw p) 1)))))
+
 (defun tui-chat-add (ui chunks)
   "Append CHUNKS to the chat buffer, one buffer line per text line:
 embedded newlines must never reach the grid."
   (when (eq *tui* ui)
     (sb-thread:with-recursive-lock (*tui-lock*)
       (when (eq *tui* ui)
-        (dolist (line (tui-chunk-lines chunks))
-          (uibuf-append (tui-ui-chat ui) line :fresh t))))
+        (let ((added 0))
+          (dolist (line (tui-chunk-lines chunks))
+            (uibuf-append (tui-ui-chat ui) line :fresh t)
+            (incf added (max 1 (length (ui-wrap-chunks
+                                        line (or *tui-chat-pane-width* 80))))))
+          (tui-chat-note-new added))))
     (pane-dirty "chat")))
 
 (defun tui-chunk-lines (chunks)
