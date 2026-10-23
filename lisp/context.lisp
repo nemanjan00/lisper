@@ -421,6 +421,7 @@ registry).  Returns T if it offloaded."
                        (length content) id *ctx-pointer-head*)
                (subseq content (max *ctx-pointer-head* (- (length content) *ctx-pointer-tail*)))))
         (incf *ctx-offloaded-count*)
+        (setf *ctx-requests-since-collapse* 0)
         (pane-dirty "context")
         t))))
 
