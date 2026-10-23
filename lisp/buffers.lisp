@@ -1,0 +1,165 @@
+;;;; lisp/buffers.lisp — line buffers and a character-cell grid the UI
+;;;; renders into. A ULINE is a list of (text . attr) chunks; a UIBUF is a
+;;;; capped, optionally wrapped vector of ULINES; a UIGRID is a flat
+;;;; W x H field of chars + attrs that panes get composited into.
+
+(in-package :lisping)
+
+(defstruct uline chunks)
+
+(defstruct uibuf
+  name
+  (lines (make-array 128 :adjustable t :fill-pointer 0))
+  (cap 1500)
+  (align :bottom)
+  (wrap t)
+  (last-attr -1))
+
+(defun uibuf-append (buf chunks &key fresh)
+  "Append (text . attr) chunks to BUF. With FRESH, start a new line."
+  (when (and chunks (some (lambda (c) (plusp (length (car c)))) chunks))
+    (let* ((attr (or (cdr (first chunks)) 7))
+           (v (uibuf-lines buf))
+           (mergeable (and (not fresh) (plusp (length v))
+                           (= (uibuf-last-attr buf) attr))))
+      (if mergeable
+          (setf (uline-chunks (aref v (1- (length v))))
+                (nconc (uline-chunks (aref v (1- (length v)))) chunks))
+          (vector-push-extend (make-uline :chunks chunks) v))
+      (setf (uibuf-last-attr buf) attr)
+      (let ((excess (- (length v) (uibuf-cap buf))))
+        (when (plusp excess)
+          (replace v v :start2 excess)
+          (decf (fill-pointer v) excess))))))
+
+(defun ui-split-lines (text)
+  (loop with start = 0
+        for i = (position #\Newline text :start start)
+        collect (subseq text start i)
+        while i
+        do (setf start (1+ i))))
+
+(defun uibuf-add-text (buf text attr &key fresh)
+  (loop for p in (ui-split-lines text)
+        for i from 0
+        do (uibuf-append buf (list (cons p attr)) :fresh (or fresh (> i 0)))))
+
+(defun ui-wrap-chunks (chunks width)
+  "Wrap chunk text at WIDTH columns; returns a list of chunk-lists (lines)."
+  (when (plusp width)
+    (let ((out nil) (cur nil) (len 0))
+      (dolist (ck chunks)
+        (let* ((s (car ck)) (a (cdr ck)) (start 0) (m (length s)))
+          (loop while (< start m)
+                do (let* ((rem (- width len)) (take (min rem (- m start))))
+                     (push (cons (subseq s start (+ start take)) a) cur)
+                     (incf len take)
+                     (incf start take)
+                     (when (= len width)
+                       (push (nreverse cur) out)
+                       (setf cur nil len 0))))))
+      (when cur (push (nreverse cur) out))
+      (nreverse out))))
+
+(defun ui-truncate-chunks (chunks width)
+  "Hard-truncate chunks to WIDTH columns."
+  (when (plusp width)
+    (let ((out nil) (len 0))
+      (dolist (ck chunks)
+        (let* ((s (car ck)) (m (min (length s) (- width len))))
+          (when (plusp m) (push (cons (subseq s 0 m) (cdr ck)) out))
+          (incf len m)))
+      (nreverse out))))
+
+(defstruct uigrid w h chars attrs)
+
+(defun ui-grid-make (w h)
+  (make-uigrid :w w :h h
+               :chars (make-string (* w h) :initial-element #\ )
+               :attrs (make-array (* w h) :element-type '(unsigned-byte 16)
+                                  :initial-element 7)))
+
+(defun ui-grid-put (g x y ch attr)
+  (when (and (<= 0 x) (< x (uigrid-w g)) (<= 0 y) (< y (uigrid-h g)))
+    (let ((i (+ x (* y (uigrid-w g)))))
+      (setf (char (uigrid-chars g) i) ch
+            (aref (uigrid-attrs g) i) attr))))
+
+(defun ui-grid-write (g x y string attr max-w)
+  (let ((n (min (length string) (max 0 (- (uigrid-w g) x)) max-w))
+        (w (uigrid-w g)))
+    (dotimes (k n)
+      (let ((i (+ x k (* y w))))
+        (setf (char (uigrid-chars g) i) (char string k)
+              (aref (uigrid-attrs g) i) attr)))
+    (+ x n)))
+
+(defun ui-grid-write-chunks (g x y chunks max-w)
+  (dolist (ck chunks x)
+    (setf x (ui-grid-write g x y (car ck) (cdr ck) (max 0 (- max-w x))))))
+
+(defparameter +ui-box-chars+ "─│┌┐└┘├┤┬┴┼")
+
+(defun ui-draw-box (g x y w h attr &optional title)
+  (when (or (< w 2) (< h 2)) (return-from ui-draw-box))
+  (ui-grid-put g x y #\box_drawings_light_down_and_right attr)
+  (ui-grid-put g (+ x w -1) y #\box_drawings_light_down_and_left attr)
+  (ui-grid-put g x (+ y h -1) #\box_drawings_light_up_and_right attr)
+  (ui-grid-put g (+ x w -1) (+ y h -1) #\box_drawings_light_up_and_left attr)
+  (dotimes (k (- w 2))
+    (ui-grid-put g (+ x 1 k) y #\box_drawings_light_horizontal attr)
+    (ui-grid-put g (+ x 1 k) (+ y h -1) #\box_drawings_light_horizontal attr))
+  (dotimes (k (- h 2))
+    (ui-grid-put g x (+ y 1 k) #\box_drawings_light_vertical attr)
+    (ui-grid-put g (+ x w -1) (+ y 1 k) #\box_drawings_light_vertical attr))
+  (when (and title (plusp (length title)) (> w 4))
+    (ui-grid-write g (+ x 2) y (subseq title 0 (min (length title) (- w 4)))
+                   attr (- w 4))))
+
+(defun ui-box-hconn (ch) (find ch "─┌┐├┤┬┴┼"))
+
+(defun ui-box-vconn (ch) (find ch "│┌┐└┘├┤┬┴┼"))
+
+(defun uifix-boxes (g)
+  "Rewrite box-drawing chars so their edges connect to neighbours."
+  (let ((w (uigrid-w g)) (h (uigrid-h g)) (chars (uigrid-chars g)))
+    (dotimes (y h)
+      (dotimes (x w)
+        (let ((ch (char chars (+ x (* y w)))))
+          (when (find ch +ui-box-chars+)
+            (let* ((up (and (> y 0) (char chars (+ (* (1- y) w) x))))
+                   (dn (and (< y (1- h)) (char chars (+ (* (1+ y) w) x))))
+                   (lf (and (> x 0) (char chars (+ (1- x) (* y w)))))
+                   (rt (and (< x (1- w)) (char chars (+ (1+ x) (* y w)))))
+                   (n (and up (ui-box-vconn up)))
+                   (s (and dn (ui-box-vconn dn)))
+                   (e2 (and rt (ui-box-hconn rt)))
+                   (w2 (and lf (ui-box-hconn lf)))
+                   (fixed (cond ((and n s e2 w2) #\box_drawings_light_vertical_and_horizontal)
+                                ((and n s e2) #\box_drawings_light_vertical_and_left)
+                                ((and n s w2) #\box_drawings_light_vertical_and_right)
+                                ((and e2 w2 s) #\box_drawings_light_down_and_horizontal)
+                                ((and e2 w2 n) #\box_drawings_light_up_and_horizontal)
+                                ((and e2 w2) #\box_drawings_light_horizontal)
+                                ((and n s) #\box_drawings_light_vertical)
+                                ((and n e2) #\box_drawings_light_down_and_right)
+                                ((and n w2) #\box_drawings_light_down_and_left)
+                                ((and s e2) #\box_drawings_light_up_and_right)
+                                ((and s w2) #\box_drawings_light_up_and_left)
+                                (t ch))))
+              (setf (char chars (+ x (* y w))) fixed))))))))
+
+(defun ui-grid-render (g)
+  "Render a grid to a string with SGR codes, row by row."
+  (with-output-to-string (out)
+    (let ((w (uigrid-w g))
+          (prev -1))
+      (dotimes (y (uigrid-h g))
+        (dotimes (x w)
+          (let ((i (+ x (* y w))))
+            (write-string (ui-attr-string (aref (uigrid-attrs g) i) prev) out)
+            (setf prev (aref (uigrid-attrs g) i))
+            (write-char (char (uigrid-chars g) i) out)))
+        (write-string (ui-attr-string 7 prev) out)
+        (setf prev 7)
+        (terpri out)))))
