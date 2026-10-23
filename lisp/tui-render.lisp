@@ -49,33 +49,34 @@ that does not emit :user events)."
                     :fresh t)))
   (tui-dirty))
 
-(defun tui-log-event (event)
+(defun tui-log-event (ui event)
   (let ((type (getf event :type)))
     (case type
-      (:assistant (tui-chat-add (ui-parse-ansi (getf event :text))))
-      (:thinking (tui-chat-add (list (cons (getf event :text) 8))))
+      (:assistant (tui-chat-add ui (ui-parse-ansi (getf event :text))))
+      (:thinking (tui-chat-add ui (list (cons (getf event :text) 8))))
       (:tool-call
        (tui-chat-add
+        ui
         (list (cons (format nil "* ~A ~A"
                             (getf event :name)
                             (tui-short-args (getf event :args)))
                     (ui-attr 4 :bright t)))))
-      (:tool-result (tui-chat-result (getf event :name) (getf event :text)))
-      (:error (tui-chat-add (ui-parse-ansi (getf event :text))))
-      (:info (tui-chat-add (list (cons (getf event :text) 8))))
+      (:tool-result (tui-chat-result ui (getf event :name) (getf event :text)))
+      (:error (tui-chat-add ui (ui-parse-ansi (getf event :text))))
+      (:info (tui-chat-add ui (list (cons (getf event :text) 8))))
       (:user (let ((text (getf event :text)))
-               (unless (equal text (tui-state-pending-user *tui*))
-                 (tui-show-user text))))
+               (unless (equal text (tui-state-pending-user ui))
+                 (tui-show-user ui text))))
       (t nil))))
 
-(defun tui-chat-add (chunks)
+(defun tui-chat-add (ui chunks)
   "Append CHUNKS to the chat buffer, one buffer line per text line:
 embedded newlines must never reach the grid."
-  (when *tui*
+  (when (eq *tui* ui)
     (sb-thread:with-mutex (*tui-lock*)
-      (when *tui*
+      (when (eq *tui* ui)
         (dolist (line (tui-chunk-lines chunks))
-          (uibuf-append (tui-state-chat *tui*) line :fresh t))))
+          (uibuf-append (tui-state-chat ui) line :fresh t))))
     (tui-dirty)))
 
 (defun tui-chunk-lines (chunks)
