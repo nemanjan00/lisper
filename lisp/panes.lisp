@@ -27,7 +27,10 @@
    (cmd :initform nil :accessor pane-cmd)         ; shell command for :cmd
    (interval :initform 10 :accessor pane-interval) ; seconds between :cmd re-runs
    (last-run :initform 0 :accessor pane-last-run)
-   (render :initform nil :accessor pane-render)   ; fn (pane width height) -> chunk-line list
+   (render :initform nil :accessor pane-render)   ; fn (pane width height) -> chunk-line list,
+                                          ; or a SYMBOL naming one — late binding, so
+                                          ; redefining the renderer never leaves a stale
+                                          ; function object in the registry
    (scroll :initform 0 :accessor pane-scroll)
    (needs-redraw :initform 1 :accessor pane-needs-redraw)))
 
@@ -86,10 +89,12 @@ pane content blank (2026-10-23)."
     (unless (eq (pane-kind p) :chat)
       (unless (pane-buf p) (setf (pane-buf p) (make-uibuf :cap 500))))
     (setf (pane-render p)
+          ;; Symbols, not #'objects: redefining a renderer must take
+          ;; effect without re-registering the pane.
           (case (pane-kind p)
-            (:chat #'pane-chat-render)
-            (:todo #'pane-todo-render)
-            (t #'pane-buf-render)))
+            (:chat 'pane-chat-render)
+            (:todo 'pane-todo-render)
+            (t 'pane-buf-render)))
     (setf (gethash name *panes*) p)
     name))
 
@@ -362,7 +367,12 @@ redraw thread."
                      8)))
       (dotimes (i w) (ui-grid-put g (+ x i) y #\─ tattr))
       (ui-grid-write g (+ x 1) y (format nil " ~A " (pane-title p)) tattr (+ x w))
-      (let ((lines (handler-case (funcall (pane-render p) p w (1- h))
+      (let ((lines (handler-case
+                       (let ((r (pane-render p)))
+                         (funcall (if (symbolp r)
+                                      (if (fboundp r) (symbol-function r) #'pane-buf-render)
+                                      r)
+                                  p w (1- h)))
                    (serious-condition (c)
                      ;; Log render errors, and show the failure in the
                      ;; pane instead of silently drawing nothing.

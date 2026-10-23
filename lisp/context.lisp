@@ -673,7 +673,7 @@ restart — hooked via *PANES-INIT-HOOKS*).  Idempotent."
   (block ctx-init-panes
     (unless (pane-get "context")
       (pane-register "context" :title "context" :kind :buffer))
-    (setf (pane-render (pane-get "context")) #'pane-context-render)
+    (setf (pane-render (pane-get "context")) 'pane-context-render)
     (unless (member "context" (layout-pane-names) :test #'equal)
       (setf *layout* (list :vsplit 0.85 *layout* (list 'leaf "context")))
       (panes-save)
