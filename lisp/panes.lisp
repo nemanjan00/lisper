@@ -642,7 +642,7 @@ must not depend on which package READ-FROM-STRING ran in."
               (format nil "layout reset: ~S" *layout*)))))
 
 (lisping-core::register-tool
- "pane" "Manage TUI panes. Actions: list | focus (name) | add (name, title, kind[buffer|cmd], cmd, interval) | split (name, direction h|v, ratio, new-name, title, kind, cmd, interval) | remove (name). The chat pane cannot be removed."
+ "pane" "Manage TUI panes. list: one line per pane (name [kind] title scroll), * marks the focused pane. focus: focus pane `name`. add: register a pane without placing it — needs `name`; optional `title`, `kind` (buffer = static text, the default; cmd = run shell `cmd` every `interval` seconds and show its output). split: replace pane `name`'s leaf with a split — `direction` h = side by side, v = stacked; `ratio` is the existing pane's share of the space and the new pane `new-name` gets the rest (e.g. split todo v 0.8 hello puts hello under todo at 20%); `new-name` may be an already-registered pane (from add) or is created with the given title/kind/cmd/interval. remove: remove pane `name` and close its split; the chat pane cannot be removed. split/remove save state/layout.lisp and redraw from scratch."
  (lisping-core::obj "type" "object"
         "properties" (lisping-core::obj
                       "action" (lisping-core::obj "type" "string"
