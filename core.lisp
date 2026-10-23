@@ -1374,12 +1374,28 @@ its working directory. Written atomically; resumed at the next boot."
       (let ((text (substitute #\Space #\Newline (gethash "content" m))))
         (subseq text 0 (min 80 (length text)))))))
 
+(defvar *session-lock-fd* nil
+  "The open file descriptor holding this session's lock, for the process's life.")
+
+(defun try-session-lock (name)
+  "Take an exclusive, non-blocking flock on session NAME's lock file. Return the
+file descriptor holding it, or NIL if another process holds it. The kernel
+releases the lock when its holder dies, so a crash leaves nothing stale."
+  (let* ((path (namestring (merge-pathnames (format nil "sessions/~A/lock" name) *home*)))
+         (fd (progn (ensure-directories-exist path)
+                    (sb-unix:unix-open path (logior sb-unix:o_creat sb-unix:o_rdwr) #o644))))
+    (when fd
+      (if (zerop (sb-alien:alien-funcall
+                  (sb-alien:extern-alien "flock" (function sb-alien:int sb-alien:int sb-alien:int))
+                  fd 6))                ; LOCK_EX | LOCK_NB
+          fd
+          (progn (sb-unix:unix-close fd) nil)))))
+
 (defun session-running-p (name)
-  "True if another process is running session NAME (its pid file names a live process)."
-  (let* ((text (read-text (merge-pathnames (format nil "sessions/~A/pid" name) *home*)))
-         (pid (and text (parse-integer text :junk-allowed t))))
-    (and pid (/= pid (sb-unix:unix-getpid))
-         (probe-file (format nil "/proc/~D/" pid)) t)))
+  "True if another process is running session NAME (it holds the session's lock)."
+  (unless (equal name *session*)
+    (let ((fd (try-session-lock name)))
+      (if fd (progn (sb-unix:unix-close fd) nil) t))))
 
 (defun session-list ()
   "Every saved session, most recently saved first, as plists with :session :cwd
@@ -1422,7 +1438,7 @@ sessions/*/messages.json*
 sessions/*/meta.json
 sessions/*/resume.txt
 sessions/*/queue.*
-sessions/*/pid
+sessions/*/lock
 switch
 "
   "The .gitignore written into a new *home*.")
@@ -1583,7 +1599,11 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
                     (if (session-name-p id) id "main"))
         *cwd* (let ((d (sb-ext:posix-getenv "LISPER_CWD"))) (and d (plusp (length d)) (pathname (if (char= (char d (1- (length d))) #\/) d (concatenate 'string d "/"))))))
   (ensure-directories-exist (session-dir))
-  (write-text (session-path "pid") (format nil "~D~%" (sb-unix:unix-getpid)))
+  ;; One session, one process: hold the session's lock for this process's life.
+  (unless (setf *session-lock-fd* (try-session-lock *session*))
+    (format *error-output* "~&Session ~A is already running in another process. Attach to that one, or start another session: LISPER_SESSION=name ./run.sh~%" *session*)
+    (finish-output *error-output*)
+    (sb-ext:exit :code 3 :abort t))
   (configure)
   ;; Terminal input starts before init.lisp, so a UI loaded from it can stop it and take over.
   (unless (sb-ext:posix-getenv "LISPING_HEADLESS")

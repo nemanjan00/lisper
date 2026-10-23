@@ -16,7 +16,7 @@ MAX_QUICK_CRASHES=3
 
 # On the way out, say how to come back to this session.
 resume_hint() {
-  [ -f "$SESSION_DIR/messages.json" ] || return 0
+  [ -z "${NO_HINT:-}" ] && [ -f "$SESSION_DIR/messages.json" ] || return 0
   local cmd="$PWD/run.sh"
   [ "$SESSION" = main ] || cmd="LISPER_SESSION=$(printf %q "$SESSION") $cmd"
   [ -n "${LISPER_HOME_SET:-}" ] && cmd="LISPER_HOME=$(printf %q "$LISPER_HOME") $cmd"
@@ -78,6 +78,7 @@ while true; do
   case $code in
     0) exit 0 ;;
     42) boot_crashes=0; quick_crashes=0; switch_session; continue ;;
+    3) NO_HINT=1; exit 1 ;;   # the session is already running in another process
   esac
 
   if (( $(date +%s) - started < QUICK )); then
