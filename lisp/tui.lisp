@@ -26,7 +26,7 @@
 
 (defun tui-dirty ()
   "Ask the redraw thread to redraw."
-  (sb-thread:with-mutex (*tui-lock*)
+  (sb-thread:with-recursive-lock (*tui-lock*)
     (incf *tui-dirty*)
     (sb-thread:condition-notify *tui-cv*)))
 

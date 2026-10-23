@@ -27,7 +27,7 @@
              (handler-case
                  (let ((key (tui-read-key ui)))
                    (tui-log-key key)
-                   (sb-thread:with-mutex (*tui-lock*)
+                   (sb-thread:with-recursive-lock (*tui-lock*)
                      (when (and *tui* (eq *tui* ui))
                        (if (tui-ui-prefix ui)
                            (tui-prefix-key ui key)

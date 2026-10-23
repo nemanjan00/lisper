@@ -65,7 +65,7 @@ that does not emit :user events)."
 (defun tui-show-user (ui text)
   "Log a user message unless it is already on screen. Upgrades the dimmed
 queued echo of the same text instead of duplicating it."
-  (sb-thread:with-mutex (*tui-lock*)
+  (sb-thread:with-recursive-lock (*tui-lock*)
     (when (and (eq *tui* ui)
                (not (equal text (tui-ui-shown-user ui))))
       (when (equal text *tui-queued-text*)
@@ -89,7 +89,7 @@ queued echo of the same text instead of duplicating it."
 up; TUI-SHOW-USER replaces this line when the :user event arrives."
   (when (and (eq *tui* ui) (stringp text) (plusp (length text))
              (not (equal text *tui-queued-text*)))
-    (sb-thread:with-mutex (*tui-lock*)
+    (sb-thread:with-recursive-lock (*tui-lock*)
       (when (eq *tui* ui)
         (setf *tui-queued-text* text)
         (uibuf-append (tui-ui-chat ui)
@@ -123,7 +123,7 @@ up; TUI-SHOW-USER replaces this line when the :user event arrives."
   "Append CHUNKS to the chat buffer, one buffer line per text line:
 embedded newlines must never reach the grid."
   (when (eq *tui* ui)
-    (sb-thread:with-mutex (*tui-lock*)
+    (sb-thread:with-recursive-lock (*tui-lock*)
       (when (eq *tui* ui)
         (dolist (line (tui-chunk-lines chunks))
           (uibuf-append (tui-ui-chat ui) line :fresh t))))
@@ -199,7 +199,7 @@ embedded newlines must never reach the grid."
         do (handler-bind ((serious-condition #'tui-log-crash-at-signal))
              (handler-case
                  (progn
-                   (sb-thread:with-mutex (*tui-lock*)
+                   (sb-thread:with-recursive-lock (*tui-lock*)
                      (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
                            do (sb-thread:condition-wait *tui-cv* *tui-lock*
                                                         :timeout (tui-seconds-to-next-minute))
@@ -222,7 +222,7 @@ embedded newlines must never reach the grid."
 
 (defun tui-draw (ui)
   (tui-maybe-update-size ui)
-  (sb-thread:with-mutex (*tui-lock*)
+  (sb-thread:with-recursive-lock (*tui-lock*)
     (when (and *tui* (eq *tui* ui))
       (let* ((w (tui-ui-width ui))
              (h (tui-ui-height ui))
