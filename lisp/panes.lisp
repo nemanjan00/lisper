@@ -469,19 +469,18 @@ context pane's full-width rect suppress the separators above it.
           (when (gap-p x y)
             (ui-grid-put g x y (panes-gap-junction-char g x y) 8))))
       ;; Title rows: a gap bar ending at a pane's ─ title line from
-      ;; above (or starting below it) turns that ─ into ┴/┬/┼.
+      ;; above turns that ─ into ┴.  (Only from above: below a title
+      ;; row is the pane's own content, which may legitimately contain
+      ;; box-drawing chars from chat text.)
       (dolist (r rects)
         (destructuring-bind (name rx ry rw rh) r
           (declare (ignore name rh))
           (dotimes (i rw)
             (let ((cx (+ rx i)))
-              (when (eql (panes-grid-char g cx ry) #\─)
-                (let ((u (box-v-p (panes-grid-char g cx (1- ry))))
-                      (d (box-v-p (panes-grid-char g cx (1+ ry)))))
-                  (when (or u d)
-                    (ui-grid-put g cx ry
-                                 (cond ((and u d) #\┼) (u #\┴) (t #\┬))
-                                 (aref (uigrid-attrs g) (+ cx (* ry w))))))))))))))
+              (when (and (eql (panes-grid-char g cx ry) #\─)
+                         (box-v-p (panes-grid-char g cx (1- ry))))
+                (ui-grid-put g cx ry #\┴
+                             (aref (uigrid-attrs g) (+ cx (* ry w))))))))))))
 
 
 ;;; ---------------------------------------------------------------
