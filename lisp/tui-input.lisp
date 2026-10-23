@@ -79,59 +79,59 @@
 ;;; ---------------------------------------------------------------
 ;;; Key dispatch. C-b (#\Stx) is the prefix, like tmux.
 
-(defun tui-prefix-key (key)
-  (setf (tui-state-prefix *tui*) nil)
+(defun tui-prefix-key (ui key)
+  (setf (tui-state-prefix ui) nil)
   (cond ((and (characterp key) (char-equal key #\q)) (setf *tui-quit* t))
-        ((and (characterp key) (char= key #\1)) (setf (tui-state-active *tui*) 0))
-        ((and (characterp key) (char= key #\2)) (setf (tui-state-active *tui*) 1))
-        ((member key '(:left :right)) (tui-cycle-pane key))
+        ((and (characterp key) (char= key #\1)) (setf (tui-state-active ui) 0))
+        ((and (characterp key) (char= key #\2)) (setf (tui-state-active ui) 1))
+        ((member key '(:left :right)) (tui-cycle-pane ui key))
         (t nil)))
 
-(defun tui-normal-key (key)
-  (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-state-prefix *tui*) t))
-        ((eq key :pgup) (tui-scroll-chat :pgup))
-        ((eq key :pgdn) (tui-scroll-chat :pgdn))
-        ((member key '(:left :right)) (tui-cycle-pane key))
-        ((and (characterp key) (char= key #\Return)) (tui-submit-input))
+(defun tui-normal-key (ui key)
+  (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-state-prefix ui) t))
+        ((eq key :pgup) (tui-scroll-chat ui :pgup))
+        ((eq key :pgdn) (tui-scroll-chat ui :pgdn))
+        ((member key '(:left :right)) (tui-cycle-pane ui key))
+        ((and (characterp key) (char= key #\Return)) (tui-submit-input ui))
         ((and (characterp key) (member key '(#\Rubout #\Backspace)))
-         (tui-input-backspace))
-        ((and (characterp key) (char= key #\Nak)) (tui-clear-input)) ; C-u
-        ((and (characterp key) (char= key #\Etx)) (tui-clear-input)) ; C-c
-        ((and (characterp key) (char= key #\Eot)) (tui-ctrl-d))       ; C-d
+         (tui-input-backspace ui))
+        ((and (characterp key) (char= key #\Nak)) (tui-clear-input ui)) ; C-u
+        ((and (characterp key) (char= key #\Etx)) (tui-clear-input ui)) ; C-c
+        ((and (characterp key) (char= key #\Eot)) (tui-ctrl-d ui))       ; C-d
         ((and (characterp key) (graphic-char-p key))
-         (vector-push-extend key (tui-state-input *tui*)))
+         (vector-push-extend key (tui-state-input ui)))
         (t nil)))
 
-(defun tui-submit-input ()
-  (let* ((in (tui-state-input *tui*))
+(defun tui-submit-input (ui)
+  (let* ((in (tui-state-input ui))
          (text (string-trim " " (coerce in 'string))))
     (when (plusp (length text))
-      (setf (tui-state-pending-user *tui*) text
+      (setf (tui-state-pending-user ui) text
             (fill-pointer in) 0)
       (send-user-message text))))
 
-(defun tui-input-backspace ()
-  (let ((in (tui-state-input *tui*)))
+(defun tui-input-backspace (ui)
+  (let ((in (tui-state-input ui)))
     (when (plusp (length in)) (decf (fill-pointer in)))))
 
-(defun tui-clear-input ()
-  (setf (fill-pointer (tui-state-input *tui*)) 0))
+(defun tui-clear-input (ui)
+  (setf (fill-pointer (tui-state-input ui)) 0))
 
-(defun tui-ctrl-d ()
-  (if (zerop (length (tui-state-input *tui*)))
+(defun tui-ctrl-d (ui)
+  (if (zerop (length (tui-state-input ui)))
       (setf *tui-quit* t)
-      (tui-input-backspace)))
+      (tui-input-backspace ui)))
 
-(defun tui-scroll-chat (key)
-  (let* ((h (max 1 (- (tui-state-height *tui*) 4)))
+(defun tui-scroll-chat (ui key)
+  (let* ((h (max 1 (- (tui-state-height ui) 4)))
          (delta (max 1 (floor h 2)))
-         (s (tui-state-scroll *tui*)))
-    (setf (tui-state-scroll *tui*)
+         (s (tui-state-scroll ui)))
+    (setf (tui-state-scroll ui)
           (max 0 (if (eq key :pgup) (+ s delta) (- s delta))))))
 
-(defun tui-cycle-pane (key)
-  (setf (tui-state-active *tui*)
-        (mod (+ (tui-state-active *tui*) (if (eq key :left) -1 1)) 2)))
+(defun tui-cycle-pane (ui key)
+  (setf (tui-state-active ui)
+        (mod (+ (tui-state-active ui) (if (eq key :left) -1 1)) 2)))
 
 ;;; ---------------------------------------------------------------
 ;;; Weather pane: wttr.in/Belgrade, refreshed every few minutes.
