@@ -157,7 +157,11 @@ embedded newlines must never reach the grid."
   (subseq s 0 (or (position #\Newline s) (length s))))
 
 (defun str-truncate (s n)
-  (if (> (length s) n) (subseq s 0 n) s))
+  "Cut S to N chars. A cut result ends with … (the caller renders it
+dim) so a shortened line never passes for a complete one."
+  (if (> (length s) n)
+      (concatenate 'string (subseq s 0 (max 0 (1- n))) "…")
+      s))
 
 (defun tui-short-args (args)
   (let ((s (cond ((and (hash-table-p args) (stringp (gethash "code" args)))
