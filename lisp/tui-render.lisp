@@ -51,14 +51,15 @@
 that does not emit :user events)."
   (let ((ui *tui*))
     (when ui
-      (handler-case
-          (let* ((msgs (gethash "messages" body))
-                 (last (and (vectorp msgs) (plusp (length msgs))
-                            (aref msgs (1- (length msgs))))))
-            (when (and last (string= (gethash "role" last) "user")
-                       (stringp (gethash "content" last)))
-              (tui-show-user ui (gethash "content" last))))
-        (serious-condition (c) (when (eq *tui* ui) (tui-crash c)))))
+      (handler-bind ((serious-condition #'tui-log-crash-at-signal))
+        (handler-case
+            (let* ((msgs (gethash "messages" body))
+                   (last (and (vectorp msgs) (plusp (length msgs))
+                              (aref msgs (1- (length msgs))))))
+              (when (and last (string= (gethash "role" last) "user")
+                         (stringp (gethash "content" last)))
+                (tui-show-user ui (gethash "content" last))))
+          (serious-condition (c) (when (eq *tui* ui) (tui-crash c))))))
   body))
 
 (defun tui-show-user (ui text)
