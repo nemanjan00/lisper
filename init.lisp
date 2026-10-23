@@ -9,6 +9,7 @@
 
 ;; Tools and the tmux-inspired terminal UI.
 (load-file "lisp/edit.lisp")
+(load-file "lisp/panes.lisp")
 (load-file "lisp/tui.lisp")
 (load-file "lisp/tui-render.lisp")
 (load-file "lisp/tui-input.lisp")
