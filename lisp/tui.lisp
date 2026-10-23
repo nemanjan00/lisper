@@ -25,6 +25,14 @@
   (pending-user nil) ; message submitted by the UI, not yet echoed back
   threads)
 
+;;; The input line is an adjustable string with a fill-pointer (in the
+;;; UI struct); the cursor is the index where typing inserts and where
+;;; the terminal cursor is drawn. Kept outside the struct so the struct
+;;; definition never has to change (a live redefinition with different
+;;; slots breaks existing instances).
+
+(defvar *tui-input-cursor* 0 "Cursor index into *tui*'s input buffer.")
+
 (defun tui-dirty ()
   "Ask the redraw thread to redraw."
   (sb-thread:with-recursive-lock (*tui-lock*)
