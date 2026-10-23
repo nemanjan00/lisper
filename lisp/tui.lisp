@@ -62,13 +62,23 @@ one is already live. Returns true if the mode verified by reading back."
       (zerop (logand (sb-posix:termios-lflag back)
                     (logior sb-posix:icanon sb-posix:echo sb-posix:isig))))))
 
-(defun tui-restore-mode ()
-  "Restore the terminal settings saved by TUI-RAW-MODE."
+(defun tui-restore-mode (&optional ui)
+  "Restore the terminal settings saved by TUI-RAW-MODE. UI (default
+*TUI*) supplies the fd; callers in the crash path must pass their
+captured UI explicitly, because they restore BEFORE clearing *TUI* —
+clearing first and then failing to find the tty left the user's
+terminal stuck in raw mode after a crash."
   (when *tui-saved-termios*
     (ignore-errors
-      (sb-posix:tcsetattr (sb-sys:fd-stream-fd (tui-ui-tty *tui*))
+      (sb-posix:tcsetattr (sb-sys:fd-stream-fd (tui-ui-tty (or ui *tui*)))
                           sb-posix:tcsanow *tui-saved-termios*))
     (setf *tui-saved-termios* nil)))
+
+(defun tui-log-crash-at-signal (condition)
+  "HANDLER-BIND hook: log the backtrace at the point of the error, before
+the stack unwinds, so state/tui-crash.log names the exact failing frame.
+A HANDLER-CASE around the same body then does the cleanup."
+  (ignore-errors (tui-log-crash condition)))
 
 (defun tty-write (string)
   (when *tui*
