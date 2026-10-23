@@ -47,6 +47,7 @@ layout are in place.  PANES-INIT wipes *panes* and *layout* on every
 UI (re)start, so any subsystem that owns a pane must re-register
 itself here (the compactor's context pane does).")
 
+
 (defvar *panes-layout-file* (merge-pathnames "state/layout.lisp" lisping-core:*root*))
 
 ;;; ---------------------------------------------------------------
@@ -106,7 +107,7 @@ pane content blank (2026-10-23)."
     (let ((p (pane-get name)))
       (when p
         (setf (pane-scroll p) (max 0 (+ (pane-scroll p) delta)))
-        ;; Reaching the bottom clears the §N new§ marker.
+        ;; Reaching the bottom clears the 'N new' marker.
         (when (and (eq (pane-kind p) :chat) (zerop (pane-scroll p)))
           (setf *tui-chat-new* 0))
         (setf (pane-needs-redraw p) 1))))
@@ -114,8 +115,8 @@ pane content blank (2026-10-23)."
 
 
 (defun pane-focus-pane (name)
-  §Focus a pane (highlights its title); scrolling keys apply to it.
-Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them).§
+  "Focus a pane (highlights its title); scrolling keys apply to it.
+Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them)."
   (sb-thread:with-recursive-lock (*tui-lock*)
     (when (pane-get name)
       (setf *pane-focus* name)
@@ -327,13 +328,13 @@ hsplit reserves one uncovered column — see hsplit-left-width)."
     (panes-draw-gap-columns g rects)))
 
 (defun panes-draw-gap-columns (g rects)
-  "Fill every cell no pane rect covers with a dim \│ — the 1-column gaps
-hsplit leaves between side-by-side panes, at any depth.  Coverage is
-checked PER CELL: a column partially covered (e.g. by a full-width pane
-below a vsplit) must still get its \│ in the uncovered rows — the old
-per-column SOME let the context pane's full-width rect suppress the
-separators above it.  (A cell is either pane-covered or a gap; vsplit
-reserves no gap rows.)"
+  "Fill every cell no pane rect covers with a dim vertical bar — the
+1-column gaps hsplit leaves between side-by-side panes, at any depth.
+Coverage is checked PER CELL: a column partially covered (e.g. by a
+full-width pane below a vsplit) must still get its bar in the uncovered
+rows — the old per-column SOME let the context pane's full-width rect
+suppress the separators above it.  (A cell is either pane-covered or
+a gap; vsplit reserves no gap rows.)"
   (let ((w (uigrid-w g))
         (h (uigrid-h g)))
     (dotimes (x w)
@@ -344,8 +345,7 @@ reserves no gap rows.)"
                              (<= (third r) y)
                              (< y (+ (third r) (fifth r)))))
                       rects)
-          (ui-grid-put g x y #\│ 8))))))
-
+          (ui-grid-put g x y (code-char 9474) 8))))))
 
 
 ;;; ---------------------------------------------------------------
@@ -394,7 +394,6 @@ Takes *TUI-LOCK* (mutates *layout* while the redraw thread draws)."
             (or (pane-cmd (pane-get new-name)) "buffer"))))
 
 
-
 (defun pane-remove (name)
   (sb-thread:with-recursive-lock (*tui-lock*)
     (when (equal name "chat") (error "the chat pane cannot be removed"))
@@ -428,7 +427,7 @@ directory, and a transient file there would dirty the working tree)."
              (when (member (pane-kind p) '(:buffer :cmd))
                (format s "(pane-register ~S :title ~S :kind ~S :cmd ~S :interval ~S)~%"
                        (pane-name p) (pane-title p) (pane-kind p)
-                       (pane-cmd p) (pane-interval p)))
+                       (pane-cmd p) (pane-interval p))))
            *panes*))))))
 
 
