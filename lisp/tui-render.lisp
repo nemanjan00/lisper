@@ -264,18 +264,20 @@ embedded newlines must never reach the grid."
                 *tui-clock-minute* (nth-value 1 (decode-universal-time
                                                  (get-universal-time)))))))))
 
-(defun tui-draw-pane (g x y w h title buf activep scroll)
-  (ui-draw-box g x y w h
-               (if activep (ui-attr 7 :bright t :bg 4) 8)
-               (format nil " ~A " title))
-  (let ((inner-w (- w 2))
-        (inner-h (- h 2)))
-    (when (and (plusp inner-w) (plusp inner-h))
-      (let ((lines (tui-visible-lines buf inner-w inner-h scroll)))
-        (loop for line in lines
-              for i from 0
-              do (ui-grid-write-chunks g (1+ x) (+ y 1 i) line
-                                       (+ x 1 inner-w)))))))
+(defun tui-draw-chat (g x y w h title buf scroll)
+  "Chat pane: a top border carrying the TITLE, no side or bottom
+borders — content runs the full width below it."
+  (dotimes (i w) (ui-grid-put g (+ x i) y #\─ 8))
+  (ui-grid-write g (+ x 1) y (format nil " ~A " title)
+                 (ui-attr 7 :bright t :bg 4) (+ x w))
+  (let ((lines (tui-visible-lines buf w (1- h) scroll)))
+    (loop for line in lines
+          for i from 0
+          do (ui-grid-write-chunks g x (+ y 1 i) line (+ x w)))))
+
+(defun tui-draw-separator (g y w)
+  "Thin dim line between the chat pane and the input row."
+  (dotimes (x w) (ui-grid-put g x y #\─ 8)))
 
 (defun tui-visible-lines (buf width height scroll)
   "Top-first chunk-lists fitting HEIGHT rows, scrolled up SCROLL lines."

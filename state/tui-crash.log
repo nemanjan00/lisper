@@ -383,3 +383,16 @@ Backtrace for: #<SB-THREAD:THREAD tid=611057 "tui-keys" RUNNING {1202E095D3}>
 7: (SB-THREAD::RUN)
 8: ("foreign function: call_into_lisp_")
 9: ("foreign function: funcall1")
+--- TUI crash 4001762949 ---
+The function LISPING::TUI-DRAW-CHAT is undefined.
+Backtrace for: #<SB-THREAD:THREAD tid=628260 "tui-redraw" RUNNING {1203AB8793}>
+0: (LISPING::TUI-LOG-CRASH #<UNDEFINED-FUNCTION TUI-DRAW-CHAT {1201E36A73}>)
+1: (LISPING::TUI-CRASH #<UNDEFINED-FUNCTION TUI-DRAW-CHAT {1201E36A73}>)
+2: (LISPING::TUI-REDRAW-LOOP #S(LISPING::TUI-UI :TTY #<SB-SYS:FD-STREAM for "tui-tty" {1203AADAF3}> :WIDTH 188 :HEIGHT 53 :CHAT #S(LISPING::UIBUF :NAME NIL :LINES #(#S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) ...) :CAP 2000 :ALIGN :BOTTOM :WRAP T :LAST-ATTR 12) :INPUT "" :PREFIX NIL :SCROLL 0 :SHOWN-USER #<(SIMPLE-ARRAY CHARACTER (731)) [developer] Correction to my last message: the user sees "[A"/"[B" while continuously scrolling, so it isn't slow bytes. Real cause: tui-fd-ready-p uses sb-sys:wait-until-fd-usable on the fd, but your... {120175C72F}> :PENDING-USER NIL :THREADS (#<SB-THREAD:THREAD tid=628259 "tui-keys" RUNNING {1203AB85A3}> #<SB-THREAD:THREAD tid=628260 "tui-redraw" RUNNING {1203AB8793}>)))
+3: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+4: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: (SB-THREAD::RUN)
+8: ("foreign function: call_into_lisp_")
+9: ("foreign function: funcall1")
