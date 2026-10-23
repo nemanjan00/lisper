@@ -21,7 +21,17 @@ TUI-NORMAL-KEY. A SYMBOL (ask.lisp sets 'ASK-KEY) so redefining the
 function takes effect without re-setting the variable.")
 
 (defvar *tui-mouse-interceptor* nil
-  "NIL or a funcallable (ui key) -> consumed-p, called first by TUI-MOUSE.")
+  "DEPRECATED, singular. Use *TUI-MOUSE-INTERCEPTORS*.")
+
+(defvar *tui-key-interceptors* nil
+  "List of funcallables (ui key) -> consumed-p, walked in order by
+TUI-NORMAL-KEY until one returns T. List elements are SYMBOLS (ask.lisp
+uses 'ASK-KEY) so redefining the function takes effect without
+re-setting the list.")
+
+(defvar *tui-mouse-interceptors* nil
+  "List of funcallables (ui key) -> consumed-p, walked in order by
+TUI-MOUSE until one returns T.")
 
 ;;; The input cursor and hscroll are slots of TUI-UI (tui.lisp) —
 ;;; tui-render.lisp loads before this file and already draws the
@@ -168,7 +178,8 @@ modifier/motion bits we ignore."
         (t nil)))
 
 (defun tui-normal-key (ui key)
-  (when (and *tui-key-interceptor* (funcall *tui-key-interceptor* ui key))
+  (when (or (and *tui-key-interceptor* (funcall *tui-key-interceptor* ui key))
+            (some (lambda (f) (funcall f ui key)) *tui-key-interceptors*))
     (return-from tui-normal-key t))
   (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-ui-prefix ui) t))
         ;; The terminal wheel becomes Up/Down arrows when the host tmux
@@ -276,7 +287,8 @@ split's ratio, repainting at most ~10 times a second (the SSH budget),
 and the release does one full redraw and saves the layout. The input
 and status rows belong to no pane and are ignored."
   (declare (ignore ui))
-  (when (and *tui-mouse-interceptor* (funcall *tui-mouse-interceptor* ui key))
+  (when (or (and *tui-mouse-interceptor* (funcall *tui-mouse-interceptor* ui key))
+            (some (lambda (f) (funcall f ui key)) *tui-mouse-interceptors*))
     (return-from tui-mouse t))
   (destructuring-bind (_ b x y kind) key
     (declare (ignore _))
