@@ -229,7 +229,6 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
   "The UI broke: restore the terminal, keep the agent alive."
   (tui-log-crash condition)
   (let ((ui *tui*))
-    (setf *tui* nil)
     (tui-kill-threads)
     (when ui
       (ignore-errors
@@ -237,9 +236,13 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
                               #\Esc #\Esc #\Esc condition)
                       (tui-ui-tty ui))
         (finish-output (tui-ui-tty ui)))
+      ;; Restore BEFORE clearing *TUI*: the restore needs the tty fd from
+      ;; the UI, and with *TUI* NIL it used to fail silently and leave
+      ;; the terminal in raw mode (ordering bug, same as in TUI-STOP).
+      (tui-restore-mode ui)
       (ignore-errors (close (tui-ui-tty ui)))
-      (tui-restore-mode)
       (setf *emit* 'terminal-emit)
-      (start-terminal-input)))
+      (start-terminal-input))
+    (setf *tui* nil))
   (terminal-emit (list :type :error
                        :text (format nil "TUI died and was stopped: ~A" condition))))
