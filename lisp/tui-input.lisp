@@ -196,6 +196,13 @@ modifier/motion bits we ignore."
     (when (plusp (length text))
       (setf (fill-pointer in) 0
             *tui-input-cursor* 0)
+      ;; Enter always jumps the chat to the bottom and clears the
+      ;; "N new" marker.
+      (let ((p (pane-of-kind :chat)))
+        (when p
+          (setf (pane-scroll p) 0
+                *tui-chat-new* 0
+                (pane-needs-redraw p) 1)))
       ;; Echo it dimmed right away; the core's :queued/:user events and
       ;; TUI-SHOW-USER dedupe and upgrade this line.
       (tui-show-queued ui text)
