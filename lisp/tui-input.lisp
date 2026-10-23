@@ -223,12 +223,11 @@ via an intermediate, so the overlapping shift is safe."
     (setf (tui-ui-input-cursor ui) (1+ cur))))
 (defun tui-input-delete (ui)
   "Delete the character under the cursor (the Delete key)."
-  (let ((in (tui-ui-input ui)))
-    (when (< *tui-input-cursor* (length in))
-      (replace in in :start1 *tui-input-cursor*
-               :start2 (1+ *tui-input-cursor*))
+  (let ((in (tui-ui-input ui))
+        (cur (tui-ui-input-cursor ui)))
+    (when (< cur (length in))
+      (replace in in :start1 cur :start2 (1+ cur))
       (decf (fill-pointer in)))))
-
 (defun tui-input-backspace (ui)
   "Delete the character before the cursor."
   (let ((in (tui-ui-input ui)))
