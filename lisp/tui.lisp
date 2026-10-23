@@ -185,7 +185,8 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
         (when (and rows cols)
           (setf (tui-ui-height ui) rows
                 (tui-ui-width ui) cols)))
-      (tty-write (format nil "~C[?1049h~C[?25l~C[0m~C[2J~C[H" #\Esc #\Esc #\Esc #\Esc #\Esc))
+      (tty-write (format nil "~C[?1049h~C[?25l~C[0m~C[2J~C[?1000h~C[?1006h~C[H"
+                         #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc))
       (setf (tui-ui-threads ui)
             (list (sb-thread:make-thread (lambda () (tui-key-loop ui))
                                          :name "tui-keys")
