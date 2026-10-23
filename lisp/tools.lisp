@@ -9,6 +9,9 @@ indices stay stable as items are added.")
 
 (defvar *todos-file* (merge-pathnames "state/todos.txt" lisping-core:*root*))
 
+(defvar *todos-done-file* (merge-pathnames "state/todos-done.txt" lisping-core:*root*)
+  "Finished todos are appended here, under a date header, by TODO-CLEAR.")
+
 (defun todo-load ()
   "Read *TODOS-FILE* into *TODOS*: lines \"[ ] text\" / \"[x] text\".
 WITH-OPEN-FILE with :IF-DOES-NOT-EXIST NIL binds the stream to NIL
@@ -57,10 +60,27 @@ user's terminal forever."
               do (format s "~D. [~C] ~A~%" i (if (cdr item) #\x #\Space) (car item))))))
 
 (defun todo-clear ()
-  (setf *todos* nil)
-  (todo-save)
-  (ignore-errors (pane-dirty "todo"))
-  "cleared")
+  "Move finished items to *TODOS-DONE-FILE* (appended under a date header)
+and keep only the open ones in *TODOS-FILE*. Open items keep their order;
+indices shift, so LIST before marking anything else done."
+  (let ((done (remove-if-not #'cdr *todos*))
+        (open (remove-if #'cdr *todos*)))
+    (if (null done)
+        "no finished todos to clear"
+        (progn
+          (multiple-value-bind (sec min hour day month year)
+              (decode-universal-time (get-universal-time))
+            (declare (ignore sec min hour))
+            (with-open-file (s *todos-done-file* :direction :output
+                              :if-exists :append :if-does-not-exist :create)
+              (format s "~&--- ~4,'0D-~2,'0D-~2,'0D ---~%" year month day)
+              (dolist (item done)
+                (format s "[x] ~A~%" (car item)))))
+          (setf *todos* open)
+          (todo-save)
+          (ignore-errors (pane-dirty "todo"))
+          (format nil "cleared ~D finished todo~:P to state/todos-done.txt; ~D open remain"
+                  (length done) (length open))))))
 
 (defun todo-tool (args)
   (let ((action (or (lisping-core::arg args "action") "list"))
@@ -75,7 +95,7 @@ user's terminal forever."
 (todo-load)
 
 (lisping-core::register-tool
- "todo" "Manage the persistent todo list in state/todos.txt (survives restarts). add: append an open item (needs text). done: mark an item done (needs index, 1-based as shown by list). list: numbered items, [ ] open / [x] done. clear: remove all items. Returns a confirmation line; list returns the items. Example: {\"action\":\"done\",\"index\":3}."
+ "todo" "Manage the persistent todo list in state/todos.txt (survives restarts). add: append an open item (needs text). done: mark an item done (needs index, 1-based as shown by list). list: numbered items, [ ] open / [x] done. clear: move finished items to state/todos-done.txt (appended, with the date) and keep only open ones. Returns a confirmation line; list returns the items. Example: {\"action\":\"done\",\"index\":3}."
  (lisping-core::obj "type" "object"
         "properties" (lisping-core::obj
                       "action" (lisping-core::obj "type" "string"
