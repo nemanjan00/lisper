@@ -14,6 +14,14 @@
 
 (defvar *tui-quit* nil "Set by prefix q / C-d: the key loop then stops the UI.")
 
+;;; The input line is an adjustable string with a fill-pointer (in the
+;;; UI struct); the cursor is the index where typing inserts and where
+;;; the terminal cursor is drawn. Kept outside the struct so the struct
+;;; definition never has to change (a live redefinition with different
+;;; slots breaks existing instances).
+
+(defvar *tui-input-cursor* 0 "Cursor index into *tui*'s input buffer.")
+
 ;;; ---------------------------------------------------------------
 ;;; Key reading. Returns a character or a keyword (:up :down :left
 ;;; :right :home :end :pgup :pgdn :delete :escape).
