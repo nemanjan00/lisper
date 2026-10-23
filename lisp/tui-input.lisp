@@ -58,27 +58,34 @@
   (not (eq (sb-sys:wait-until-fd-usable (sb-sys:fd-stream-fd tty) :input timeout)
            :timeout)))
 
+(defun tui-read-seq-char (tty timeout)
+  "Next sequence byte: buffered char first, else wait on the fd for
+bytes still in flight. Never blocks past TIMEOUT."
+  (or (read-char-no-hang tty)
+      (when (tui-fd-ready-p tty timeout) (read-char tty))))
+
 (defun tui-read-escape (tty)
   "ESC arrived. The next byte may already sit in the stream's input
 buffer — one read pulls several sequences off the fd at once, so an
 fd-level wait would time out while LISTEN sees data. Read the buffered
-char first; only when the buffer is empty wait on the fd (~0.15 s) for
-bytes still in flight. A char that turns out not to start a sequence is
-put back: it is real input, not part of the escape."
-  (let ((c (or (read-char-no-hang tty)
-               (when (tui-fd-ready-p tty 0.15) (read-char tty)))))
+char first; only when the buffer is empty wait on the fd for bytes
+still in flight. A char that turns out not to start a sequence is put
+back: it is real input, not part of the escape. Home/End also arrive
+bare (ESC H / ESC F / ESC E) when tmux passes them through without the
+CSI or SS3 introducer."
+  (let ((c (tui-read-seq-char tty 0.1)))
     (cond ((null c) :escape)
           ((char= c #\[) (tui-read-csi tty))
           ((char= c #\O) (tui-read-ss3 tty))
-          ;; Bare ESC H/F/E: this terminal's Home/End when tmux passes
-          ;; them through without the SS3 introducer (seen in keys.log).
           ((char= c #\H) :home)
           ((member c '(#\F #\E)) :end)
           (t (unread-char c tty) :escape))))
 
 (defun tui-read-ss3 (tty)
-  "ESC O <final>: application-mode cursor keys (and F-keys we ignore)."
-  (case (read-char tty)
+  "ESC O <final>: application-mode cursor keys (and F-keys we ignore).
+Per-byte timeout: a split sequence bails out instead of swallowing the
+bytes of the next key."
+  (case (tui-read-seq-char tty 0.05)
     (#\A :up)
     (#\B :down)
     (#\C :right)
@@ -88,14 +95,19 @@ put back: it is real input, not part of the escape."
     (t :escape)))
 
 (defun tui-read-csi (tty)
+  "ESC [ <params> <final>. Per-byte timeout so a sequence whose bytes
+arrive split (or a bare ESC followed by typed text) can never block on
+a final byte that belongs to the next key."
   (let ((params (make-string-output-stream)))
-    (loop for c = (read-char tty)
-          until (or (alpha-char-p c) (char= c #\~))
+    (loop for c = (tui-read-seq-char tty 0.05)
+          until (or (null c) (alpha-char-p c) (char= c #\~))
           do (write-char c params)
-          finally (return (let ((p (get-output-stream-string params)))
-                            (if (and (plusp (length p)) (char= (char p 0) #\<))
-                                (tui-parse-mouse p c)
-                                (tui-csi-key p c)))))))
+          finally (return (if (null c)
+                              :escape
+                              (let ((p (get-output-stream-string params)))
+                                (if (and (plusp (length p)) (char= (char p 0) #\<))
+                                    (tui-parse-mouse p c)
+                                    (tui-csi-key p c))))))))
 
 (defun tui-parse-mouse (params final)
   "Parse the body of an SGR mouse sequence (\"<b;x;y\") with FINAL #\\M
