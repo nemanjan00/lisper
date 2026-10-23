@@ -122,3 +122,13 @@
       (flush))
     (or (nreverse chunks) (list (cons "" 7))))
 
+(defun str-replace (new old s)
+  (with-output-to-string (out)
+    (let ((start 0))
+      (loop for i = (search old s :start2 start)
+            while i do
+              (write-string s out :start start :end i)
+              (write-string new out)
+              (setf start (+ i (length old))))
+      (write-string s out :start start))))
+
