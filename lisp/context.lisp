@@ -50,12 +50,31 @@ before the window is full, so thresholds are percents of THIS.")
 (defvar *ctx-search-limit* 10)
 (defvar *ctx-index-max* 40 "Lines a rewind index lists at most.")
 (defvar *ctx-autoloaded* nil)
+(progn
+  (defvar *ctx-chars-per-token* 3.5
+    "Chars per token, calibrated against prompt_tokens after each request.")
+  (defvar *ctx-prev-request-chars* nil "Char count of the request just sent.")
+  (defvar *ctx-tools-chars* nil "Chars of the tool specs, cached from the last request body.")
+  (defvar *ctx-last-est* 0 "Token estimate of the last request sent.")
 
-;;; -------------------------------------------------------------- helpers
+  (defun ctx-est-tokens (string)
+    (max 1 (round (length string) *ctx-chars-per-token*)))
 
-(defun ctx-est-tokens (string)
-  (max 1 (round (length string) 3.5)))
+  (defun ctx-system-prompt-text ()
+    (let ((sp lisping-core:*system-prompt*))
+      (if (functionp sp) (funcall sp) (or sp ""))))
 
+  (defun ctx-message-chars (m)
+    "Chars in one message: content, reasoning_content (sent back too),
+and tool-call arguments — which live at tc -> function -> arguments."
+    (+ (let ((c (gethash "content" m))) (if (stringp c) (length c) 0))
+       (let ((r (gethash "reasoning_content" m))) (if (stringp r) (length r) 0))
+       (loop for tc across (or (gethash "tool_calls" m) #())
+             sum (let ((f (gethash "function" tc)))
+                   (if (hash-table-p f)
+                       (let ((a (gethash "arguments" f)))
+                         (if (stringp a) (length a) 0))
+                       0))))))
 (defun ctx-session-log ()
   "The current session's jsonl path, or NIL."
   (and (find-symbol "*SESSION-LOG*" :lisping-core)
