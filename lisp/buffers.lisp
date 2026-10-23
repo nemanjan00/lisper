@@ -32,6 +32,16 @@
           (replace v v :start2 excess)
           (decf (fill-pointer v) excess))))))
 
+(defun uibuf-remove-matching (buf pred)
+  "Remove every line matching PRED (a function of ULINE) from BUF."
+  (let ((v (uibuf-lines buf)))
+    (loop with i = (1- (length v))
+          while (>= i 0)
+          do (if (funcall pred (aref v i))
+                 (progn (replace v v :start1 i :start2 (1+ i))
+                        (decf (fill-pointer v)))
+                 (decf i)))))
+
 (defun ui-split-lines (text)
   (loop with start = 0
         for i = (position #\Newline text :start start)
