@@ -169,7 +169,9 @@ modifier/motion bits we ignore."
       (tui-input-backspace ui)))
 
 (defun tui-scroll-chat-by (ui delta)
-  (setf (tui-ui-scroll ui) (max 0 (+ (tui-ui-scroll ui) delta))))
+  (declare (ignore ui))
+  "Scroll the FOCUSED pane (the chat by default)."
+  (pane-scroll-by *pane-focus* delta))
 
 (defun tui-mouse (ui key)
   "Handle an SGR mouse event (:mouse b x y kind). Only the wheel scrolls,
