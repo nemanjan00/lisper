@@ -509,6 +509,13 @@ also added to *LOAD-PROBLEMS*, so nested loads are reported to the outer one."
                                                 (unless (or (typep w 'style-warning)
                                                             (redefinition-warning-p w))
                                                   (problem start (form-label form) w))))
+                                     (error (lambda (e)
+                                              ;; Same for the error SBCL raises next: take its
+                                              ;; restart that uses the new definition.
+                                              (when (and (search "attempt to redefine the STRUCTURE-OBJECT class"
+                                                                 (princ-to-string e))
+                                                         (find-restart 'continue e))
+                                                (invoke-restart 'continue))))
                                      (sb-c:compiler-error
                                        (lambda (c)
                                          (let ((inner (ignore-errors (sb-int:encapsulated-condition c))))
