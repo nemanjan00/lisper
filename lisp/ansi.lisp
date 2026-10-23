@@ -5,6 +5,7 @@
 (in-package :lisping)
 
 (defconstant +ui-fg-mask+ 15)
+
 (defconstant +ui-bg-mask+ 240)
 
 (defun ui-attr (fg &key bright bg bgbright)
