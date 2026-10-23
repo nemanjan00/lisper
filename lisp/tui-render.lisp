@@ -42,8 +42,9 @@
   (let ((ui *tui*))
     (if (null ui)
         (terminal-emit event)
-        (handler-case (tui-log-event ui event)
-          (serious-condition (c) (when (eq *tui* ui) (tui-crash c)))))))
+        (handler-bind ((serious-condition #'tui-log-crash-at-signal))
+          (handler-case (tui-log-event ui event)
+            (serious-condition (c) (when (eq *tui* ui) (tui-crash c))))))))
 
 (defun tui-before-request (body)
   "Show the newest user message (covers the queue and the pre-restart core
