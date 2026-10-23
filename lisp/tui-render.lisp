@@ -279,8 +279,12 @@ borders — content runs the full width below it."
   "Thin dim line between the chat pane and the input row."
   (dotimes (x w) (ui-grid-put g x y #\─ 8)))
 
-(defun tui-visible-lines (buf width height scroll)
-  "Top-first chunk-lists fitting HEIGHT rows, scrolled up SCROLL lines."
+(defun tui-visible-lines (ui buf width height scroll)
+  "Top-first chunk-lists fitting HEIGHT rows, scrolled up SCROLL lines.
+SCROLL is clamped to [0, n-HEIGHT] (n = wrapped line count) and the
+clamped value is written back to the UI: when the chat fits the pane,
+scrolling does nothing; the offset can never eat the newest lines or
+build up past the top."
   (let* ((src (uibuf-lines buf))
          (n0 (length src))
          (recent (loop for i from (max 0 (- n0 400)) below n0
@@ -289,9 +293,11 @@ borders — content runs the full width below it."
                     append (or (ui-wrap-chunks (uline-chunks ln) width)
                                (list nil))))
          (n (length all))
-         (end (max 0 (- n scroll)))
-         (start (max 0 (- end height))))
-    (subseq all start end)))
+         (s (max 0 (min scroll (max 0 (- n height))))))
+    (setf (tui-ui-scroll ui) s)
+    (let* ((end (max 0 (- n s)))
+           (start (max 0 (- end height))))
+      (subseq all start end))))
 
 (defun tui-draw-input (g ui y w)
   (let* ((prefix (tui-ui-prefix ui))
