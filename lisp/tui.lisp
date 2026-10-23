@@ -131,7 +131,7 @@ the original termios for TUI-RESTORE-MODE."
                       (tui-state-tty ui))
         (finish-output (tui-state-tty ui)))
       (ignore-errors (close (tui-state-tty ui)))
-      (tui-stty "sane")
+      (tui-restore-mode)
       (setf (tui-state-threads ui) nil)
       (start-terminal-input)
       t)))
