@@ -147,7 +147,7 @@ the original termios for TUI-RESTORE-MODE."
                       (tui-state-tty ui))
         (finish-output (tui-state-tty ui)))
       (ignore-errors (close (tui-state-tty ui)))
-      (tui-stty "sane")
+      (tui-restore-mode)
       (setf *emit* 'terminal-emit)
       (start-terminal-input)))
   (terminal-emit (list :type :error
