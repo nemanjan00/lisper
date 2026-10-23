@@ -177,7 +177,13 @@ embedded newlines must never reach the grid."
                             ;; once-a-minute clock tick dirties an idle UI.
                             (when (and (zerop *tui-dirty*)
                                        (tui-minute-changed-p))
-                              (incf *tui-dirty*))))
+                              (incf *tui-dirty*)))
+                   ;; Consume the dirty flag BEFORE drawing: emitters only
+                   ;; append state and bump the counter, so this cannot
+                   ;; lose an update — the new state is drawn now, and a
+                   ;; bump during the draw schedules one more pass.
+                   (when (and *tui* (eq *tui* ui))
+                     (setf *tui-dirty* 0)))
                  (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
              (serious-condition (c)
                (when (eq *tui* ui) (tui-crash c))))))
