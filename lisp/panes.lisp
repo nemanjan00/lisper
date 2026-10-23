@@ -621,7 +621,7 @@ itself here or vanishes on UI restart."
       (:set (let ((tree (read-from-string (lisping-core::arg args "sexpr"))))
               (if (layout-valid-p tree)
                   (progn (setf *layout* tree) (panes-save)
-                         (panes-mark-all-dirty) (tui-dirty)
+                         (tui-drop-frame) (tui-dirty)
                          (format nil "layout set: ~S" *layout*))
                   "refused: layout has unknown panes (create them first)")))
       (:reset (setf *layout* '(:hsplit 0.78 (leaf "chat") (leaf "todo")))
