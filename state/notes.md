@@ -186,3 +186,4 @@ Things I keep relearning on every restart — write them down once:
   message, so it can never orphan a tool_call the API would then reject/drop.
 - **Never put a literal tilde in a format string** (~/, ~D eat the prose);
   use write-line for notes and prose.
+- Testing the input line live: `tmux send-keys -t lisper:2 "text"` types without Enter; Home/End/C-u as key names; then `tmux capture-pane -t lisper:2 -p`. Input row is line 61 (of 63) at 208-col width. [verified 2026-10-24, h-scroll todo 13]
