@@ -148,6 +148,17 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
     (unless tty (return-from tui-start nil))
     (stop-terminal-input)
     (tui-kill-threads)
+    (tui-install-sigwinch)
+    ;; Fresh screen: with no remembered frame the first draw is a full
+    ;; render (the terminal just entered a cleared alt screen), and old
+    ;; counters from a previous run must not skew measurements.
+    (setf *tui-prev-grid* nil
+          *tui-prev-cursor* nil
+          *tui-clock-minute* nil
+          *tui-frames-total* 0
+          *tui-frames-skipped* 0
+          *tui-frames-full* 0
+          *tui-bytes-total* 0)
     (setf *tui* (make-tui-state :tty tty))
     (unless (tui-raw-mode tty)
       (emit :error :text "TUI: terminal did not enter raw mode"))
