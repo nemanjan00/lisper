@@ -328,9 +328,21 @@ height; vsplit reserves no gap rows.)"
 ;;; ---------------------------------------------------------------
 ;;; Operations (also exposed as tools)
 
+(defun tui-drop-frame ()
+  "Drop all frame state so the next redraw repaints from scratch: fresh
+panes canvas, every pane dirty, no diff against the previous frame.
+Called after anything that moves, resizes or re-creates panes
+(split/add/remove, focus, resize); TUI-FORCE-REDRAW (C-b r) is this
+plus nothing else."
+  (setf *panes-canvas* nil
+        *tui-prev-grid* nil)
+  (panes-mark-all-dirty)
+  (tui-dirty))
+
 (defun pane-add (name &key title kind cmd (interval 10))
   (pane-register name :title title :kind kind :cmd cmd :interval interval)
   (panes-save)
+  (tui-drop-frame)
   (pane-dirty name))
 
 (defun pane-split (name direction ratio new-name
