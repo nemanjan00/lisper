@@ -90,7 +90,7 @@
         (w (uigrid-w g)))
     (dotimes (k n)
       (let ((i (+ x k (* y w))))
-        (setf (char (uigrid-chars g) i) (char string k)
+        (setf (char (uigrid-chars g) i) (ui-safe-char (char string k))
               (aref (uigrid-attrs g) i) attr)))
     (+ x n)))
 
