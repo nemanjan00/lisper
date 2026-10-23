@@ -374,14 +374,15 @@ and empty messages are skipped."
     (when (and *tui* (eq *tui* ui))
       (let* ((w (tui-ui-width ui))
              (h (tui-ui-height ui))
-             ;; chat rows 0..h-4: top title border + content; a thin
-             ;; separator at h-3; input at h-2; status at h-1.
-             (chat-h (max 3 (- h 3)))
+             ;; Panes own rows 0..pane-h-1 (each with its own top
+             ;; border); input at pane-h; status at pane-h+1.
+             (pane-h (max 3 (- h 2)))
              (g (ui-grid-make w h)))
-        (tui-draw-chat g 0 0 w chat-h "chat" ui
-                       (tui-ui-chat ui) (tui-ui-scroll ui))
-        (tui-draw-separator g chat-h w)
-        (tui-draw-input g ui (- h 2) w)
+        (panes-ensure-canvas w pane-h)
+        (panes-draw *panes-canvas*)
+        (replace (uigrid-chars g) (uigrid-chars *panes-canvas*))
+        (replace (uigrid-attrs g) (uigrid-attrs *panes-canvas*))
+        (tui-draw-input g ui pane-h w)
         (tui-draw-status g ui (1- h) w)
         (let* ((prompt-len (length (if (tui-ui-prefix ui) "*> " "> ")))
                (row (1- h))
