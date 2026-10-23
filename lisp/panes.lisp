@@ -296,14 +296,18 @@ separator."
                                    (walk b x (+ y ha) w (- h ha)))))))))))
       (walk *layout* 0 0 (uigrid-w *panes-canvas*) (uigrid-h *panes-canvas*)))))
 
-(defun pane-drag-to (x0)
-  "Move the dragged split's separator so its gap column is at 0-based
-X0, clamped so both children keep HSPLIT-LEFT-WIDTH's 10-column
-minimum."
+(defun pane-drag-to (x0 y0)
+  "Move the dragged split's separator to the 0-based point: an :hsplit
+follows X0, a :vsplit follows Y0. Clamped so both children keep their
+minimum (10 columns / 3 rows), then ratio = size / region-size, the
+inverse of LAYOUT-LEAVES' split arithmetic."
   (when *pane-drag*
-    (destructuring-bind (node rx rw) *pane-drag*
-      (let ((wa (min (max 10 (- x0 rx)) (- rw 11))))
-        (setf (cadr node) (/ (float wa 1.0d0) (float (max 1 (1- rw)) 1.0d0)))))))
+    (destructuring-bind (node rx ry rw rh dir) *pane-drag*
+      (if (eq dir :hsplit)
+          (let ((wa (min (max 10 (- x0 rx)) (- rw 11))))
+            (setf (cadr node) (/ (float wa 1.0d0) (float (max 1 (1- rw)) 1.0d0))))
+          (let ((ha (min (max 3 (- y0 ry)) (- rh 3))))
+            (setf (cadr node) (/ (float ha 1.0d0) (float rh 1.0d0))))))))
 
 ;;; ---------------------------------------------------------------
 ;;; Drawing
