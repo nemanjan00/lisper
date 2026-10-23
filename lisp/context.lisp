@@ -459,25 +459,24 @@ registry).  Returns T if it offloaded."
                                      (not (ctx-head-p "[offloaded" c)))
                            collect (cons (ctx-entry-id m) (ctx-est-tokens c)))))
     (subseq (sort candidates #'> :key #'cdr) 0 (min k (length candidates)))))
-
 (defun ctx-threshold-note (percent)
   "A note when the context passes a threshold, or NIL.  Edge-triggered:
 after noting at P, the next note comes at P+5, so the request is never
-peppered with repeats."
+peppered with repeats.  PERCENT is of *CTX-BUDGET* (the working
+budget), not of the whole window."
   (when (and (>= percent *ctx-note-at*)
              (>= percent (+ *ctx-noted-percent* 5)))
     (setf *ctx-noted-percent* percent)
     (with-output-to-string (s)
       (if (>= percent *ctx-near-at*)
-          (format s "[context: ~D% of ~:D tokens (past ~D%)] Free space BEFORE going on: collapse the biggest finished stretches with context_rewind {from, to, summary}, offload big results with context_offload {entry, text}.~%"
-                  percent *ctx-window* *ctx-near-at*)
-          (format s "[context: ~D% of ~:D tokens] The biggest finished parts:~%"
-                  percent *ctx-window*))
+          (format s "[context: ~D% of the ~:D-token budget (past ~D%)] Free space BEFORE going on: collapse the biggest finished stretches with context_rewind {from, to, summary}, offload big results with context_offload {entry, text}.~%"
+                  percent *ctx-budget* *ctx-near-at*)
+          (format s "[context: ~D% of the ~:D-token budget] The biggest finished parts:~%"
+                  percent *ctx-budget*))
       (dolist (c (ctx-biggest-finished-results 3))
         (format s "- e~D ≈ ~D est tokens: context_offload {\"entry\": \"e~D\"}~%"
                 (car c) (cdr c) (car c)))
       (format s "Collapse finished stretches with context_rewind {from, to, summary}; summaries keep what later work needs verbatim (paths, ids, decisions).~%"))))
-
 (defun ctx-emit-watch (event)
   "Notice finished tasks (a todo marked done) for the next nudge; retire
 the nudge only when a response actually arrives (clearing it at
