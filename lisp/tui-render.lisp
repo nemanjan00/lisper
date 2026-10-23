@@ -7,6 +7,7 @@
 (declaim (ftype function tui-draw-separator
                 tui-tool-call-line tui-tool-summary tui-chat-result
                 tui-replay-history panes-ensure-canvas panes-draw))
+
 (declaim (special *todos* *panes-canvas*))
 
 ;;; ---------------------------------------------------------------
@@ -16,11 +17,17 @@
 ;;; start, on resize, on C-b r — never per keystroke.
 
 (defvar *tui-prev-grid* nil "Grid of the last frame written to the tty.")
+
 (defvar *tui-prev-cursor* nil "Last (row . col) the cursor was placed at.")
+
 (defvar *tui-clock-minute* nil "Minute value drawn in the status bar.")
+
 (defvar *tui-frames-total* 0 "TUI-DRAW calls, including skipped ones.")
+
 (defvar *tui-frames-skipped* 0 "Frames where nothing needed writing.")
+
 (defvar *tui-frames-full* 0 "Frames written as full renders.")
+
 (defvar *tui-bytes-total* 0 "Bytes written to the tty by TUI-DRAW.")
 
 (defun tui-perf ()
@@ -431,6 +438,7 @@ and empty messages are skipped."
                    (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
                (serious-condition (c)
                  (when (eq *tui* ui) (tui-crash c)))))))
+
 (defun tui-draw (ui)
   (tui-maybe-update-size ui)
   (sb-thread:with-recursive-lock (*tui-lock*)
@@ -497,6 +505,7 @@ the top."
     (let* ((end (max 0 (- n s)))
            (start (max 0 (- end height))))
       (subseq all start end))))
+
 (defun tui-input-window (len cursor avail hscroll)
   "Horizontal window of the input text for AVAIL screen columns (what
 remains of the row after the prompt), given the current HSCROLL.
@@ -514,6 +523,7 @@ back into the UI's input-hscroll slot."
           (setf hs (1+ (- cursor inner))))
         (let ((end (min len (+ hs inner))))
           (values hs (- end hs) (> hs 0) (< end len) hs)))))
+
 (defun tui-draw-input (g ui y w)
   "Draw prompt and the horizontally scrolled input line. Returns the
 terminal column (1-based) the cursor belongs on."
@@ -533,6 +543,7 @@ terminal column (1-based) the cursor belongs on."
         (ui-grid-write g x y (subseq text start (+ start count)) 7 w)
         (when right (ui-grid-put g (1- w) y #\› 8))
         (+ x (- cursor start) 1)))))
+
 (defun tui-draw-status (g ui y w)
   (let ((attr (ui-attr 7 :bright t :bg 4)))
     (dotimes (x w) (ui-grid-put g x y #\Space attr))
