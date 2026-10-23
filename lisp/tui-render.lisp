@@ -183,7 +183,7 @@ embedded newlines must never reach the grid."
                (when (eq *tui* ui) (tui-crash c))))))
 
 (defun tui-draw (ui)
-  (tui-update-size ui)
+  (tui-maybe-update-size ui)
   (sb-thread:with-mutex (*tui-lock*)
     (when (and *tui* (eq *tui* ui))
       (let* ((w (tui-state-width ui))
@@ -201,15 +201,29 @@ embedded newlines must never reach the grid."
         (tui-draw-status g ui (1- h) w)
         (uifix-boxes g)
         (let* ((prompt-len (length (if (tui-state-prefix ui) "*> " "> ")))
-               (col (min w (+ prompt-len (length (tui-state-input ui)) 1))))
-          (tty-write
-           (format nil "~C[?25l~A~C[~D;~DH~C[?25h"
-                   #\Esc
-                   (ui-grid-render g)
-                   #\Esc
-                   (1- h)
-                   col
-                   #\Esc)))))))
+               (row (1- h))
+               (col (min w (+ prompt-len (length (tui-state-input ui)) 1)))
+               (full (or (null *tui-prev-grid*)
+                         (/= (uigrid-w *tui-prev-grid*) w)
+                         (/= (uigrid-h *tui-prev-grid*) h)))
+               (body (ui-grid-diff-render (and (not full) *tui-prev-grid*) g)))
+          (incf *tui-frames-total*)
+          (cond ((and (zerop (length body))
+                      (equal *tui-prev-cursor* (cons row col)))
+                 ;; Nothing changed: write nothing at all.
+                 (incf *tui-frames-skipped*))
+                (t
+                 (when full (incf *tui-frames-full*))
+                 ;; One synchronized update per frame: the terminal shows
+                 ;; it atomically, so the cursor does not flicker.
+                 (let ((frame (format nil "~C[?2026h~A~C[~D;~DH~C[?2026l"
+                                      #\Esc body #\Esc row col #\Esc)))
+                   (incf *tui-bytes-total* (length frame))
+                   (tty-write frame))))
+          (setf *tui-prev-grid* g
+                *tui-prev-cursor* (cons row col)
+                *tui-clock-minute* (nth-value 1 (decode-universal-time
+                                                 (get-universal-time)))))))))
 
 (defun tui-draw-pane (g x y w h title buf activep scroll)
   (ui-draw-box g x y w h
