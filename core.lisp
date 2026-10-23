@@ -485,6 +485,7 @@ function updates the tool."
        (format t "~&~A~%" (if (> (length text) 1500)
                               (format nil "~A~%... [~D characters]" (subseq text 0 1500) (length text))
                               text)))
+      (:thinking (format t "~&~C[2m~A~C[0m~%" #\Esc text #\Esc))
       (t (format t "~&[~(~A~)] ~A~%" type (or text event)))))
   (finish-output))
 
@@ -519,7 +520,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *system-prompt*: this text. A string, or a function returning one. You may rewrite it.
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context.
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
-- *emit*: function receiving every event as a plist (:type :assistant/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). default-emit prints to the terminal.
+- *emit*: function receiving every event as a plist (:type :assistant/:thinking/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). default-emit prints to the terminal.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events by wrapping *emit* (keep calling default-emit too, so the terminal still works).
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
@@ -595,6 +596,7 @@ Rules:
 (defun run-turn ()
   (loop
     (take-queued-messages)
+    (emit :thinking :text (format nil "~A is thinking..." *model*))
     (let* ((message (complete))
            (text (gethash "content" message))
            (calls (gethash "tool_calls" message)))
@@ -635,7 +637,7 @@ Rules:
     (setf *session-log* (merge-pathnames (format nil "state/sessions/~A.jsonl" stamp) *root*))
     (ensure-directories-exist *session-log*))
   (sb-ext:lock-package :lisping-core)
-  (emit :info :text (format nil "lisping-ai on ~A, ~D tool~:P, ~D boot error~:P. Type a message; Ctrl-D quits."
+  (emit :info :text (format nil "lisping-ai on ~A, ~D tool~:P, ~D boot error~:P. Type a message and press Enter; replies can take a minute. Ctrl-D quits."
                             *model* (hash-table-count *tools*) (length *boot-errors*)))
   (dolist (e *boot-errors*) (emit :error :text e))
   (let ((agent (sb-thread:make-thread #'agent-loop :name "agent"))
