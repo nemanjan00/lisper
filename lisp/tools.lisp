@@ -33,7 +33,7 @@ user's terminal forever."
       (format s "[~C] ~A~%" (if (cdr item) #\x #\Space) (car item)))))
 
 (defun todo-add (text)
-  (push (cons text nil) *todos*)
+  (setf *todos* (append *todos* (list (cons text nil))))
   (todo-save)
   (format nil "added todo ~D: ~A" (length *todos*) text))
 
