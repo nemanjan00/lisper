@@ -175,22 +175,20 @@ messages (x-kind) and the older text-marked markers don't count."
     (when (> (length stretch) *ctx-index-max*)
       (format s "- … ~D more, find them with context_search~%"
               (- (length stretch) *ctx-index-max*)))))
-
 (defun ctx-snap-range (i j)
   "Expand [I,J] to whole tool-call units, so no tool call loses its
 result (the core would fill the hole with a false \"interrupted\"
 stub): back up over a leading run of tool results to the assistant
-that owns them; a trailing assistant carries its tool results along."
+that owns them; carry EVERY following tool result along (parallel
+calls produce several)."
   (let ((n (length *messages*)))
     (loop while (and (> i 0)
                      (equal (gethash "role" (nth i *messages*)) "tool"))
           do (decf i))
     (loop while (and (< j (1- n))
-                     (equal (gethash "role" (nth j *messages*)) "assistant")
-                     (gethash "tool_calls" (nth j *messages*)))
+                     (equal (gethash "role" (nth (1+ j) *messages*)) "tool"))
           do (incf j))
     (values i j)))
-
 (defun ctx-do-rewind (from-msg to-msg summary)
   (let* ((i (position from-msg *messages* :test #'eq))
          (j (position to-msg *messages* :test #'eq))
