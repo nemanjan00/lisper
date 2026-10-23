@@ -148,6 +148,13 @@ modifier/motion bits we ignore."
         ((and (consp key) (eq (first key) :mouse)) (tui-mouse ui key))
         ((eq key :pgup) (tui-scroll-chat ui :pgup))
         ((eq key :pgdn) (tui-scroll-chat ui :pgdn))
+        ;; Input-line editing: arrows/Home/End move the cursor,
+        ;; typing and Backspace/Delete act at the cursor.
+        ((eq key :left) (tui-cursor-move ui -1))
+        ((eq key :right) (tui-cursor-move ui 1))
+        ((eq key :home) (setf *tui-input-cursor* 0))
+        ((eq key :end) (setf *tui-input-cursor* (length (tui-ui-input ui))))
+        ((eq key :delete) (tui-input-delete ui))
         ((and (characterp key)
               (member key '(#\Return #\Newline)))
          (tui-submit-input ui))
