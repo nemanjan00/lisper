@@ -20,6 +20,7 @@ while true; do
   started=$(date +%s)
   sbcl --noinform --disable-debugger --load boot.lisp
   code=$?
+  [ -t 0 ] && stty sane 2>/dev/null   # a UI may have left the terminal in raw mode
   case $code in
     0) exit 0 ;;
     42) boot_crashes=0; continue ;;

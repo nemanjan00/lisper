@@ -16,6 +16,8 @@
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
+           ;; the model call, replaceable (e.g. to stream)
+           #:*complete* #:default-complete #:chat-url #:api-headers #:*terminal-thread*
            ;; settings
            #:*model* #:*api-base* #:*max-tokens* #:*eval-timeout* #:*output-limit* #:*root*
            ;; helpers
@@ -417,14 +419,90 @@ function updates the tool."
   "The current backtrace, cut off where the harness's own frames begin."
   (let* ((text (with-output-to-string (s)
                  (sb-debug:print-backtrace :stream s :count 25)))
-         (cut (search "LISPING-CORE::EVAL-CODE" text))
+         (cut (or (search "LISPING-CORE::EVAL-TOPLEVEL" text) (search "LISPING-CORE::EVAL-CODE" text)))
          (line (and cut (position #\Newline text :end cut :from-end t))))
     (if line (subseq text 0 (1+ line)) text)))
+
+(defun eval-toplevel (form source saved)
+  "Evaluate FORM as a top-level form: the subforms of a top-level PROGN are
+top-level forms too, evaluated one by one. Each definition is saved as soon as it
+succeeds, so what is saved matches what ran. SOURCE is FORM's text, if known.
+Labels of saved forms are pushed onto (car SAVED). Return FORM's values."
+  (if (and (consp form) (eq (car form) 'progn))
+      (let ((values '()))
+        (dolist (sub (cdr form) values)
+          (setf values (eval-toplevel sub nil saved))))
+      (let ((values (multiple-value-list (eval form))))
+        (when (auto-persisted-p form)
+          (save-form (or source form))
+          (push (form-label form) (car saved)))
+        values)))
+
+(defun similar-names (name candidates what &optional preferred)
+  "Up to 8 CANDIDATES sharing parts of NAME; names in PREFERRED rank higher."
+  (let* ((parts (loop with start = 0
+                      for end = (position #\- name :start start)
+                      for part = (subseq name start end)
+                      when (>= (length part) 3) collect part
+                      while end do (setf start (1+ end))))
+         (scored (loop for candidate in (remove-duplicates candidates :test #'string=)
+                       for score = (+ (if (search name candidate) 3 0)
+                                      (if (member candidate preferred :test #'string=) 1 0)
+                                      (count-if (lambda (part) (search part candidate)) parts))
+                       when (plusp score) collect (cons score candidate)))
+         (best (subseq (stable-sort scored #'> :key #'car) 0 (min 8 (length scored)))))
+    (when best
+      (format nil "Similar ~A: ~{~(~A~)~^, ~}" what (mapcar #'cdr best)))))
+
+(defun error-hint (condition)
+  "A hint for an error the model often makes (a contrib not loaded, a misremembered
+symbol, a function in another package), or NIL."
+  (let ((text (princ-to-string condition)))
+    (flet ((between (prefix suffix)
+             (let ((start (search prefix text)))
+               (when start
+                 (let* ((from (+ start (length prefix)))
+                        (end (search suffix text :start2 from)))
+                   (when end (string-trim "\"" (subseq text from end))))))))
+      (let ((missing-package (between "Package " " does not exist"))
+            (missing-symbol (or (between "Symbol " " not found in the ")
+                                (between "The symbol " " is not external in the ")))
+            (home (or (between " not found in the " " package")
+                      (between " is not external in the " " package"))))
+        (cond (missing-package
+               (if (probe-file (merge-pathnames (format nil "contrib/~(~A~).fasl" missing-package)
+                                                (sb-int:sbcl-homedir-pathname)))
+                   (format nil "~A is an SBCL contrib that isn't loaded yet: (require :~(~A~))"
+                           missing-package missing-package)
+                   (similar-names missing-package (mapcar #'package-name (list-all-packages)) "packages")))
+              ((and missing-symbol home (find-package home))
+               (let ((package (find-package home))
+                     (names '())
+                     (external '()))
+                 (do-symbols (s package)
+                   (when (eq (symbol-package s) package) (push (symbol-name s) names)))
+                 (do-external-symbols (s package)
+                   (push (symbol-name s) names)
+                   (push (symbol-name s) external))
+                 (if (find-symbol missing-symbol package)
+                     (format nil "It exists but isn't exported: ~(~A::~A~)" home missing-symbol)
+                     (similar-names missing-symbol names (format nil "symbols in ~A" home) external))))
+              ((typep condition 'undefined-function)
+               (let ((name (cell-error-name condition)))
+                 (when (symbolp name)
+                   (let ((*package* (find-package :lisping))
+                         (others '()))
+                     (dolist (p (list-all-packages))
+                       (let ((s (find-symbol (symbol-name name) p)))
+                         (when (and s (not (eq s name)) (fboundp s))
+                           (pushnew (prin1-to-string s) others :test #'string=))))
+                     (when others
+                       (format nil "A function with this name exists as: ~(~{~A~^, ~}~)" others)))))))))))
 
 (defun eval-code (code)
   "Read and evaluate every form in CODE. Return printed output, values and errors."
   (let ((out (make-string-output-stream))
-        (saved '())
+        (saved (list '()))
         (backtrace nil))
     (handler-case
         (handler-bind ((serious-condition
@@ -441,23 +519,24 @@ function updates the tool."
                   (let* ((start (file-position in))
                          (form (read in nil in)))
                     (when (eq form in) (return))
-                    (let ((values (multiple-value-list (eval form)))
+                    (let ((values (eval-toplevel form
+                                                 (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                                              (subseq code start (file-position in)))
+                                                 saved))
                           (*print-length* 100)
                           (*print-level* 8)
                           (*print-circle* t))
-                      (when (auto-persisted-p form)
-                        (save-form (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                                (subseq code start (file-position in))))
-                        (push (form-label form) saved))
                       (format out "~&=> ~{~S~^, ~}~%" (or values '(:no-values))))))))))
       (sb-ext:timeout ()
         (format out "~&ERROR: timed out after ~D seconds (see *eval-timeout*; run long-lived work in a thread)~%"
                 *eval-timeout*))
       (serious-condition (c)
-        (format out "~&ERROR (~S): ~A~%~@[Backtrace:~%~A~]" (type-of c) c backtrace)))
-    (when saved
-      (commit (format nil "~{~A~^, ~}" (reverse saved)))
-      (format out "~&[persisted: ~{~A~^, ~}]~%" (reverse saved)))
+        (format out "~&ERROR (~S): ~A~%~@[Hint: ~A~%~]~@[Backtrace:~%~A~]"
+                (type-of c) c (ignore-errors (error-hint c)) backtrace)))
+    (let ((labels (reverse (car saved))))
+      (when labels
+        (commit (format nil "~{~A~^, ~}" labels))
+        (format out "~&[persisted: ~{~A~^, ~}]~%" labels)))
     (limit-output (get-output-stream-string out))))
 
 (register-tool "eval"
@@ -565,12 +644,14 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context.
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
 - *emit*: function receiving every event as a plist (:type :assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
-- *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events by wrapping *emit* (keep calling terminal-emit too, so the terminal still works).
+- *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
+- The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
+- *complete*: the function that calls the model, given the request body; it returns the assistant message. Replace it to stream or call the model differently; chat-url and api-headers give you the endpoint and auth. If yours fails, the core falls back to default-complete.
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
 Persistence. Your image restarts sometimes, so keep what matters:
 - Your conversation does NOT survive a restart, and the user may restart you at any moment. Whatever you learn by exploring (facts about your environment, what works and what doesn't) is lost unless you write it down, e.g. in state/notes.md. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
-- Top-level def* forms (defun, defvar, defparameter, defmacro, defclass, defstruct, ...), require and register-tool calls you send to eval are saved automatically to extensions.lisp and committed to git. A def* nested inside let or progn is not; wrap such things in (persist ...).
+- Top-level def* forms (defun, defvar, defparameter, defmacro, defclass, defstruct, ...), require and register-tool calls you send to eval are saved automatically to extensions.lisp and committed to git, each as soon as it succeeds. As in Common Lisp, the forms inside a top-level progn are top-level forms too; a def* inside let or a function body is not, so wrap such things in (persist ...).
 - Anything else is temporary unless you wrap it in (persist ...), e.g. (persist (setf *emit* 'my-emit)). persist evaluates now and saves the form only if it succeeds.
 - On boot, the core replays extensions.lisp in order; the last definition wins. Forms that fail are skipped and reported to you.
 - Files you write under state/ are committed too (except state/tmp and state/sessions). Use it for notes, memory and data.
@@ -597,23 +678,46 @@ Rules:
                                             :parameters (tool-schema tool))))
           'vector))
 
-(defun complete ()
-  "Send the conversation to the model and return its message."
+(defun chat-url () (format nil "~A/chat/completions" *api-base*))
+
+(defun api-headers ()
+  "HTTP headers for the model API, including the key. Never print them."
+  (list (format nil "Authorization: Bearer ~A" *api-key*)))
+
+(defun request-body ()
   (let ((body (obj :model *model*
                    :max_tokens *max-tokens*
                    :messages (coerce (cons (obj :role "system" :content (system-prompt-text)) *messages*) 'vector)
                    :tools (tool-specs))))
-    (dolist (hook *before-request*)
-      (setf body (funcall hook body)))
-    (loop for attempt from 1
-          do (handler-case
-                 (let ((response (http-post-json (format nil "~A/chat/completions" *api-base*) body
-                                                 :headers (list (format nil "Authorization: Bearer ~A" *api-key*)))))
-                   (return (gethash "message" (aref (gethash "choices" response) 0))))
-               (error (c)
-                 (when (>= attempt 4) (error c))
-                 (emit :error :text (format nil "model call failed (attempt ~D, retrying): ~A" attempt c))
-                 (sleep (* 2 attempt)))))))
+    (dolist (hook *before-request* body)
+      (setf body (funcall hook body)))))
+
+(defun default-complete (body)
+  "POST BODY to the model API, retrying failures; return the assistant message."
+  (loop for attempt from 1
+        do (handler-case
+               (let ((response (http-post-json (chat-url) body :headers (api-headers))))
+                 (return (gethash "message" (aref (gethash "choices" response) 0))))
+             (error (c)
+               (when (>= attempt 4) (error c))
+               (emit :error :text (format nil "model call failed (attempt ~D, retrying): ~A" attempt c))
+               (sleep (* 2 attempt))))))
+
+(defvar *complete* 'default-complete
+  "Function taking a request body (an OBJ) and returning the assistant message as an OBJ
+with content, tool_calls and reasoning_content. Replace it to stream or change how
+the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
+
+(defun complete ()
+  "Send the conversation to the model and return its message."
+  (let ((body (request-body)))
+    (if (eq *complete* 'default-complete)
+        (default-complete body)
+        (let ((message (handler-case (funcall *complete* body)
+                         (serious-condition (c)
+                           (emit :error :text (format nil "*complete* failed, using default-complete: ~A" c))
+                           nil))))
+          (if (hash-table-p message) message (default-complete body))))))
 
 (defun run-tool-call (call)
   (let* ((function (gethash "function" call))
@@ -666,6 +770,34 @@ Rules:
           (emit :error :text (format nil "turn failed: ~A" c)))))))
 
 ;;; ------------------------------------------------------------------
+;;; Terminal input. Like terminal-emit, these live in the unlocked LISPING
+;;; package: the AI may stop the loop and take the terminal over.
+
+(defvar *terminal-thread* nil "The thread reading terminal lines into *inbox*, or NIL.")
+
+(defun lisping::terminal-input-loop ()
+  "Read lines from the terminal and send them to the agent. End of input (Ctrl-D) quits."
+  (loop
+    (let ((line (read-line *standard-input* nil)))
+      (unless line (sb-ext:exit :code 0 :abort t))
+      (when (string/= "" (string-trim " " line))
+        (send-user-message line)))))
+
+(defun lisping::start-terminal-input ()
+  "Start reading the terminal, unless already reading."
+  (unless (and *terminal-thread* (sb-thread:thread-alive-p *terminal-thread*))
+    (setf *terminal-thread* (sb-thread:make-thread 'lisping::terminal-input-loop :name "terminal-input"))))
+
+(defun lisping::stop-terminal-input ()
+  "Stop reading the terminal, e.g. to read keys from it yourself."
+  (let ((thread *terminal-thread*))
+    (setf *terminal-thread* nil)
+    (when (and thread (sb-thread:thread-alive-p thread))
+      (sb-thread:terminate-thread thread)
+      (sb-thread:join-thread thread :default nil :timeout 2))
+    t))
+
+;;; ------------------------------------------------------------------
 ;;; Boot
 
 (defun take-resume-message ()
@@ -679,6 +811,9 @@ Rules:
 (defun main ()
   (setf *random-state* (make-random-state t))
   (configure)
+  ;; Terminal input starts before replay, so a saved UI can stop it and take over.
+  (unless (sb-ext:posix-getenv "LISPING_HEADLESS")
+    (lisping::start-terminal-input))
   (replay-extensions)
   (shell "git tag -f last-good HEAD")
   (let ((stamp (multiple-value-bind (s m h d mo y) (get-decoded-time)
@@ -700,10 +835,4 @@ Rules:
       (send-user-message
        (format nil "[boot] ~@[~A~]~@[~%Forms that failed while replaying extensions.lisp:~%~{- ~A~%~}~]"
                resume *boot-errors*)))
-    (if (sb-ext:posix-getenv "LISPING_HEADLESS")
-        (sb-thread:join-thread agent :default nil)
-        (loop
-          (let ((line (read-line *standard-input* nil)))
-            (unless line (sb-ext:exit :code 0 :abort t))
-            (when (string/= "" (string-trim " " line))
-              (send-user-message line)))))))
+    (sb-thread:join-thread agent :default nil)))
