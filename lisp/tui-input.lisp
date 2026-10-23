@@ -272,7 +272,7 @@ and status rows belong to no pane and are ignored."
          (when (>= (- (get-internal-real-time) *pane-drag-last-draw*)
                    (truncate internal-time-units-per-second 10))
            (setf *pane-drag-last-draw* (get-internal-real-time))
-           (pane-drag-to x0)
+           (pane-drag-to x0 y0)
            (panes-mark-all-dirty)))
         ;; Press: on a separator start a drag; wheel scrolls; else focus.
         ((eq kind :press)
