@@ -35,8 +35,34 @@
     (incf *tui-dirty*)
     (sb-thread:condition-notify *tui-cv*)))
 
-(defun tui-stty (mode)
-  (ignore-errors (shell (format nil "stty -F /dev/tty ~A" mode))))
+(defvar *tui-saved-termios* nil)
+
+(defun tui-raw-mode ()
+  "Put the terminal in raw-ish mode in-process (shell stty would hang:
+the image runs in a background process group and gets SIGTTOU). Saves
+the original termios for TUI-RESTORE-MODE."
+  (when (and *tui* (null *tui-saved-termios*))
+    (let* ((fd (sb-sys:fd-stream-fd (tui-state-tty *tui*)))
+           (saved (sb-posix:tcgetattr fd))
+           (raw (sb-posix:tcgetattr fd)))
+      (setf (sb-posix:termios-lflag raw)
+            (logand (sb-posix:termios-lflag raw)
+                    (lognot (logior sb-posix:icanon sb-posix:echo sb-posix:isig
+                                    sb-posix:iexten)))
+            (sb-posix:termios-iflag raw)
+            (logand (sb-posix:termios-iflag raw)
+                    (lognot (logior sb-posix:icrnl sb-posix:inlcr sb-posix:igncr
+                                    sb-posix:ixon))))
+      (sb-posix:tcsetattr fd sb-posix:tcsanow raw)
+      (setf *tui-saved-termios* saved))))
+
+(defun tui-restore-mode ()
+  "Restore the terminal settings saved by TUI-RAW-MODE."
+  (when *tui-saved-termios*
+    (ignore-errors
+      (sb-posix:tcsetattr (sb-sys:fd-stream-fd (tui-state-tty *tui*))
+                          sb-posix:tcsanow *tui-saved-termios*))
+    (setf *tui-saved-termios* nil)))
 
 (defun tty-write (string)
   (when *tui*
