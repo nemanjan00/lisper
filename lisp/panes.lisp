@@ -11,7 +11,7 @@
 (in-package :lisping)
 
 (declaim (ftype function tui-visible-lines tui-chat-add tui-dirty))
-(declaim (special *tui* *tui-lock* *todos*))
+(declaim (special *tui* *tui-lock* *todos* *tui-prev-grid*))
 
 (defstruct pane
   name
