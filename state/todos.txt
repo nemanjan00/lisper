@@ -12,4 +12,4 @@
 [ ] state/layout.lisp: save as pure data (keyword :leaf), read back with *read-eval* nil in an explicit package
 [ ] Input line: horizontal scroll window around cursor once text exceeds terminal width
 [ ] Consider defclass for tui-ui/pane so slots can change on live instances (drops the *tui-input-cursor*-style globals)
-[ ] Chat auto-scroll: Enter jumps to bottom; while scrolled up, new lines raise scroll offset (reading position pinned) + "↓ N new" marker on pane bottom edge until scrolled back down
+[x] Chat auto-scroll: Enter jumps to bottom; while scrolled up, new lines raise scroll offset (reading position pinned) + "↓ N new" marker on pane bottom edge until scrolled back down

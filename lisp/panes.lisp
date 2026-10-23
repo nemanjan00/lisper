@@ -242,8 +242,28 @@ PANES-DRAW-SEPARATOR)."
 
 (defun pane-draw-into (g p x y w h)
   "Clear the pane's rect and draw its border + content — but only when
-it needs a redraw; a clean pane's cells stay as they are."
+it needs a redraw; a clean pane's cells stay as they are. A render or
+draw error is logged and drawn inside the pane instead of killing the
+redraw thread."
   (when (plusp (pane-needs-redraw p))
+    (unwind-protect
+         (handler-case (pane-draw-into-1 g p x y w h)
+           (serious-condition (c)
+             (ignore-errors (tui-log-crash c))
+             (ignore-errors
+               (dotimes (j h)
+                 (dotimes (i w)
+                   (ui-grid-put g (+ x i) (+ y j) #\Space 7)))
+               (ui-grid-write g x y
+                              (format nil " pane error: ~A"
+                                      (let ((s (substitute #\Space #\Newline (princ-to-string c))))
+                                        (subseq s 0 (min 80 (length s)))))
+                              3 (+ x w)))))
+      (setf (pane-needs-redraw p) 0))))
+
+(defun pane-draw-into-1 (g p x y w h)
+  "The actual border + content drawing for PANE."
+  (progn
     (dotimes (j h)
       (dotimes (i w)
         (ui-grid-put g (+ x i) (+ y j) #\Space 7)))

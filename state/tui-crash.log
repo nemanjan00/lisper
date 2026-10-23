@@ -426,3 +426,19 @@ Backtrace for: #<SB-THREAD:THREAD tid=611147 "agent" RUNNING {1202E37AE3}>
 11: (SB-THREAD::RUN)
 12: ("foreign function: call_into_lisp_")
 13: ("foreign function: funcall1")
+--- TUI crash 4001766619 ---
+The value
+  "visible: 308 messages (55K est), window est 131K"
+is not of type
+  LIST
+Backtrace for: #<SB-THREAD:THREAD tid=1119026 "tui-redraw" RUNNING {1201ACEC83}>
+0: (LISPING::TUI-LOG-CRASH #<TYPE-ERROR expected-type: LIST datum: "visible: 308 messages (55K est), window est 131K">)
+1: (LISPING::TUI-CRASH #<TYPE-ERROR expected-type: LIST datum: "visible: 308 messages (55K est), window est 131K">)
+2: (LISPING::TUI-REDRAW-LOOP #S(LISPING::TUI-UI :TTY #<SB-SYS:FD-STREAM for "tui-tty" {12018276A3}> :WIDTH 188 :HEIGHT 53 :CHAT #S(LISPING::UIBUF :NAME NIL :LINES #(#S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) ...) :CAP 2000 :ALIGN :BOTTOM :WRAP T :LAST-ATTR 8) :INPUT "" :PREFIX NIL :SCROLL 0 :SHOWN-USER #<(SIMPLE-ARRAY CHARACTER (501)) [developer] Found the Home/End bug, verified: I sent tmux's real Home key (tmux send-keys -t lisper:2 Home); keys.log got just :ESCAPE. Inside tmux (TERM screen-256color) Home is ESC [ 1 ~ and End is ... {1204A8800F}> :PENDING-USER NIL :THREADS (#<SB-THREAD:THREAD tid=1119025 "tui-keys" RUNNING {1201ACEA93}> #<SB-THREAD:THREAD tid=1119026 "tui-redraw" RUNNING {1201ACEC83}>)))
+3: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+4: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: (SB-THREAD::RUN)
+8: ("foreign function: call_into_lisp_")
+9: ("foreign function: funcall1")

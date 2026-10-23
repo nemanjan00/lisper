@@ -111,3 +111,29 @@ Things I keep relearning on every restart — write them down once:
 - Struct is `tui-ui` (was `tui-state`); weather pane removed (experiment
   ended); prefix keys: C-b q quit, C-b r full redraw, C-u/C-c clear input,
   C-d exit/backspace, PgUp/PgDn scroll chat.
+
+## Session 2026-10-24 (cursor editing, pane gaps, auto-scroll, context rule)
+- **Context rule (developer, verified): this endpoint silently truncates**
+  requests that exceed the window — no error, oldest context dropped. Watch
+  `*last-usage*` prompt_tokens and the :thinking context readout. Past 150k:
+  compact old work into notes.md and restart (compactor tools are the
+  primary defense; the restart rule is the fallback).
+- **Keys on this terminal** (screen-256color inside tmux, evidence:
+  keys.log after `tmux send-keys Home`): Home = ESC[1~, End = ESC[4~; also
+  map 7~/8~. Arrows: ESC[A-D or SS3 ESC O A-D. Unknown CSI params are now
+  logged to keys.log as (:unknown-csi params final) — check there first when
+  a key 'does nothing'.
+- **Never block on read-char inside an escape sequence** (evidence: keys.log
+  :ESCAPE runs, ae3f78c): a split sequence blocked the csi reader, which then
+  swallowed bytes of the *next* key. Per-byte timeout (0.05 s) with bail-out.
+- **send-keys to lisper:2 lands in my own input line; Enter submits a real
+  user message to myself.** Clear test keys with C-u, never send Enter unless
+  I mean to message myself. Forensics: state/tmp/keys.log (parsed keys), or
+  instrument tui-read-key live to log raw chars.
+- **tmux capture output was echoing into chat** via the tool-result preview:
+  tui-chat-result now shows only `<- N lines' for >2-line results (4d78742).
+- **Auto-scroll**: scroll = offset from bottom. New lines while scrolled up
+  bump pane-scroll + *tui-chat-new* (tui-chat-note-new), marker `↓ N new` on
+  the pane's last content row, cleared when scroll hits 0 (229e96d).
+- **Pane gaps**: hsplit reserves a 1-column gap; panes-draw-separator repaints
+  a dim │ every frame (no diff cost) so stale text can't linger (229e96d).
