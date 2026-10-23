@@ -241,6 +241,7 @@ one-line pointer text."
                   (format nil "~A — [offloaded ~D chars; context_restore {\"entry\": \"e~D\"} puts it back]"
                           (ctx-short text) (length content) id))
             (incf *ctx-offloaded-count*)
+            (setf *ctx-requests-since-collapse* 0)
             (pane-dirty "context")
             (format nil "[ctx] offloaded entry e~D (~D chars); takes effect from the next request."
                     id (length content)))))))))
