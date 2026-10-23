@@ -272,6 +272,55 @@ path; eval -> what it defines or calls; otherwise the short args."
 the conversation."
   (list (cons (format nil "  -> ~A" (tui-tool-summary name args)) 8)))
 
+(defun tui-tool-name (tc)
+  "Tool name of a *messages* tool_call entry (OpenAI layout: under
+\"function\"; tolerate a flat \"name\" too)."
+  (let ((fn (and (hash-table-p tc) (gethash "function" tc))))
+    (or (and (hash-table-p fn) (gethash "name" fn))
+        (and (hash-table-p tc) (gethash "name" tc)))))
+
+(defun tui-replay-history (ui)
+  "Rebuild the chat buffer from LISPING-CORE:*MESSAGES* so a UI
+restart keeps the conversation: user messages become you> lines,
+assistant text becomes chat lines, tool_calls and tool results become
+the same dim indented lines the live events produce. System/developer
+and empty messages are skipped."
+  (let ((names (make-hash-table :test 'equal)))
+    ;; tool_call_id -> tool name, for naming result lines.
+    (dolist (m lisping-core:*messages*)
+      (let ((tcs (gethash "tool_calls" m)))
+        (when tcs
+          (dotimes (i (length tcs))
+            (let ((tc (aref tcs i)))
+              (when (and (tui-tool-name tc) (gethash "id" tc))
+                (setf (gethash (gethash "id" tc) names) (tui-tool-name tc))))))))
+    (dolist (m lisping-core:*messages*)
+      (let ((role (or (gethash "role" m) ""))
+            (content (gethash "content" m)))
+        (cond ((string= role "user")
+               (when (and (stringp content) (plusp (length content)))
+                 (tui-show-user ui content)))
+              ((string= role "assistant")
+               (when (and (stringp content) (plusp (length content)))
+                 (tui-chat-add ui (ui-parse-ansi content)))
+               (let ((tcs (gethash "tool_calls" m)))
+                 (when tcs
+                   (dotimes (i (length tcs))
+                     (let ((tc (aref tcs i)))
+                       (tui-chat-add ui (tui-tool-call-line
+                                         (tui-tool-name tc)
+                                         (when (hash-table-p (gethash "function" tc))
+                                           (ignore-errors
+                                             (json-decode (or (gethash "arguments"
+                                                                       (gethash "function" tc))
+                                                              "{}")))))))))))
+              ((string= role "tool")
+               (when (stringp content)
+                 (tui-chat-result ui (gethash (gethash "tool_call_id" m) names)
+                                  content))))))
+    ;; The replay ends at the newest message; a queued echo would be stale.
+    (setf *tui-queued-text* nil)))
+
 (defun chunks-text (chunks)
   (with-output-to-string (out)
     (dolist (ck chunks) (write-string (car ck) out))))
