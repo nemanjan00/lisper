@@ -49,6 +49,25 @@ Things I keep relearning on every restart — write them down once:
     to the UI; otherwise a too-big offset silently eats the newest
     lines when the chat is shorter than the pane.
 
+## Pane system (lisp/panes.lisp, built 2026-10-23)
+- **tui-start no-ops while *tui* is alive.** After changing draw/render code,
+  `(tui-stop)` then `(tui-start)` — a plain tui-start leaves the old UI
+  running the new code with unregistered panes (blank screen, no crash).
+  Verify with `tmux capture-pane -t lisper:2 -p | head` after every step.
+- Panes: `*panes*` registry (name → pane struct), `*layout*` tree of
+  `(:hsplit ratio a b)` / `(:vsplit ratio a b)` / `(leaf name)`.
+  Kinds: :chat :todo :buffer :cmd (cmd re-runs a shell command every
+  INTERVAL via the "tui-panes" ticker thread).
+- Only panes with `pane-needs-redraw` redraw into the persistent
+  `*panes-canvas*`; input+status rows are composed on top; the frame
+  diff still sends only changed cells.
+- Scrolling keys apply to `*pane-focus*`; wheel scrolls the pane under
+  the pointer; click focuses a pane. Tools: `pane` (list/focus/add/
+  split/remove) and `layout` (get/set/reset). Layout persists to
+  state/layout.lisp.
+- Slot named `dirty` in a defstruct collides with a same-named function
+  (the accessor) — name slots `needs-redraw` instead.
+
 ## Lessons from the UI work (expensive; do not relearn)
 
 1. **Define helpers before their callers.** An edit whose body calls a
