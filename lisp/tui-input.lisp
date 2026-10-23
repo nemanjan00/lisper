@@ -209,8 +209,8 @@ modifier/motion bits we ignore."
 (defun tui-cursor-move (ui delta)
   "Move the input cursor DELTA characters, clamped to the buffer."
   (let ((len (length (tui-ui-input ui))))
-    (setf *tui-input-cursor* (max 0 (min len (+ *tui-input-cursor* delta))))))
-
+    (setf (tui-ui-input-cursor ui)
+          (max 0 (min len (+ (tui-ui-input-cursor ui) delta))))))
 (defun tui-input-insert (ui c)
   "Insert C at the cursor, shifting the tail right. REPLACE copies as if
 via an intermediate, so the overlapping shift is safe."
