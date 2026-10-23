@@ -386,7 +386,7 @@ and empty messages are skipped."
         (tui-draw-status g ui (1- h) w)
         (let* ((prompt-len (length (if (tui-ui-prefix ui) "*> " "> ")))
                (row (1- h))
-               (col (min w (+ prompt-len (length (tui-ui-input ui)) 1)))
+               (col (min w (+ prompt-len *tui-input-cursor* 1)))
                (full (or (null *tui-prev-grid*)
                          (/= (uigrid-w *tui-prev-grid*) w)
                          (/= (uigrid-h *tui-prev-grid*) h)))
