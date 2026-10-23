@@ -693,7 +693,7 @@ Idempotent."
                         :required (vector "entry"))
                    #'ctx-tool-restore)
     (register-tool "context_search"
-                   "Full-text search over the visible conversation, offloaded/collapsed originals, and the current and previous session logs. Each hit comes with a snippet and how to read it back."
+                   "Full-text search over the visible conversation, offloaded/collapsed originals, and the current and previous session logs. `text` is literal words, not meaning; `limit` caps the hits (default 10). Returns one line per hit — where the text lives (entry id or log file) plus a snippet; read the original back with context_restore."
                    (obj :type "object" :properties
                         (obj :text (obj :type "string" :description "text to find (words, not meaning)")
                              :limit (obj :type "string" :description "max hits, default 10"))
