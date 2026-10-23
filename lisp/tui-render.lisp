@@ -135,34 +135,35 @@ embedded newlines must never reach the grid."
 ;;; ---------------------------------------------------------------
 ;;; Drawing. Only the redraw thread calls TUI-DRAW.
 
-(defun tui-redraw-loop ()
-  (loop while *tui*
+(defun tui-redraw-loop (ui)
+  (loop while (and *tui* (eq *tui* ui))
         do (handler-case
                (progn
                  (sb-thread:with-mutex (*tui-lock*)
-                   (loop while (and *tui* (zerop *tui-dirty*))
+                   (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
                          do (sb-thread:condition-wait *tui-cv* *tui-lock*
                                                       :timeout 1.0)))
-                 (when *tui* (tui-draw)))
-             (serious-condition (c) (tui-crash c)))))
+                 (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
+             (serious-condition (c)
+               (when (eq *tui* ui) (tui-crash c))))))
 
-(defun tui-draw ()
-  (tui-update-size)
+(defun tui-draw (ui)
+  (tui-update-size ui)
   (sb-thread:with-mutex (*tui-lock*)
-    (when *tui*
-      (let* ((w (tui-state-width *tui*))
-             (h (tui-state-height *tui*))
+    (when (and *tui* (eq *tui* ui))
+      (let* ((w (tui-state-width ui))
+             (h (tui-state-height ui))
              (body-h (max 3 (- h 2)))
              (chat-w (max 20 (min (- w 20) (round (* w 0.62)))))
              (g (ui-grid-make w h)))
         (tui-draw-pane g 0 0 chat-w body-h "chat"
-                       (tui-state-chat *tui*) (zerop (tui-state-active *tui*))
-                       (tui-state-scroll *tui*))
+                       (tui-state-chat ui) (zerop (tui-state-active ui))
+                       (tui-state-scroll ui))
         (tui-draw-pane g chat-w 0 (- w chat-w) body-h "weather"
-                       (tui-state-weather *tui*) (= 1 (tui-state-active *tui*))
+                       (tui-state-weather ui) (= 1 (tui-state-active ui))
                        0)
-        (tui-draw-input g (- h 2) w)
-        (tui-draw-status g (1- h) w)
+        (tui-draw-input g ui (- h 2) w)
+        (tui-draw-status g ui (1- h) w)
         (uifix-boxes g)
         (tty-write
          (format nil "~C[?25l~A~C[~D;~DH~C[?25h"
@@ -170,7 +171,7 @@ embedded newlines must never reach the grid."
                  (ui-grid-render g)
                  #\Esc
                  (1- h)
-                 (min w (1+ (length (tui-state-input *tui*))))
+                 (min w (1+ (length (tui-state-input ui))))
                  #\Esc))))))
 
 (defun tui-draw-pane (g x y w h title buf activep scroll)
