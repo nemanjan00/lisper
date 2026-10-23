@@ -117,16 +117,16 @@ embedded newlines must never reach the grid."
                  (t (princ-to-string args)))))
     (str-truncate s 90)))
 
-(defun tui-chat-result (name text)
+(defun tui-chat-result (ui name text)
   "Short form of a tool result: up to 2 lines, truncated, gray."
   (when (stringp text)
     (let* ((lines (tui-chunk-lines (ui-parse-ansi (str-truncate text 2000))))
            (shown (subseq lines 0 (min 2 (length lines)))))
       (dolist (line shown)
-        (tui-chat-add (list (cons (chunks-text line) 8))))
+        (tui-chat-add ui (list (cons (chunks-text line) 8))))
       (when (> (length text) 2000)
-        (tui-chat-add (list (cons (format nil "  ... ~A: ~D chars" name (length text))
-                                  8)))))))
+        (tui-chat-add ui (list (cons (format nil "  ... ~A: ~D chars" name (length text))
+                                     8)))))))
 
 (defun chunks-text (chunks)
   (with-output-to-string (out)
