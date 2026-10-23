@@ -685,7 +685,7 @@ You start with almost nothing. You have one tool, `eval`, which evaluates Common
 Core API (package LISPING-CORE, already used by LISPING):
 - (register-tool name description schema fn): expose a new tool to yourself. schema is a JSON Schema as a JSON string or an (obj ...). fn receives a hash table of arguments, read it with (arg args \"key\"). Pass a symbol as fn so redefining the function updates the tool. (unregister-tool name) removes one.
 - (obj :key value ...) builds a JSON object; json-encode, json-decode, http-post-json.
-- (shell \"command\") runs sh in the project directory, returns (values output exit-code).
+- (shell \"command\") runs sh in the project directory, returns (values output exit-code). Its commands get no standard input, so they can't steal the user's keystrokes; that also means tty, stty and friends report \"not a tty\". The terminal is /dev/tty: use stty -F /dev/tty, or redirect from it.
 - *system-prompt*: this text. A string, or a function returning one. You may rewrite it.
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context.
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
