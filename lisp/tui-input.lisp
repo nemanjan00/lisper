@@ -248,20 +248,44 @@ via an intermediate, so the overlapping shift is safe."
   "Scroll the FOCUSED pane (the chat by default)."
   (declare (ignore ui))
   (pane-scroll-by *pane-focus* delta))
-
 (defun tui-mouse (ui key)
   "Handle an SGR mouse event (:mouse b x y kind). The wheel scrolls the
-pane under the pointer; a click focuses that pane. The input and status
-rows belong to no pane and are ignored."
+pane under the pointer; a click focuses that pane. A press on an hsplit
+separator column starts a drag: motion events (bit 5 of B) move the
+split's ratio, repainting at most ~10 times a second (the SSH budget),
+and the release does one full redraw and saves the layout. The input
+and status rows belong to no pane and are ignored."
   (declare (ignore ui))
   (destructuring-bind (_ b x y kind) key
     (declare (ignore _))
-    (let ((target (pane-at (1- x) (1- y))))  ; 0-based
-      (cond ((and (eq kind :press) target (<= 64 b 67))
-             (pane-scroll-by target (if (evenp b) 3 -3)))
-            ((and (eq kind :press) target (<= b 2))
-             (pane-focus-pane target))))))
-
+    (let ((x0 (1- x)) (y0 (1- y)))            ; SGR coords are 1-based
+      (cond
+        ;; Release while dragging: finish, repaint from scratch, persist.
+        ((and (eq kind :release) *pane-drag*)
+         (setf *pane-drag* nil)
+         (tui-force-redraw)
+         (panes-save))
+        ;; Motion with a button held (bit 5): resize the dragged split,
+        ;; throttled — skipped events leave nothing dirty, so the
+        ;; redraw loop's pass is a cheap no-op.
+        ((and (eq kind :press) (logbitp 5 b) *pane-drag*)
+         (when (>= (- (get-internal-real-time) *pane-drag-last-draw*)
+                   (truncate internal-time-units-per-second 10))
+           (setf *pane-drag-last-draw* (get-internal-real-time))
+           (pane-drag-to x0)
+           (panes-mark-all-dirty)))
+        ;; Press: on a separator start a drag; wheel scrolls; else focus.
+        ((eq kind :press)
+         (let ((target (pane-at x0 y0))
+               (gap (split-gap-at x0 y0)))
+           (cond ((and gap (<= (logand b 3) 2) (zerop (logand b 64)))
+                  (setf *pane-drag* gap
+                        *pane-drag-last-draw* 0))
+                 ((and target (<= 64 b 67))
+                  (pane-scroll-by target (if (evenp b) 3 -3)))
+                 ((and target (<= (logand b 3) 2))
+                  (pane-focus-pane target)))))
+        (t nil)))))
 (defun tui-scroll-chat (ui key)
   "Page the FOCUSED pane up or down."
   (declare (ignore ui))
