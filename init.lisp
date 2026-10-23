@@ -1,6 +1,8 @@
-;;;; init.lisp: loaded at boot, like Emacs's init.el. It's yours: load the
-;;;; files you write from here with load-file.
+;;;; init.lisp: loaded at boot, like Emacs's init.el.
 
-;; Definitions saved automatically by the old core. Reorganize them into files
-;; of your own, then drop this line.
-(load-file "extensions.lisp")
+;; Terminal/UI toolkit: ANSI attribute parsing, then line buffers and the
+;; character-cell grid, then the terminal UI built on top of them.
+(load-file "lisp/ansi.lisp")
+(load-file "lisp/buffers.lisp")
+
+(require :sb-posix)
