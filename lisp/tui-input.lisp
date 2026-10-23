@@ -134,7 +134,14 @@ modifier/motion bits we ignore."
         ((and (string= params "5") (char= final #\~)) :pgup)
         ((and (string= params "6") (char= final #\~)) :pgdn)
         ((and (string= params "3") (char= final #\~)) :delete)
-        (t :escape)))
+        ;; Home/End as CSI ~-forms: 1~/7~ and 4~/8~ (screen-256color
+        ;; sends 1~ and 4~).
+        ((and (member params '("1" "7") :test #'string=) (char= final #\~))
+         :home)
+        ((and (member params '("4" "8") :test #'string=) (char= final #\~))
+         :end)
+        (t (tui-log-key (list :unknown-csi params final))
+           :escape)))
 
 ;;; ---------------------------------------------------------------
 ;;; Key dispatch. C-b (#\Stx) is the prefix, like tmux.
