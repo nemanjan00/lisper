@@ -36,6 +36,10 @@ for a message object removed by a rewind.")
 (defvar *ctx-pending-note* nil "Milestone note waiting to be injected.")
 (defvar *ctx-last-prompt-tokens* nil "prompt_tokens of the previous request.")
 (defvar *ctx-last-visible-count* nil "message count when last measured.")
+(defvar *ctx-requests-since-collapse* 99
+  "Requests since the last rewind/offload; the truncation check stays quiet for 2.")
+(defvar *ctx-low-pt-streak* 0
+  "Consecutive requests with prompt_tokens far below the local estimate.")
 (defvar *ctx-result-max-chars* 20000 "Tool results longer than this offload at once.")
 (defvar *ctx-pointer-head* 2000 "Chars kept from the start of an offloaded result.")
 (defvar *ctx-pointer-tail* 1000 "… and from the end.")
