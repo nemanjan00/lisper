@@ -276,8 +276,12 @@ redraw thread."
                      8)))
       (dotimes (i w) (ui-grid-put g (+ x i) y #\─ tattr))
       (ui-grid-write g (+ x 1) y (format nil " ~A " (pane-title p)) tattr (+ x w))
-      (let ((lines (ignore-errors
-                    (funcall (pane-render p) p w (1- h)))))
+      (let ((lines (handler-case (funcall (pane-render p) p w (1- h))
+                   (serious-condition (c)
+                     ;; Log render errors, and show the failure in the
+                     ;; pane instead of silently drawing nothing.
+                     (tui-log-crash c)
+                     (list (list (cons (format nil " render error: ~A" c) 3)))))))
         (when (eq (pane-kind p) :chat)
           (setf *tui-chat-pane-width* w))
         (when lines
