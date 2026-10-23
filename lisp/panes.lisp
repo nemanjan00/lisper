@@ -504,7 +504,10 @@ and the buffer write hold the lock."
             (sb-thread:with-recursive-lock (*tui-lock*)
               (setf (pane-buf p) (make-uibuf :cap 500))
               (uibuf-add-text (pane-buf p)
-                              (format nil "~A (exit ~A)" out code) 8)
+                              (if (zerop code)
+                                  out
+                                  (format nil "~A (exit ~A)" out code))
+                              8)
               (setf (pane-needs-redraw p) 1)
               (tui-dirty))))))))
 
