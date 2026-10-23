@@ -6,7 +6,9 @@
 (declaim (ftype function tui-read-key tui-read-escape tui-read-csi tui-csi-key
                 tui-read-ss3 tui-parse-mouse tui-mouse tui-scroll-chat-by
                 tui-prefix-key tui-normal-key tui-submit-input tui-input-backspace
-                tui-clear-input tui-ctrl-d tui-scroll-chat))
+                tui-clear-input tui-ctrl-d tui-scroll-chat
+                pane-scroll-by pane-at pane-focus-pane))
+(declaim (special *pane-focus*))
 
 (defvar *tui-quit* nil "Set by prefix q / C-d: the key loop then stops the UI.")
 
