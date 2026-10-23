@@ -187,3 +187,9 @@ Things I keep relearning on every restart — write them down once:
 - **Never put a literal tilde in a format string** (~/, ~D eat the prose);
   use write-line for notes and prose.
 - Testing the input line live: `tmux send-keys -t lisper:2 "text"` types without Enter; Home/End/C-u as key names; then `tmux capture-pane -t lisper:2 -p`. Input row is line 61 (of 63) at 208-col width. [verified 2026-10-24, h-scroll todo 13]
+
+## 22:38 nested separators (todo 27, won't-do)
+- Reproduced live: setting *layout* to (:vsplit 0.85 (:hsplit 0.78 chat (:hsplit 0.5 todo weather)) context) made panes-draw-gap-columns paint EVERY cell as a gap — whole screen became │ chars. So the rect/gap test fails wholesale for hsplit nested inside the right branch of an hsplit (three sibling columns).
+- Note: vsplit nested inside hsplit (the normal todo/weather stack) works fine — nesting per se isn't broken, only sibling columns under a nested hsplit.
+- Likely panes-draw-gap-columns only considers top-level hsplit boundaries; never debugged further (timeboxed, LOW). Debug on a COPY of the canvas, never the live one — restoring took a tui-drop-frame + tui-force-redraw + reset of *layout* and a panes-save (layout file had been overwritten with the broken tree).
+- Unrelated fixes landed same session: cmd pane shows '(exit N)' only on non-zero exit (lisp/panes.lisp panes-refresh-cmds); weather pane cmd now wttr.in/Belgrade?format=%%l:+%%C+%%t+%%w+%%p (%%C text instead of double-width %%c emoji).
