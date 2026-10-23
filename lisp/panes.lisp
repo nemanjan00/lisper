@@ -33,6 +33,12 @@
 
 (defvar *pane-focus* "chat" "Name of the focused pane; scrolling keys apply to it.")
 
+;;; Chat auto-scroll state: how many wrapped lines arrived while the
+;;; user was scrolled up (the "↓ N new" marker), and the width the chat
+;;; pane last rendered at (for wrapping new lines when pinning).
+(defvar *tui-chat-new* 0)
+(defvar *tui-chat-pane-width* nil)
+
 (defvar *panes-canvas* nil "Persistent grid holding the panes' area.")
 
 (defvar *panes-layout-file* (merge-pathnames "state/layout.lisp" lisping-core:*root*))
