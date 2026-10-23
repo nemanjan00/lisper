@@ -1,0 +1,4 @@
+[ ] Window manager: pane registry (name/title/render-fn/scroll/dirty), split-tree layout with ratios, dynamic renderers (buffer/log tail/clock), pane_add/pane_remove/pane_split/layout tools, persist state/layout.lisp; chat becomes one pane
+[ ] Tool lines: render dim+indented, apart from conversation (--> name / <-- N lines); smarter summaries — skip progn/let wrappers, show real defuns called or 'edit lisp/x.lisp'
+[ ] Chat: rebuild history from *messages* on tui-start so a UI restart does not wipe the conversation
+[ ] Chat UX: end every shortened/cut line with a dim marker (… or … +N lines) so cuts are visible

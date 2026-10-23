@@ -4,7 +4,8 @@
 (in-package :lisping)
 
 (defvar *todos* nil
-  "List of todo items, each (text . donep), newest last.")
+  "List of todo items, each (text . donep), oldest first, newest last:
+indices stay stable as items are added.")
 
 (defvar *todos-file* (merge-pathnames "state/todos.txt" lisping-core:*root*))
 
