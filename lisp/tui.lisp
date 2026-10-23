@@ -194,7 +194,7 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
           *tui-frames-skipped* 0
           *tui-frames-full* 0
           *tui-bytes-total* 0)
-    (setf *tui* (make-tui-ui :tty tty))
+    (setf *tui* (make-instance 'tui-ui :tty tty))
     ;; Panes first (chat is one), then history: the replay appends to
     ;; the chat pane and must find it registered.
     (panes-init)
