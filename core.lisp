@@ -28,7 +28,7 @@
 
 (in-package :lisping-core)
 
-(declaim (ftype function emit))   ; used before its definition further down
+(declaim (ftype function emit client-error-p complete-once)) ; used before their definitions further down
 
 (defvar *root* (make-pathname :name nil :type nil :version nil :defaults *load-truename*)
   "Project directory: core.lisp, init.lisp and the files it loads, state/, .git.")
@@ -582,6 +582,22 @@ Return printed output, values and errors."
 
 (defparameter +core-files+ '("core.lisp" "boot.lisp" "run.sh"))
 
+(defun undefined-function-problems ()
+  "After a full load: functions in LISPING that some code calls but nothing
+defines. Each form loads on its own, so a forward reference only gives a style
+warning at load time; checking once everything is loaded lets the references
+that did resolve through, and catches the ones that never will."
+  (let ((package (find-package :lisping))
+        (found '()))
+    (do-symbols (s package)
+      (when (and (eq (symbol-package s) package)
+                 ;; SBCL records an assumed type only when it compiles a call to
+                 ;; a function it doesn't know; defining the function clears it.
+                 (sb-int:info :function :assumed-type s)
+                 (not (fboundp s)))
+        (push (format nil "~(~A~) is called but never defined" s) found)))
+    (sort found #'string<)))
+
 (defun print-boot-problems (&optional extra)
   "Used by TEST-BOOT in the child process: load init.lisp, then EXTRA (a file
 name, so a file init.lisp doesn't load yet is checked too), and print the problems."
@@ -589,7 +605,8 @@ name, so a file init.lisp doesn't load yet is checked too), and print the proble
                     (append (load-collecting (init-path) (make-broadcast-stream))
                             (and extra (load-collecting extra (make-broadcast-stream))))))
         ;; EXTRA is usually loaded by init.lisp too, so the same problem can come twice.
-        (problems (remove-duplicates problems :test #'string= :from-end t)))
+        (problems (append (remove-duplicates problems :test #'string= :from-end t)
+                          (undefined-function-problems))))
     (format t "~&BOOT-PROBLEMS:~S~%" problems)
     (finish-output)))
 
@@ -786,6 +803,7 @@ Files and persistence, the way Emacs does it:
 - eval with only `code` is like M-: or *scratch*: it changes the running image and nothing else. Use it to explore and test.
 - eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. Before your running image sees it, a fresh SBCL boots with the new file in place (init.lisp plus this file); only if that's clean is it loaded into your image. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
 - (test-boot) loads init.lisp in a fresh SBCL process, like a boot but with no UI and no agent, and returns its problems (NIL when clean). Your running image can pass a check only because of state left from earlier edits (a variable defined in a file that loads later, say); run test-boot after changing files and before restarting.
+- Loading a file should only define things. Side effects (starting threads, writing state/, opening ports) belong in an explicit start function that init.lisp calls, because files are also loaded by test-boot's fresh check, with the same state/ directory.
 - So, to keep something, put it in a file that init.lisp loads. The image and the files can drift apart while you work, as in Emacs; at boot, the files win.
 - Writing a whole file to change one function gets slow as files grow. Keep files small and focused, and consider building yourself what Emacs users have: buffers, editing part of a file, and re-evaluating just the form you changed (C-M-x). Tools you register get their arguments as plain JSON strings, so a file-editing tool avoids escaping code inside Lisp strings.
 - Your conversation does NOT survive a restart, and the user may restart you at any moment. Whatever you learn by exploring (facts about your environment, what works and what doesn't) is lost unless you write it down, e.g. in state/notes.md. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
@@ -837,13 +855,44 @@ total_tokens), as the API returned it; prompt_tokens is the size of your context
              (and (stringp content)
                   (string= "" (string-trim '(#\Space #\Tab #\Newline #\Return) content)))))))
 
+(defun pair-tool-results (messages)
+  "MESSAGES with every tool call answered and every tool result matched: a call
+whose result never got appended (the turn was interrupted) gets a stub result,
+and a result with no matching call is dropped. The API rejects either one,
+and would keep rejecting every later request."
+  (let ((out '()) (pending '()))
+    (flet ((flush ()
+             (dolist (id (reverse pending))
+               (push (obj :role "tool" :tool_call_id id
+                          :content "[core] No result: this call was interrupted before it finished.")
+                     out))
+             (setf pending '())))
+      (dolist (m messages)
+        (let ((role (gethash "role" m)))
+          (cond ((equal role "tool")
+                 (let ((id (gethash "tool_call_id" m)))
+                   (when (member id pending :test #'equal)
+                     (setf pending (remove id pending :test #'equal))
+                     (push m out))))
+                (t
+                 (flush)
+                 (push m out)
+                 (let ((calls (gethash "tool_calls" m)))
+                   (when (and (equal role "assistant") (vectorp calls))
+                     (loop for call across calls
+                           do (push (gethash "id" call) pending))))))))
+      (flush))
+    (nreverse out)))
+
 (defun request-body ()
-  "The request for the model. Blank user messages are left out, however they
-got into *messages*, since the API rejects them and would fail every request."
+  "The request for the model. Blank user messages are left out and tool calls
+are paired with results, however *messages* got that way, since the API rejects
+both and would fail every later request."
   (let ((body (obj :model *model*
                    :max_tokens *max-tokens*
                    :messages (coerce (cons (obj :role "system" :content (system-prompt-text))
-                                           (remove-if #'blank-user-message-p *messages*))
+                                           (pair-tool-results
+                                            (remove-if #'blank-user-message-p *messages*)))
                                      'vector)
                    :tools (tool-specs))))
     (dolist (hook *before-request* body)
@@ -858,9 +907,50 @@ got into *messages*, since the API rejects them and would fail every request."
                    (when (hash-table-p usage) (setf *last-usage* usage)))
                  (return (gethash "message" (aref (gethash "choices" response) 0))))
              (error (c)
-               (when (>= attempt 4) (error c))
+               ;; A 4xx other than 429 is the request's fault: retrying the same
+               ;; request can only fail again.
+               (when (or (>= attempt 4) (client-error-p c)) (error c))
                (emit :error :text (format nil "model call failed (attempt ~D, retrying): ~A" attempt c))
                (sleep (* 2 attempt))))))
+
+(defun client-error-p (condition)
+  (let ((text (princ-to-string condition)))
+    (and (search "HTTP 4" text) (not (search "HTTP 429" text)))))
+
+(defun context-too-long-p (condition)
+  "True when the API rejected the request for being longer than the model's context."
+  (let ((text (string-downcase (princ-to-string condition))))
+    (and (client-error-p condition)
+         (some (lambda (word) (search word text))
+               '("context" "too long" "too many tokens" "maximum" "exceed")))))
+
+(defun drop-oldest-messages ()
+  "Make *messages* smaller after a context-length error: drop about the oldest
+quarter, cutting only at a user message so no tool call loses its result, and
+leave a note saying what went. Returns the number dropped (0 if nothing could be)."
+  (let* ((n (length *messages*))
+         (cut (max 1 (floor n 4)))
+         (rest (nthcdr cut *messages*)))
+    (loop while (and rest (not (equal (gethash "role" (car rest)) "user")))
+          do (setf rest (cdr rest)) (incf cut))
+    (cond
+      (rest
+       (setf *messages*
+             (cons (obj :role "user"
+                        :content (format nil "[core] ~D earlier messages were dropped because the context was too long for the model. The full transcript is in ~A."
+                                         cut (and *session-log* (namestring *session-log*))))
+                   rest))
+       cut)
+      (t
+       ;; One long turn with no user message to cut at: shorten big tool results instead.
+       (let ((shortened 0))
+         (dolist (m *messages* shortened)
+           (let ((content (gethash "content" m)))
+             (when (and (equal (gethash "role" m) "tool") (stringp content) (> (length content) 2000))
+               (setf (gethash "content" m)
+                     (format nil "~A~%[core] cut from ~D characters: the context was too long."
+                             (subseq content 0 2000) (length content)))
+               (incf shortened)))))))))
 
 (defvar *complete* 'default-complete
   "Function taking a request body (an OBJ) and returning the assistant message as an OBJ
@@ -868,7 +958,19 @@ with content, tool_calls and reasoning_content. Replace it to stream or change h
 the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
 
 (defun complete ()
-  "Send the conversation to the model and return its message."
+  "Send the conversation to the model and return its message. If the API says
+the conversation is longer than the model's context, drop the oldest part and
+try again, so the session can't get stuck with a history that never fits."
+  (loop for tries from 1
+        do (handler-case (return (complete-once))
+             (error (c)
+               (unless (and (context-too-long-p c) (< tries 6))
+                 (error c))
+               (let ((dropped (drop-oldest-messages)))
+                 (when (zerop dropped) (error c))
+                 (emit :error :text (format nil "context too long for the model: dropped ~D old messages and retrying" dropped)))))))
+
+(defun complete-once ()
   (let ((body (request-body)))
     (if (eq *complete* 'default-complete)
         (default-complete body)

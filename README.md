@@ -85,10 +85,12 @@ Like Emacs:
   model's other files with `load-file`. A form that fails is reported to the
   model and skipped.
 - `eval` with only `code` changes the running image, like `M-:`.
-- `eval` with a `file` argument writes the file verbatim and loads it, like
-  saving a buffer and running `eval-buffer`. It's kept and committed only if it
-  loads with no errors or warnings; otherwise the old version is put back. So
-  the files only ever hold code that loaded, and what loads at boot is what ran.
+- `eval` with a `file` argument writes the file verbatim, like saving a buffer.
+  Before the running image sees it, a fresh SBCL boots with the new file in
+  place (`test-boot`); only if that's clean is the file loaded into the running
+  image and committed, like `eval-buffer`. Otherwise the old version is put
+  back and the image is untouched. A function that's called but never defined
+  anywhere also counts as a problem.
 - git keeps the history. If a boot crashes, the supervisor (`run.sh`) rolls the
   files back to the last commit that booted (tag `last-good`).
 
