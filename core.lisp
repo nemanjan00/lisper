@@ -922,8 +922,15 @@ both and would fail every later request."
                                             (remove-if #'blank-user-message-p *messages*)))
                                      'vector)
                    :tools (tool-specs))))
+    ;; A hook that fails is skipped for this request, not allowed to fail it:
+    ;; a hook that errors on every request would otherwise lock the agent out of
+    ;; the model, with no turn left in which to fix the hook.
     (dolist (hook *before-request*)
-      (setf body (funcall hook body)))
+      (let ((result (handler-case (funcall hook body)
+                      (serious-condition (c)
+                        (emit :error :text (format nil "*before-request* hook ~S failed and was skipped for this request: ~A" hook c))
+                        body))))
+        (setf body (if (hash-table-p result) result body))))
     ;; Pair again after the hooks, in case one of them broke it, and strip the
     ;; x-kind provenance key, which isn't part of the API.
     (let ((messages (gethash "messages" body)))
