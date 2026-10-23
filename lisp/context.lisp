@@ -663,15 +663,15 @@ shown as what has grown since."
             (list
              (line
               (if pt
-                  (format nil "context: ~:D tokens (~D% of ~A, ~D% of budget)"
-                          pt
+                  (format nil "context: ~A tokens (~D% of ~A, ~D% of budget)"
+                          (ctx-fmt-k pt)
                           (round (* 100 pt) *ctx-window*) (ctx-fmt-size *ctx-window*)
                           (round (* 100 pt) *ctx-budget*))
-                  (format nil "context: ~:D est tokens" est))
+                  (format nil "context: ~A est tokens" (ctx-fmt-k est)))
               7)
              (line
-              (format nil "+~:D est since · ~D messages"
-                      (if pt (max 0 (- est pt)) 0)
+              (format nil "+~A est since · ~D messages"
+                      (ctx-fmt-k (if pt (max 0 (- est pt)) 0))
                       (length *messages*))
               8)))
            (extra '()))
