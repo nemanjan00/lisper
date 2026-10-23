@@ -20,36 +20,59 @@
 (defvar *ctx-ids* (make-hash-table :test #'eq :weakness :key)
   "message object -> entry id (integer).  Weak on the message: stubs and
 dropped messages GC away instead of leaking an id each request.")
+
 (defvar *ctx-id-messages* (make-hash-table :weakness :value)
   "entry id -> message object.  Weak on the value, for the same reason.")
+
 (defvar *ctx-next-id* 0)
+
 (defvar *ctx-originals* (make-hash-table)
   "entry id -> (kind . value): :content for an offloaded string, :message
 for a message object removed by a rewind.")
+
 (defvar *ctx-stretches* nil
   "List of (from-id to-id short-summary marker-message count est-tokens).")
+
 (defvar *ctx-offloaded-count* 0)
+
 (defvar *ctx-window* 1048576 "Context window in tokens (K3: 1M).")
+
 (defvar *ctx-budget* 200000
   "Working budget in tokens: cost, latency and quality suffer long
 before the window is full, so thresholds are percents of THIS.")
+
 (defvar *ctx-note-at* 70 "Percent of the budget at which to note.")
+
 (defvar *ctx-near-at* 80 "Percent at which the note becomes an instruction.")
+
 (defvar *ctx-noted-percent* 0 "Last noted percent (ratchets +5; resets on drops).")
+
 (defvar *ctx-pending-note* nil "Milestone note waiting to be injected.")
+
 (defvar *ctx-last-prompt-tokens* nil "prompt_tokens of the previous request.")
+
 (defvar *ctx-last-visible-count* nil "message count when last measured.")
+
 (defvar *ctx-requests-since-collapse* 99
   "Requests since the last rewind/offload; the truncation check stays quiet for 2.")
+
 (defvar *ctx-low-pt-streak* 0
   "Consecutive requests with prompt_tokens far below the local estimate.")
+
 (defvar *ctx-result-max-chars* 20000 "Tool results longer than this offload at once.")
+
 (defvar *ctx-pointer-head* 2000 "Chars kept from the start of an offloaded result.")
+
 (defvar *ctx-pointer-tail* 1000 "… and from the end.")
+
 (defvar *ctx-piece-max* 16000 "Most context_restore reads at once.")
+
 (defvar *ctx-search-limit* 10)
+
 (defvar *ctx-index-max* 40 "Lines a rewind index lists at most.")
+
 (defvar *ctx-autoloaded* nil)
+
 (progn
   (defvar *ctx-chars-per-token* 3.5
     "Chars per token, calibrated against prompt_tokens after each request.")
@@ -75,6 +98,7 @@ and tool-call arguments — which live at tc -> function -> arguments."
                        (let ((a (gethash "arguments" f)))
                          (if (stringp a) (length a) 0))
                        0))))))
+
 (defun ctx-session-log ()
   "The current session's jsonl path, or NIL."
   (and (find-symbol "*SESSION-LOG*" :lisping-core)
@@ -175,6 +199,7 @@ messages (x-kind) and the older text-marked markers don't count."
     (when (> (length stretch) *ctx-index-max*)
       (format s "- … ~D more, find them with context_search~%"
               (- (length stretch) *ctx-index-max*)))))
+
 (defun ctx-snap-range (i j)
   "Expand [I,J] to whole tool-call units, so no tool call loses its
 result (the core would fill the hole with a false \"interrupted\"
@@ -189,6 +214,7 @@ calls produce several)."
                      (equal (gethash "role" (nth (1+ j) *messages*)) "tool"))
           do (incf j))
     (values i j)))
+
 (defun ctx-do-rewind (from-msg to-msg summary)
   (let* ((i (position from-msg *messages* :test #'eq))
          (j (position to-msg *messages* :test #'eq))
@@ -457,6 +483,7 @@ registry).  Returns T if it offloaded."
                                      (not (ctx-head-p "[offloaded" c)))
                            collect (cons (ctx-entry-id m) (ctx-est-tokens c)))))
     (subseq (sort candidates #'> :key #'cdr) 0 (min k (length candidates)))))
+
 (defun ctx-threshold-note (percent)
   "A note when the context passes a threshold, or NIL.  Edge-triggered:
 after noting at P, the next note comes at P+5, so the request is never
@@ -475,6 +502,7 @@ budget), not of the whole window."
         (format s "- e~D ≈ ~D est tokens: context_offload {\"entry\": \"e~D\"}~%"
                 (car c) (cdr c) (car c)))
       (format s "Collapse finished stretches with context_rewind {from, to, summary}; summaries keep what later work needs verbatim (paths, ids, decisions).~%"))))
+
 (progn
   (defvar *ctx-note-in-flight* nil
     "T when the pending note was injected into a request; cleared when
@@ -502,7 +530,8 @@ injection would lose it on a failed request)."
        (when *ctx-note-in-flight*
          (setf *ctx-pending-note* nil
                *ctx-note-in-flight* nil))))
-    event))(defun ctx-local-estimate ()
+    event))
+(defun ctx-local-estimate ()
   "Estimated tokens of the next request: system prompt, tool specs, and
 every message (content + reasoning_content + tool-call arguments),
 at the calibrated chars-per-token.  The endpoint's prompt_tokens of the
@@ -515,6 +544,7 @@ PREVIOUS request recalibrates the ratio, so this tracks reality."
             (or *ctx-tools-chars* 0)
             (loop for m in *messages* sum (ctx-message-chars m)))
          *ctx-chars-per-token*))
+
 (defun ctx-before-request (body)
   "The compactor's view of every request: assign entry ids, offload
 over-long tool results (originals kept), prefix [entry N] marks on tool
@@ -596,6 +626,7 @@ the request just answered) against the chars we counted for it."
                         'vector))
           (pane-dirty "context")
           body)))))
+
 (defun pane-context-render (pane w h)
   "Context size and what the compactor has collapsed, for the pane.
 Returns chunk LISTS (a chunk is (text . attr)).  Main number is the
