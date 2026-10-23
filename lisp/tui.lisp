@@ -13,18 +13,30 @@
 (defvar *tui-lock* (sb-thread:make-mutex))
 (defvar *tui-cv* (sb-thread:make-waitqueue))
 (defvar *tui-dirty* 0)
-
-(defstruct tui-ui
-  tty                                ; single :io fd-stream on /dev/tty
-  (width 80) (height 24)
-  (chat (make-uibuf :cap 2000))
-  (input (make-array 64 :element-type 'character :adjustable t :fill-pointer 0))
-  (prefix nil)       ; C-b pressed, waiting for the prefix command key
-  (scroll 0)         ; chat scroll-back offset in lines
-  (shown-user nil)   ; content of the last user message shown in chat
-  (pending-user nil) ; message submitted by the UI, not yet echoed back
-  threads)
-
+;;; TUI-UI is a DEFCLASS (not defstruct) so slots can be added and
+;;; redefined on the live instance: SBCL reinitializes existing
+;;; instances on class redefinition, while a defstruct redefinition
+;;; breaks them. Accessors keep the old defstruct names, so call sites
+;;; are unchanged. Construct with (make-instance 'tui-ui :tty tty).
+(defclass tui-ui ()
+  ((tty :initarg :tty :accessor tui-ui-tty) ; single :io fd-stream on /dev/tty
+   (width :initform 80 :accessor tui-ui-width)
+   (height :initform 24 :accessor tui-ui-height)
+   (chat :initform (make-uibuf :cap 2000) :accessor tui-ui-chat)
+   (input :initform (make-array 64 :element-type 'character :adjustable t
+                                :fill-pointer 0)
+          :accessor tui-ui-input)
+   (prefix :initform nil :accessor tui-ui-prefix) ; C-b pressed, waiting for prefix key
+   (scroll :initform 0 :accessor tui-ui-scroll)   ; chat scroll-back offset in lines
+   (shown-user :initform nil :accessor tui-ui-shown-user)   ; last user msg shown in chat
+   (pending-user :initform nil :accessor tui-ui-pending-user) ; submitted by UI, not echoed
+   (threads :initform nil :accessor tui-ui-threads)
+   ;; The input line is an adjustable string with a fill-pointer; the
+   ;; cursor is the index where typing inserts and where the terminal
+   ;; cursor is drawn, and hscroll is the leftmost visible input char
+   ;; once the text is wider than the input row (TUI-INPUT-WINDOW).
+   (input-cursor :initform 0 :accessor tui-ui-input-cursor)
+   (input-hscroll :initform 0 :accessor tui-ui-input-hscroll)))
 ;;; The input line is an adjustable string with a fill-pointer (in the
 ;;; UI struct); the cursor is the index where typing inserts and where
 ;;; the terminal cursor is drawn. Kept outside the struct so the struct
