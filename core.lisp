@@ -17,7 +17,7 @@
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
            ;; the model call, replaceable (e.g. to stream)
-           #:*complete* #:default-complete #:chat-url #:api-headers #:*terminal-thread* #:*queue-thread*
+           #:*complete* #:*last-usage* #:default-complete #:chat-url #:api-headers #:*terminal-thread* #:*queue-thread*
            ;; settings
            #:*model* #:*api-base* #:*max-tokens* #:*eval-timeout* #:*output-limit* #:*root*
            ;; helpers
@@ -582,13 +582,18 @@ Return printed output, values and errors."
 
 (defparameter +core-files+ '("core.lisp" "boot.lisp" "run.sh"))
 
-(defun print-boot-problems ()
-  "Used by TEST-BOOT in the child process."
-  (let ((problems (let ((*booting* t)) (load-collecting (init-path) (make-broadcast-stream)))))
+(defun print-boot-problems (&optional extra)
+  "Used by TEST-BOOT in the child process: load init.lisp, then EXTRA (a file
+name, so a file init.lisp doesn't load yet is checked too), and print the problems."
+  (let* ((problems (let ((*booting* t))
+                    (append (load-collecting (init-path) (make-broadcast-stream))
+                            (and extra (load-collecting extra (make-broadcast-stream))))))
+        ;; EXTRA is usually loaded by init.lisp too, so the same problem can come twice.
+        (problems (remove-duplicates problems :test #'string= :from-end t)))
     (format t "~&BOOT-PROBLEMS:~S~%" problems)
     (finish-output)))
 
-(defun test-boot (&key (timeout 120))
+(defun test-boot (&key (timeout 120) extra)
   "Load init.lisp in a fresh SBCL process, as a boot would but with no UI, no
 agent and no commits, and return its problems as a list of strings (NIL when
 clean). The running image can pass a check only because of state left over
@@ -598,7 +603,7 @@ from earlier; this shows whether the files work from scratch."
                      timeout
                      (shell-quote (namestring sb-ext:*runtime-pathname*))
                      (shell-quote (namestring sb-ext:*core-pathname*))
-                     (shell-quote "(lisping-core::print-boot-problems)")))
+                     (shell-quote (format nil "(lisping-core::print-boot-problems ~S)" extra))))
     (let ((mark (search "BOOT-PROBLEMS:" out)))
       (if mark
           (let ((*read-eval* nil))
@@ -623,6 +628,15 @@ ever holds code that loaded cleanly. Commits what sticks."
        (format nil "Wrote ~A (~D characters)." name (length code)))
       (t
        (write-text file code)
+       ;; First a fresh SBCL boots with the new file in place. If that reports
+       ;; problems, the running image is never touched: a failed load can't
+       ;; leave half-applied definitions behind in it.
+       (let ((fresh (test-boot :timeout 60 :extra name)))
+         (when fresh
+           (if old (write-text file old) (ignore-errors (delete-file file)))
+           (return-from write-file-and-load
+             (format nil "NOT SAVED. In a fresh boot with this version of ~A, loading reported:~%~{- ~A~%~}~:[The file was new, so it was removed.~;The previous version was put back.~] The running image was not touched."
+                     name fresh old))))
        (let* ((out (make-string-output-stream))
               (problems (load-collecting file out))
               (output (limit-output (get-output-stream-string out))))
@@ -755,7 +769,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - (obj :key value ...) builds a JSON object; json-encode, json-decode, http-post-json.
 - (shell \"command\") runs sh in the project directory, returns (values output exit-code). Its commands get no standard input, so they can't steal the user's keystrokes; that also means tty, stty and friends report \"not a tty\". The terminal is /dev/tty: use stty -F /dev/tty, or redirect from it.
 - *system-prompt*: this text. A string, or a function returning one. You may rewrite it.
-- *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context.
+- *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context. *last-usage* is the token usage of the last response; its prompt_tokens is how big your context is (it's also shown in each :thinking event).
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
@@ -767,7 +781,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 Files and persistence, the way Emacs does it:
 - At boot the core loads init.lisp, like Emacs loads init.el. init.lisp is yours: from it, load the other files you write with (load-file \"lisp/ui.lisp\"). load-file reports a form that fails and goes on with the rest, like a forgiving load.
 - eval with only `code` is like M-: or *scratch*: it changes the running image and nothing else. Use it to explore and test.
-- eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
+- eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. Before your running image sees it, a fresh SBCL boots with the new file in place (init.lisp plus this file); only if that's clean is it loaded into your image. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
 - (test-boot) loads init.lisp in a fresh SBCL process, like a boot but with no UI and no agent, and returns its problems (NIL when clean). Your running image can pass a check only because of state left from earlier edits (a variable defined in a file that loads later, say); run test-boot after changing files and before restarting.
 - So, to keep something, put it in a file that init.lisp loads. The image and the files can drift apart while you work, as in Emacs; at boot, the files win.
 - Writing a whole file to change one function gets slow as files grow. Keep files small and focused, and consider building yourself what Emacs users have: buffers, editing part of a file, and re-evaluating just the form you changed (C-M-x). Tools you register get their arguments as plain JSON strings, so a file-editing tool avoids escaping code inside Lisp strings.
@@ -833,11 +847,17 @@ got into *messages*, since the API rejects them and would fail every request."
   (loop for attempt from 1
         do (handler-case
                (let ((response (http-post-json (chat-url) body :headers (api-headers))))
+                 (let ((usage (gethash "usage" response)))
+                   (when (hash-table-p usage) (setf *last-usage* usage)))
                  (return (gethash "message" (aref (gethash "choices" response) 0))))
              (error (c)
                (when (>= attempt 4) (error c))
                (emit :error :text (format nil "model call failed (attempt ~D, retrying): ~A" attempt c))
                (sleep (* 2 attempt))))))
+
+(defvar *last-usage* nil
+  "The usage object of the last model response (prompt_tokens, completion_tokens,
+total_tokens), as the API returned it; prompt_tokens is the size of your context.")
 
 (defvar *complete* 'default-complete
   "Function taking a request body (an OBJ) and returning the assistant message as an OBJ
@@ -882,7 +902,10 @@ the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
 (defun run-turn ()
   (loop
     (take-queued-messages)
-    (emit :thinking :text (format nil "~A is thinking..." *model*))
+    (emit :thinking :text (format nil "~A is thinking...~@[ (context ~:D tokens)~]" *model*
+                                  (and (hash-table-p *last-usage*)
+                                       (integerp (gethash "prompt_tokens" *last-usage*))
+                                       (gethash "prompt_tokens" *last-usage*))))
     (let* ((message (complete))
            (text (gethash "content" message))
            (calls (gethash "tool_calls" message)))
