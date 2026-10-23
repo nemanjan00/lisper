@@ -170,18 +170,105 @@ dim) so a shortened line never passes for a complete one."
     (str-truncate s 90)))
 
 (defun tui-chat-result (ui name text)
-  "Short form of a tool result: up to 2 lines, gray, with an explicit
-dim marker whenever more was cut (… +N lines), so a partial result
-never passes for the whole one."
+  "Short form of a tool result, set apart from the conversation: dim,
+indented. Up to 2 lines are shown; more collapses into a single
+\"<- N lines\" count line so machine output never reads as chat."
   (declare (ignore name))
   (when (stringp text)
     (let* ((lines (tui-chunk-lines (ui-parse-ansi (str-truncate text 2000))))
-           (n (length lines))
-           (shown (subseq lines 0 (min 2 n))))
-      (dolist (line shown)
-        (tui-chat-add ui (list (cons (chunks-text line) 8))))
-      (when (> n 2)
-        (tui-chat-add ui (list (cons (format nil "… +~D line~:P" (- n 2)) 8)))))))
+           (n (length lines)))
+      (cond ((> n 2)
+             (tui-chat-add ui (list (cons (concatenate 'string
+                                                       "  " (chunks-text (first lines)))
+                                          8)))
+             (tui-chat-add ui (list (cons (format nil "  <- ~D lines" n) 8))))
+            (t
+             (dolist (line lines)
+               (tui-chat-add ui (list (cons (concatenate 'string
+                                                         "  " (chunks-text line))
+                                            8)))))))))
+
+;;; ---------------------------------------------------------------
+;;; Tool-line summaries: what a call actually did, in a glance.
+
+(defun tui-unwrap (form)
+  "Descend through wrapping forms (progn/let/flet/handler-case/...) to
+the first real form inside — \"(progn\" alone says nothing."
+  (loop while (and (consp form) (symbolp (car form))
+                   (member (car form) '(progn let let* flet labels handler-case
+                                        multiple-value-progn unwind-protect)))
+        do (setf form (cond ((or (eq (car form) 'progn)
+                                 (eq (car form) 'multiple-value-progn))
+                             (and (cdr form) (cadr form)))
+                            ((eq (car form) 'unwind-protect) (cadr form))
+                            (t (and (cddr form) (caddr form))))))
+  form)
+
+(defun tui-collect-defs (form &optional acc)
+  "Names of definitions anywhere in FORM: \"defun foo\", \"defmacro
+bar\", ... ACCUM is accumulated in reverse."
+  (cond ((not (consp form)) acc)
+        ((and (symbolp (car form))
+              (member (car form) '(defun defmacro defvar defparameter defstruct)))
+         (cons (format nil "~A ~A" (car form)
+                       (let ((n (cadr form)))
+                         (if (consp n) (car n) n)))
+               acc))
+        ((and (symbolp (car form))
+              (member (car form) '(progn let let* labels flet handler-case)))
+         (dolist (sub (cdr form))
+           (setf acc (tui-collect-defs sub acc)))
+         acc)
+        (t acc)))
+
+(defun tui-collect-calls (form &optional acc (depth 0))
+  "Function symbols called by FORM, unique, discovery order, for
+summaries like \"tui-start, sleep, shell\"."
+  (cond ((or (not (consp form)) (> depth 4)) acc)
+        ((and (symbolp (car form))
+              (not (member (car form) '(quote lambda function block return-from
+                                       prog1 multiple-value-progn))))
+         (unless (member (car form) acc) (setf acc (cons (car form) acc)))
+         (dolist (arg (cdr form))
+           (setf acc (tui-collect-calls arg acc (1+ depth))))
+         acc)
+        (t
+         (dolist (sub form)
+           (setf acc (tui-collect-calls sub acc (1+ depth))))
+         acc)))
+
+(defun tui-eval-summary (code)
+  "One line describing an eval's CODE: the definitions it makes, else
+the functions it calls, else its first line."
+  (let ((form (let ((*package* (find-package :lisping)))
+                (ignore-errors (read-from-string code nil nil)))))
+    (if (not form)
+        (str-truncate (first-line code) 60)
+        (let* ((form (tui-unwrap form))
+               (defs (reverse (tui-collect-defs form)))
+               (calls (reverse (tui-collect-calls form))))
+          (cond (defs (format nil "~{~A~^, ~}" (subseq defs 0 (min 3 (length defs)))))
+                (calls (format nil "~{~A~^, ~}" (subseq calls 0 (min 3 (length calls)))))
+                (t (str-truncate (first-line (princ-to-string form)) 60)))))))
+
+(defun tui-tool-summary (name args)
+  "One short phrase saying what a tool call did: edit_file -> the
+path; eval -> what it defines or calls; otherwise the short args."
+  (cond ((string= name "edit_file")
+         (format nil "edit ~A" (if (hash-table-p args)
+                                   (or (gethash "path" args) "?")
+                                   "?")))
+        ((string= name "eval")
+         (format nil "eval: ~A" (tui-eval-summary
+                                 (if (hash-table-p args)
+                                     (or (gethash "code" args) "")
+                                     ""))))
+        (t (format nil "~A: ~A" name (tui-short-args args)))))
+
+(defun tui-tool-call-line (name args)
+  "Chunk-list for a tool-call line: dim and indented, set apart from
+the conversation."
+  (list (cons (format nil "  -> ~A" (tui-tool-summary name args)) 8)))
 
 (defun chunks-text (chunks)
   (with-output-to-string (out)
