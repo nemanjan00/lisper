@@ -1,0 +1,17 @@
+#!/bin/sh
+# lisper: refuse a commit whose staged .lisp files don't boot cleanly.
+# Checks the index (what's being committed), not the working tree.
+git diff --cached --name-only | grep -qE '\.lisp$' || exit 0
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+git checkout-index -a --prefix="$tmp/"
+[ -e .env ] && ln -s "$PWD/.env" "$tmp/.env"
+mkdir -p "$tmp/state"
+out=$(cd "$tmp" && LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout 120 \
+      sbcl --noinform --non-interactive --load core.lisp \
+      --eval '(lisping-core::print-boot-problems)' 2>&1 | grep '^BOOT-PROBLEMS:')
+case "$out" in
+  "BOOT-PROBLEMS:NIL") exit 0 ;;
+  "") echo "pre-commit: the boot check didn't finish; commit refused." >&2; exit 1 ;;
+  *) echo "pre-commit: these files don't boot cleanly; commit refused:" >&2; echo "$out" >&2; exit 1 ;;
+esac

@@ -16,8 +16,18 @@ trap 'exit 0' INT
 
 resume() { mkdir -p state && printf '%s\n' "$1" >> state/resume.txt; }
 
+# The pre-commit hook boot-checks every commit, however it's made. It's kept in
+# hooks/ and (re)installed on every start, so a clone gets it and deleting it
+# from .git/hooks doesn't stick.
+install_hook() {
+  [ -d .git/hooks ] || return 0
+  cmp -s hooks/pre-commit .git/hooks/pre-commit 2>/dev/null ||
+    { cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; }
+}
+
 boot_crashes=0
 while true; do
+  install_hook
   started=$(date +%s)
   sbcl --noinform --disable-debugger --load boot.lisp
   code=$?
