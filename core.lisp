@@ -28,6 +28,8 @@
 
 (in-package :lisping-core)
 
+(declaim (ftype function emit))   ; used before its definition further down
+
 (defvar *root* (make-pathname :name nil :type nil :version nil :defaults *load-truename*)
   "Project directory: core.lisp, init.lisp and the files it loads, state/, .git.")
 
