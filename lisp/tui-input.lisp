@@ -14,13 +14,9 @@
 
 (defvar *tui-quit* nil "Set by prefix q / C-d: the key loop then stops the UI.")
 
-;;; The input line is an adjustable string with a fill-pointer (in the
-;;; UI struct); the cursor is the index where typing inserts and where
-;;; the terminal cursor is drawn. Kept outside the struct so the struct
-;;; definition never has to change (a live redefinition with different
-;;; slots breaks existing instances).
-
-(defvar *tui-input-cursor* 0 "Cursor index into *tui*'s input buffer.")
+;;; The input cursor (*tui-input-cursor*) is defined in tui.lisp, next
+;;; to the input buffer it indexes — tui-render.lisp loads before this
+;;; file and already draws the terminal cursor from it.
 
 ;;; ---------------------------------------------------------------
 ;;; Key reading. Returns a character or a keyword (:up :down :left
