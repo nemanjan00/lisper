@@ -993,7 +993,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *observers*: functions called with every event, before *emit*. The UI owns *emit*; anything else that needs to see events (your compactor, a logger) belongs in *observers*, so a UI restart can't drop it.
-- Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix.
+- Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix. Any key starting with \"x-\" is stripped the same way, so you can keep your own bookkeeping on a message (an \"x-id\", say): it stays in *messages*, is saved with the session and survives restarts, but the model never sees it.
 - Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones). A message starting with ! is urgent and goes in before your next model call. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
@@ -1120,11 +1120,16 @@ both and would fail every later request."
               (map 'vector #'without-x-kind (pair-tool-results (coerce messages 'list))))))
     body))
 
+(defun x-key-p (key)
+  (and (stringp key) (> (length key) 2) (string= "x-" key :end2 2)))
+
 (defun without-x-kind (message)
-  "MESSAGE, or a copy of it without the x-kind key."
-  (if (nth-value 1 (gethash "x-kind" message))
+  "MESSAGE, or a copy of it without its x- keys (x-kind and any of your own,
+like an x-id): they're kept in *messages* and saved with the session, but never
+sent to the model."
+  (if (loop for k being the hash-keys of message thereis (x-key-p k))
       (let ((copy (make-hash-table :test #'equal)))
-        (maphash (lambda (k v) (unless (equal k "x-kind") (setf (gethash k copy) v))) message)
+        (maphash (lambda (k v) (unless (x-key-p k) (setf (gethash k copy) v))) message)
         copy)
       message))
 
