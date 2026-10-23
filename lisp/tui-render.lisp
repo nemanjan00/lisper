@@ -497,26 +497,23 @@ the top."
     (let* ((end (max 0 (- n s)))
            (start (max 0 (- end height))))
       (subseq all start end))))
-
-(defun tui-input-window (len cursor avail)
+(defun tui-input-window (len cursor avail hscroll)
   "Horizontal window of the input text for AVAIL screen columns (what
-remains of the row after the prompt). Returns (values start count left
-right): draw COUNT chars starting at START; LEFT/RIGHT call for a dim
-</> overflow marker at that edge. *tui-input-hscroll* scrolls minimally
-to keep CURSOR visible; while scrolling, one column per edge is reserved
-for the markers. The cursor never lands on a marker column."
+remains of the row after the prompt), given the current HSCROLL.
+Returns (values start count left right new-hscroll): draw COUNT chars
+starting at START; LEFT/RIGHT call for a dim </> overflow marker at that
+edge. The window scrolls minimally to keep CURSOR visible; while
+scrolling, one column per edge is reserved for the markers. The cursor
+never lands on a marker column. Pure: the caller stores NEW-HSCROLL
+back into the UI's input-hscroll slot."
   (if (or (<= len avail) (< avail 3))
-      (progn (setf *tui-input-hscroll* 0)
-             (values 0 (min len avail) nil (> len avail)))
-      (let ((inner (- avail 2)))
-        (setf *tui-input-hscroll*
-              (max 0 (min *tui-input-hscroll* cursor (- len inner))))
-        (when (> (- cursor *tui-input-hscroll*) (1- inner))
-          (setf *tui-input-hscroll* (1+ (- cursor inner))))
-        (let ((end (min len (+ *tui-input-hscroll* inner))))
-          (values *tui-input-hscroll* (- end *tui-input-hscroll*)
-                  (> *tui-input-hscroll* 0) (< end len))))))
-
+      (values 0 (min len avail) nil (> len avail) 0)
+      (let* ((inner (- avail 2))
+             (hs (max 0 (min hscroll cursor (- len inner)))))
+        (when (> (- cursor hs) (1- inner))
+          (setf hs (1+ (- cursor inner))))
+        (let ((end (min len (+ hs inner))))
+          (values hs (- end hs) (> hs 0) (< end len) hs)))))
 (defun tui-draw-input (g ui y w)
   "Draw prompt and the horizontally scrolled input line. Returns the
 terminal column (1-based) the cursor belongs on."
