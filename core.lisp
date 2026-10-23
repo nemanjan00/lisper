@@ -624,8 +624,10 @@ ever holds code that loaded cleanly. Commits what sticks."
            (when text (write-line text out))))))))
 
 (defun send-user-message (text)
-  "Queue TEXT as a message from the user."
-  (sb-concurrency:send-message *inbox* text))
+  "Queue TEXT as a message from the user. Blank text is ignored: the model API
+rejects an empty user message, and one in *messages* would fail every request."
+  (when (and (stringp text) (string/= "" (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
+    (sb-concurrency:send-message *inbox* text)))
 
 (defun fallback-emit (event)
   "Plain terminal output, used only when *EMIT* itself fails."
@@ -741,10 +743,21 @@ Rules:
   "HTTP headers for the model API, including the key. Never print them."
   (list (format nil "Authorization: Bearer ~A" *api-key*)))
 
+(defun blank-user-message-p (message)
+  (and (equal (gethash "role" message) "user")
+       (let ((content (gethash "content" message)))
+         (or (null content) (eq content :null)
+             (and (stringp content)
+                  (string= "" (string-trim '(#\Space #\Tab #\Newline #\Return) content)))))))
+
 (defun request-body ()
+  "The request for the model. Blank user messages are left out, however they
+got into *messages*, since the API rejects them and would fail every request."
   (let ((body (obj :model *model*
                    :max_tokens *max-tokens*
-                   :messages (coerce (cons (obj :role "system" :content (system-prompt-text)) *messages*) 'vector)
+                   :messages (coerce (cons (obj :role "system" :content (system-prompt-text))
+                                           (remove-if #'blank-user-message-p *messages*))
+                                     'vector)
                    :tools (tool-specs))))
     (dolist (hook *before-request* body)
       (setf body (funcall hook body)))))
