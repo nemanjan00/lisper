@@ -1,8 +1,9 @@
 #!/bin/sh
 # lisper: refuse a commit whose staged .lisp files don't boot cleanly.
 # Checks the index (what's being committed), not the working tree.
-# The core sets LISPER_BOOT_CHECKED=1 when it just ran the same check itself.
-[ "${LISPER_BOOT_CHECKED:-}" = 1 ] && exit 0
+# The core just ran the same check when it passes LISPER_CHECKED_TREE, the
+# tree it checked; the check is skipped only if that is exactly what's staged.
+[ -n "${LISPER_CHECKED_TREE:-}" ] && [ "$(git write-tree)" = "$LISPER_CHECKED_TREE" ] && exit 0
 git diff --cached --name-only | grep -qE '\.lisp$' || exit 0
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
