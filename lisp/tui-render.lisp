@@ -209,7 +209,7 @@ embedded newlines must never reach the grid."
     (dotimes (x w) (ui-grid-put g x y #\Space attr))
     (ui-grid-write g 1 y (format nil " lisping-ai ~A" *model*) attr (1- w))
     (let* ((sel (tui-state-active *tui*))
-           (panes (format nil " ~:[ ○~; ●~]chat  ~:[○~;●~]weather "
+           (panes (format nil " ~:[-~;*~]chat  ~:[-~;*~]weather "
                           (zerop sel) (= 1 sel))))
       (ui-grid-write g (max 1 (- (floor w 2) (floor (length panes) 2)))
                      y panes attr (1- w)))
