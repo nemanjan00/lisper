@@ -174,15 +174,18 @@ dim) so a shortened line never passes for a complete one."
     (str-truncate s 90)))
 
 (defun tui-chat-result (ui name text)
-  "Short form of a tool result: up to 2 lines, truncated, gray."
+  "Short form of a tool result: up to 2 lines, gray, with an explicit
+dim marker whenever more was cut (… +N lines), so a partial result
+never passes for the whole one."
+  (declare (ignore name))
   (when (stringp text)
     (let* ((lines (tui-chunk-lines (ui-parse-ansi (str-truncate text 2000))))
-           (shown (subseq lines 0 (min 2 (length lines)))))
+           (n (length lines))
+           (shown (subseq lines 0 (min 2 n))))
       (dolist (line shown)
         (tui-chat-add ui (list (cons (chunks-text line) 8))))
-      (when (> (length text) 2000)
-        (tui-chat-add ui (list (cons (format nil "  ... ~A: ~D chars" name (length text))
-                                     8)))))))
+      (when (> n 2)
+        (tui-chat-add ui (list (cons (format nil "… +~D line~:P" (- n 2)) 8)))))))
 
 (defun chunks-text (chunks)
   (with-output-to-string (out)
