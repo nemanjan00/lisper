@@ -12,7 +12,7 @@
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
            ;; files
-           #:load-file #:test-boot #:commit #:restart-image #:*boot-errors* #:*previous-session*
+           #:load-file #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
@@ -28,7 +28,7 @@
 
 (in-package :lisping-core)
 
-(declaim (ftype function emit client-error-p complete-once)) ; used before their definitions further down
+(declaim (ftype function emit client-error-p complete-once without-x-kind synthetic-message-p)) ; used before their definitions further down
 
 (defvar *root* (make-pathname :name nil :type nil :version nil :defaults *load-truename*)
   "Project directory: core.lisp, init.lisp and the files it loads, state/, .git.")
@@ -302,6 +302,9 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
 ;;; what is in the files. git keeps their history.
 
 (defvar *booting* nil "True while init.lisp is loaded at boot.")
+(defvar *test-boot* nil
+  "True only inside TEST-BOOT's fresh process, which shares state/ with the running
+image. Skip side effects (writing state/, starting things) when it's true.")
 (defvar *boot-errors* '() "Problems reported while loading init.lisp at the last boot.")
 (defvar *load-problems* nil "Problems collected by LOAD-FILE, including nested loads.")
 (defvar *reported-conditions* nil
@@ -611,7 +614,7 @@ that did resolve through, and catches the ones that never will."
 (defun print-boot-problems (&optional extra)
   "Used by TEST-BOOT in the child process: load init.lisp, then EXTRA (a file
 name, so a file init.lisp doesn't load yet is checked too), and print the problems."
-  (let* ((problems (let ((*booting* t))
+  (let* ((problems (let ((*booting* t) (*test-boot* t))
                     (append (load-collecting (init-path) (make-broadcast-stream))
                             (and extra (load-collecting extra (make-broadcast-stream))))))
         ;; EXTRA is usually loaded by init.lisp too, so the same problem can come twice.
@@ -724,11 +727,13 @@ ever holds code that loaded cleanly. Commits what sticks."
                  (args (write-line (json-encode args) out)))
            (when text (write-line text out))))))))
 
-(defun send-user-message (text)
+(defun send-user-message (text &key kind)
   "Queue TEXT as a message from the user. Blank text is ignored: the model API
-rejects an empty user message, and one in *messages* would fail every request."
+rejects an empty user message, and one in *messages* would fail every request.
+KIND marks a message the system wrote rather than the user (\"boot\", \"core\", ...);
+it's kept as the message's x-kind and never sent to the model API."
   (when (and (stringp text) (string/= "" (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
-    (sb-concurrency:send-message *inbox* text)
+    (sb-concurrency:send-message *inbox* (if kind (cons text kind) text))
     ;; Right away, so a UI can show the message is in; :user follows when the
     ;; agent takes it into the conversation, before its next model call. It's
     ;; emitted from a thread of its own: the caller may be a UI thread holding
@@ -770,10 +775,19 @@ rejects an empty user message, and one in *messages* would fail every request."
 (defvar *emit* 'lisping::terminal-emit
   "Function called with every event (a plist with :type). Replace it to drive your own UI.")
 
+(defvar *observers* '()
+  "Functions called with every event, before *EMIT*. The UI owns *EMIT* and may
+replace it at any time; anything else that wants to see events (a compactor, a
+logger) goes here instead of wrapping *EMIT*. A failing observer is reported and skipped.")
+
 (defun emit (type &rest fields)
-  "Send an event to *EMIT*. Falls back to plain terminal output if *EMIT* fails."
+  "Send an event to *OBSERVERS* and *EMIT*. Falls back to plain terminal output if *EMIT* fails."
   (let ((event (list* :type type fields)))
     (trace-event event)
+    (dolist (observer *observers*)
+      (handler-case (funcall observer event)
+        (serious-condition (c)
+          (fallback-emit (list :type :error :text (format nil "observer ~S failed: ~A" observer c))))))
     (handler-case (funcall *emit* event)
       (serious-condition (c)
         (fallback-emit event)
@@ -802,6 +816,8 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context. *last-usage* is the token usage of the last response; its prompt_tokens is how big your context is (it's also shown in each :thinking event).
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
+- *observers*: functions called with every event, before *emit*. The UI owns *emit*; anything else that needs to see events (your compactor, a logger) belongs in *observers*, so a UI restart can't drop it.
+- Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
 - The queue: text appended to state/queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
@@ -813,6 +829,7 @@ Files and persistence, the way Emacs does it:
 - eval with only `code` is like M-: or *scratch*: it changes the running image and nothing else. Use it to explore and test.
 - eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. Before your running image sees it, a fresh SBCL boots with the new file in place (init.lisp plus this file); only if that's clean is it loaded into your image. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
 - (test-boot) loads init.lisp in a fresh SBCL process, like a boot but with no UI and no agent, and returns its problems (NIL when clean). Your running image can pass a check only because of state left from earlier edits (a variable defined in a file that loads later, say); run test-boot after changing files and before restarting.
+- *test-boot* is true inside test-boot's fresh process; check it before any load-time side effect.
 - Loading a file should only define things. Side effects (starting threads, writing state/, opening ports) belong in an explicit start function that init.lisp calls, because files are also loaded by test-boot's fresh check, with the same state/ directory.
 - So, to keep something, put it in a file that init.lisp loads. The image and the files can drift apart while you work, as in Emacs; at boot, the files win.
 - Writing a whole file to change one function gets slow as files grow. Keep files small and focused, and consider building yourself what Emacs users have: buffers, editing part of a file, and re-evaluating just the form you changed (C-M-x). Tools you register get their arguments as plain JSON strings, so a file-editing tool avoids escaping code inside Lisp strings.
@@ -873,7 +890,8 @@ and would keep rejecting every later request."
     (flet ((flush ()
              (dolist (id (reverse pending))
                (push (obj :role "tool" :tool_call_id id
-                          :content "[core] No result: this call was interrupted before it finished.")
+                          :content "[core] No result: this call was interrupted before it finished."
+                          "x-kind" "stub")
                      out))
              (setf pending '())))
       (dolist (m messages)
@@ -906,11 +924,21 @@ both and would fail every later request."
                    :tools (tool-specs))))
     (dolist (hook *before-request*)
       (setf body (funcall hook body)))
-    ;; Pair again after the hooks, in case one of them broke it.
+    ;; Pair again after the hooks, in case one of them broke it, and strip the
+    ;; x-kind provenance key, which isn't part of the API.
     (let ((messages (gethash "messages" body)))
       (when (vectorp messages)
-        (setf (gethash "messages" body) (coerce (pair-tool-results (coerce messages 'list)) 'vector))))
+        (setf (gethash "messages" body)
+              (map 'vector #'without-x-kind (pair-tool-results (coerce messages 'list))))))
     body))
+
+(defun without-x-kind (message)
+  "MESSAGE, or a copy of it without the x-kind key."
+  (if (nth-value 1 (gethash "x-kind" message))
+      (let ((copy (make-hash-table :test #'equal)))
+        (maphash (lambda (k v) (unless (equal k "x-kind") (setf (gethash k copy) v))) message)
+        copy)
+      message))
 
 (defun default-complete (body)
   "POST BODY to the model API, retrying failures; return the assistant message."
@@ -964,6 +992,7 @@ leave a note saying what went. Returns the number dropped (0 if nothing could be
          (task (find-if (lambda (m)
                           (and (equal (gethash "role" m) "user")
                                (stringp (gethash "content" m))
+                               (not (synthetic-message-p m))
                                (not (string-prefix-p "[core]" (gethash "content" m)))
                                (not (string-prefix-p "[boot]" (gethash "content" m)))))
                         *messages* :from-end t)))
@@ -975,7 +1004,7 @@ leave a note saying what went. Returns the number dropped (0 if nothing could be
     (cond
       (rest
        (setf *messages*
-             (append (list (obj :role "user"
+             (append (list (obj :role "user" "x-kind" "core"
                                 :content (format nil "[core] ~D earlier messages were dropped because the context was too long for the model. The full transcript is in ~A.~@[ The message that started the current task is kept below.~]"
                                                  cut (and *session-log* (namestring *session-log*))
                                                  (and task (not (member task rest :test #'eq))))))
@@ -1052,11 +1081,23 @@ try again, so the session can't get stuck with a history that never fits."
     (emit :tool-result :name name :text result)
     (obj :role "tool" :tool_call_id (gethash "id" call) :content result)))
 
+(defun synthetic-message-p (message)
+  "True for a message the system wrote (x-kind set), not the user or the model."
+  (gethash "x-kind" message))
+
+(defun inbox-message (item)
+  "A user message for an *INBOX* item: a string, or (text . kind)."
+  (if (consp item)
+      (let ((m (obj :role "user" :content (car item))))
+        (setf (gethash "x-kind" m) (cdr item))
+        m)
+      (obj :role "user" :content item)))
+
 (defun take-queued-messages ()
   "Move user messages that arrived mid-turn into the conversation."
-  (loop for text = (sb-concurrency:receive-message-no-hang *inbox*)
-        while text
-        do (add-message (obj :role "user" :content text))))
+  (loop for item = (sb-concurrency:receive-message-no-hang *inbox*)
+        while item
+        do (add-message (inbox-message item))))
 
 (defun run-turn ()
   (loop
@@ -1081,8 +1122,8 @@ try again, so the session can't get stuck with a history that never fits."
 
 (defun agent-loop ()
   (loop
-    (let ((text (sb-concurrency:receive-message *inbox*)))
-      (add-message (obj :role "user" :content text))
+    (let ((item (sb-concurrency:receive-message *inbox*)))
+      (add-message (inbox-message item))
       (handler-case (run-turn)
         (serious-condition (c)
           (emit :error :text (format nil "turn failed: ~A" c)))))))
@@ -1207,5 +1248,6 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
     (when (or resume *boot-errors*)
       (send-user-message
        (format nil "[boot] ~@[~A~]~@[~%Problems while loading init.lisp:~%~{- ~A~%~}~]"
-               resume *boot-errors*)))
+               resume *boot-errors*)
+       :kind "boot"))
     (sb-thread:join-thread agent :default nil)))
