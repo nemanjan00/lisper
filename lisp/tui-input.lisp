@@ -70,6 +70,10 @@ put back: it is real input, not part of the escape."
     (cond ((null c) :escape)
           ((char= c #\[) (tui-read-csi tty))
           ((char= c #\O) (tui-read-ss3 tty))
+          ;; Bare ESC H/F/E: this terminal's Home/End when tmux passes
+          ;; them through without the SS3 introducer (seen in keys.log).
+          ((char= c #\H) :home)
+          ((member c '(#\F #\E)) :end)
           (t (unread-char c tty) :escape))))
 
 (defun tui-read-ss3 (tty)
