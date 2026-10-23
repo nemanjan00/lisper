@@ -4,6 +4,7 @@
 (in-package :lisping)
 
 (declaim (ftype function tui-read-key tui-read-escape tui-read-csi tui-csi-key
+                tui-parse-mouse tui-mouse tui-scroll-chat-by
                 tui-prefix-key tui-normal-key tui-submit-input tui-input-backspace
                 tui-clear-input tui-ctrl-d tui-scroll-chat))
 
