@@ -198,16 +198,8 @@ once in the evolving text. Returns the final text; pure, errors only."
                            (subseq text (+ pos (length old)))))))))
 
 (defun ef-write-files (pairs)
-  "Write PAIRS ((path . content) ...) as one change. Uses the core's
-atomic write-files-and-load when the new core provides it; otherwise a
-single file goes through write-file-and-load and cross-file is refused.
-Looked up at call time so this file loads in both old and new cores."
-  (let ((wfl (find-symbol "WRITE-FILES-AND-LOAD" :lisping-core)))
-    (cond ((and wfl (fboundp wfl))
-           (funcall wfl pairs))
-          ((null (cdr pairs))
-           (lisping-core::write-file-and-load (caar pairs) (cdar pairs)))
-          (t "NOT SAVED: cross-file atomic edits need the new core (restart first)"))))
+  "Write PAIRS ((path . content) ...) as one boot-checked atomic change."
+  (lisping-core:write-files-and-load pairs))
 
 (defun edit-files (edits)
   "EDITS: a list of (path old new). Computes every file's final content

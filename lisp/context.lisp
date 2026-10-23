@@ -100,10 +100,10 @@ and tool-call arguments — which live at tc -> function -> arguments."
                        0))))))
 
 (defun ctx-session-log ()
-  "The current session's jsonl path, or NIL."
-  (and (find-symbol "*SESSION-LOG*" :lisping-core)
-       (boundp (find-symbol "*SESSION-LOG*" :lisping-core))
-       (symbol-value (find-symbol "*SESSION-LOG*" :lisping-core))))
+  "The current session's jsonl path, or NIL. (*SESSION-LOG* is internal
+to the core, hence the ::."
+  (and (boundp 'lisping-core::*session-log*)
+       lisping-core::*session-log*))
 
 (defun ctx-entry-id (msg)
   "Stable entry id (integer) for a message object, assigning on first use."
@@ -156,10 +156,8 @@ and tool-call arguments — which live at tc -> function -> arguments."
 
 (defun ctx-synthetic-p (m)
   "True for a message the SYSTEM wrote (x-kind set), not the user or
-the model.  Looks up the core's SYNTHETIC-MESSAGE-P at runtime so this
-file still loads on cores that predate it."
-  (let ((s (find-symbol "SYNTHETIC-MESSAGE-P" :lisping-core)))
-    (and s (fboundp s) (funcall s m))))
+the model."
+  (lisping-core:synthetic-message-p m))
 
 (defun ctx-latest-user-index ()
   "Index of the latest real user message — the current task; rewinds and

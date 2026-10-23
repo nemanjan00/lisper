@@ -548,17 +548,12 @@ terminal column (1-based) the cursor belongs on."
         (+ x (- cursor start) 1)))))
 
 (defun tui-held-count ()
-  "User messages the core is holding until the current turn ends
-(lisping-core:*held* appears at the restart that introduces it; 0
-until then). Returns an integer."
-  (or (let ((s (find-symbol "*HELD*" :lisping-core)))
-        (when (and s (boundp s))
-          (let ((v (symbol-value s)))
-            (typecase v
-              (integer v)
-              (list (length v))
-              (t 0)))))
-      0))
+  "User messages the core is holding until the current turn ends.
+Returns an integer."
+  (typecase lisping-core:*held*
+    (integer lisping-core:*held*)
+    (list (length lisping-core:*held*))
+    (t 0)))
 
 (defun tui-draw-status (g ui y w)
   (let ((attr (ui-attr 7 :bright t :bg 4)))
