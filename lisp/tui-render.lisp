@@ -249,8 +249,12 @@ the functions it calls, else its first line."
         (let* ((form (tui-unwrap form))
                (defs (reverse (tui-collect-defs form)))
                (calls (reverse (tui-collect-calls form))))
-          (cond (defs (format nil "~{~A~^, ~}" (subseq defs 0 (min 3 (length defs)))))
-                (calls (format nil "~{~A~^, ~}" (subseq calls 0 (min 3 (length calls)))))
+          (cond (defs (format nil "~{~A~^, ~}"
+                              (mapcar #'string-downcase
+                                      (subseq defs 0 (min 3 (length defs))))))
+                (calls (format nil "~{~A~^, ~}"
+                               (mapcar #'string-downcase
+                                       (subseq calls 0 (min 3 (length calls))))))
                 (t (str-truncate (first-line (princ-to-string form)) 60)))))))
 
 (defun tui-tool-summary (name args)
