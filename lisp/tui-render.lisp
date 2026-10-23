@@ -256,3 +256,50 @@ embedded newlines must never reach the grid."
                 *tui-prev-cursor* (cons row col)
                 *tui-clock-minute* (nth-value 1 (decode-universal-time
                                                  (get-universal-time)))))))))
+
+(defun tui-draw-pane (g x y w h title buf activep scroll)
+  (ui-draw-box g x y w h
+               (if activep (ui-attr 7 :bright t :bg 4) 8)
+               (format nil " ~A " title))
+  (let ((inner-w (- w 2))
+        (inner-h (- h 2)))
+    (when (and (plusp inner-w) (plusp inner-h))
+      (let ((lines (tui-visible-lines buf inner-w inner-h scroll)))
+        (loop for line in lines
+              for i from 0
+              do (ui-grid-write-chunks g (1+ x) (+ y 1 i) line
+                                       (+ x 1 inner-w)))))))
+
+(defun tui-visible-lines (buf width height scroll)
+  "Top-first chunk-lists fitting HEIGHT rows, scrolled up SCROLL lines."
+  (let* ((src (uibuf-lines buf))
+         (n0 (length src))
+         (recent (loop for i from (max 0 (- n0 400)) below n0
+                       collect (aref src i)))
+         (all (loop for ln in recent
+                    append (or (ui-wrap-chunks (uline-chunks ln) width)
+                               (list nil))))
+         (n (length all))
+         (end (max 0 (- n scroll)))
+         (start (max 0 (- end height))))
+    (subseq all start end)))
+
+(defun tui-draw-input (g ui y w)
+  (let* ((prefix (tui-ui-prefix ui))
+         (pattr (if prefix (ui-attr 3 :bright t) (ui-attr 2 :bright t)))
+         (prompt (if prefix "*> " "> ")))
+    (ui-grid-write g 0 y prompt pattr w)
+    (ui-grid-write g (length prompt) y
+                   (coerce (tui-ui-input ui) 'string) 7 w)))
+
+(defun tui-draw-status (g ui y w)
+  (let ((attr (ui-attr 7 :bright t :bg 4)))
+    (dotimes (x w) (ui-grid-put g x y #\Space attr))
+    (ui-grid-write g 1 y (format nil " lisping-ai ~A" *model*) attr (1- w))
+    (let* ((now (multiple-value-list (decode-universal-time (get-universal-time))))
+           (time (format nil "~2,'0d:~2,'0d " (nth 2 now) (nth 1 now)))
+           (hint (if (tui-ui-prefix ui)
+                     "C-b cancel | q quit | r redraw | PgUp/PgDn scroll"
+                     "C-b prefix")))
+      (ui-grid-write g (max 1 (- w (length hint) (length time) 1)) y
+                     (concatenate 'string hint " " time) attr w))))
