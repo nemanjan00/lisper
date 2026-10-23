@@ -62,7 +62,25 @@
     (loop for c = (read-char tty)
           until (or (alpha-char-p c) (char= c #\~))
           do (write-char c params)
-          finally (return (tui-csi-key (get-output-stream-string params) c)))))
+          finally (return (let ((p (get-output-stream-string params)))
+                            (if (and (plusp (length p)) (char= (char p 0) #\<))
+                                (tui-parse-mouse p c)
+                                (tui-csi-key p c)))))))
+
+(defun tui-parse-mouse (params final)
+  "Parse the body of an SGR mouse sequence (\"<b;x;y\") with FINAL #\\M
+(press) or #\\m (release) into (:mouse b x y kind), or NIL if unparseable.
+B is the button code: 0-2 buttons, 64 wheel up, 65 wheel down, plus
+modifier/motion bits we ignore."
+  (ignore-errors
+    (let* ((s1 (position #\; params))
+           (s2 (and s1 (position #\; params :start (1+ s1)))))
+      (when (and s1 s2)
+        (list :mouse
+              (parse-integer params :start 1 :end s1)
+              (parse-integer params :start (1+ s1) :end s2)
+              (parse-integer params :start (1+ s2))
+              (if (char= final #\m) :release :press))))))
 
 (defun tui-csi-key (params final)
   (cond ((and (string= params "") (char= final #\A)) :up)
