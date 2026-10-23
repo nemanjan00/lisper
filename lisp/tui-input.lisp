@@ -164,7 +164,7 @@ modifier/motion bits we ignore."
         ((and (characterp key) (char= key #\Etx)) (tui-clear-input ui)) ; C-c
         ((and (characterp key) (char= key #\Eot)) (tui-ctrl-d ui))       ; C-d
         ((and (characterp key) (graphic-char-p key))
-         (vector-push-extend key (tui-ui-input ui)))
+         (tui-input-insert ui key))
         (t nil)))
 
 (defun tui-submit-input (ui)
