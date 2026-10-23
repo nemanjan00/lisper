@@ -144,18 +144,26 @@
 ;;; ---------------------------------------------------------------
 ;;; Layout tree
 
+(defun hsplit-left-width (w ratio)
+  "Width of the left child when a W-wide rectangle is split
+side-by-side with a 1-column separator gap: each child keeps a
+10-column minimum."
+  (min (max 10 (round (* (1- w) (or ratio 0.5)))) (- w 11)))
+
 (defun layout-leaves (tree x y w h)
   "Map the layout tree over a rectangle; returns a list of
-\(name x y w h) in drawing order."
+\(name x y w h) in drawing order. Side-by-side splits reserve one
+column between the children for the separator (see
+PANES-DRAW-SEPARATOR)."
   (cond ((atom tree) nil)
         ((eq (car tree) 'leaf)
          (list (list (cadr tree) x y w h)))
         ((member (car tree) '(:hsplit :vsplit))
          (destructuring-bind (_ ratio a b) tree
            (if (eq (car tree) :hsplit)
-               (let ((wa (min (max 10 (round (* w (or ratio 0.5)))) (- w 10))))
+               (let ((wa (hsplit-left-width w ratio)))
                  (append (layout-leaves a x y wa h)
-                         (layout-leaves b (+ x wa) y (- w wa) h)))
+                         (layout-leaves b (+ x wa 1) y (- w wa 1) h)))
                (let ((ha (min (max 3 (round (* h (or ratio 0.5)))) (- h 3))))
                  (append (layout-leaves a x y w ha)
                          (layout-leaves b x (+ y ha) w (- h ha)))))))
