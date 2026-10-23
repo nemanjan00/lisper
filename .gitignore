@@ -5,3 +5,4 @@ state/trace.log
 state/queue.txt
 state/queue.taking
 .env
+state/tui-crash.log

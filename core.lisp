@@ -349,8 +349,10 @@ exactly the file that was checked), else everything. Does nothing during boot.
 A git pre-commit hook boot-checks every commit, however it's made."
   (unless *booting*
     (if path
-        (progn (shell (format nil "git add -- ~A" (shell-quote path)))
-               (shell (format nil "git commit -q -m ~A -- ~A" (shell-quote message) (shell-quote path))))
+        ;; The checked file, plus the data under state/ (notes, todos, layout),
+        ;; which tools write directly and which isn't code.
+        (progn (shell (format nil "git add -- ~A state" (shell-quote path)))
+               (shell (format nil "git commit -q -m ~A -- ~A state" (shell-quote message) (shell-quote path))))
         (progn (shell "git add -A")
                (shell (format nil "git commit -q -m ~A" (shell-quote message)))))))
 
@@ -687,8 +689,8 @@ everything is committed together."
         (let ((out (make-string-output-stream)) (problems '()))
           (dolist (e lisp)
             (setf problems (append problems (load-collecting (second e) out))))
-          (shell (format nil "git add -- ~{~A ~}" (mapcar (lambda (e) (shell-quote (first e))) entries)))
-          (shell (format nil "git commit -q -m ~A -- ~{~A ~}"
+          (shell (format nil "git add -- ~{~A ~}state" (mapcar (lambda (e) (shell-quote (first e))) entries)))
+          (shell (format nil "git commit -q -m ~A -- ~{~A ~}state"
                          (shell-quote (format nil "update ~{~A~^, ~}" (mapcar #'first entries)))
                          (mapcar (lambda (e) (shell-quote (first e))) entries)))
           (format nil "Wrote~:[~; and loaded~] ~{~A~^, ~}; committed together.~@[~%Loading into the running image reported (the files are kept: they boot cleanly):~%~{- ~A~%~}~]"

@@ -528,3 +528,25 @@ Backtrace for: #<SB-THREAD:THREAD tid=1517886 "agent" RUNNING {1202A67DF3}>
 13: (SB-THREAD::RUN)
 14: ("foreign function: call_into_lisp_")
 15: ("foreign function: funcall1")
+--- TUI crash 4001778131 ---
+The value
+  "[developer] Your three edits renaming *tui-queued-text* to *tui-queued-texts* were all rejected: each edit is boot-checked alone, and every intermediate state is broken because the other files still use the other name. For a cross-file rename, keep every step bootable: first add the new defvar alongside the old one (a defvar for *tui-queued-texts* in tui.lisp, the file that loads first), then switch each file over to the new name, then delete the old defvar. I'm adding a core function to write several files as one checked change, so this gets easier."
+
+is not of type
+  LIST
+Backtrace for: #<SB-THREAD:THREAD tid=2528867 "agent" RUNNING {1202C98423}>
+0: (LISPING::TUI-LOG-CRASH #<TYPE-ERROR expected-type: LIST datum: #<(SIMPLE-ARRAY CHARACTER (556)) [developer] Your three edits renaming *tui-queued-text* to *tui-queued-texts* were all rejected: each edit is boot-checked alone, and every intermediate state is broken because the other files still u... {1204BA800F}>>)
+1: (LISPING::TUI-DISPLAY-ERROR #<LISPING::TUI-UI {1202A523A3}> #<TYPE-ERROR expected-type: LIST datum: #<(SIMPLE-ARRAY CHARACTER (556)) [developer] Your three edits renaming *tui-queued-text* to *tui-queued-texts* were all rejected: each edit is boot-checked alone, and every intermediate state is broken because the other files still u... {1204BA800F}>>)
+2: (LISPING::TUI-EMIT (:TYPE :USER :TEXT #<(SIMPLE-ARRAY CHARACTER (556)) [developer] Your three edits renaming *tui-queued-text* to *tui-queued-texts* were all rejected: each edit is boot-checked alone, and every intermediate state is broken because the other files still u... {1204BA800F}>))
+3: (LISPING-CORE:EMIT :USER :TEXT #<(SIMPLE-ARRAY CHARACTER (556)) [developer] Your three edits renaming *tui-queued-text* to *tui-queued-texts* were all rejected: each edit is boot-checked alone, and every intermediate state is broken because the other files still u... {1204BA800F}>)
+4: (LISPING-CORE::ADD-MESSAGE #<HASH-TABLE :TEST EQUAL :COUNT 2 {12024A53A3}>)
+5: (LISPING-CORE::TAKE-QUEUED-MESSAGES)
+6: (LISPING-CORE::RUN-TURN)
+7: (LISPING-CORE::AGENT-LOOP)
+8: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+9: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+10: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+11: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+12: (SB-THREAD::RUN)
+13: ("foreign function: call_into_lisp_")
+14: ("foreign function: funcall1")

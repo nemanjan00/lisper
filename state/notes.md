@@ -199,3 +199,12 @@ Things I keep relearning on every restart — write them down once:
 - :queued echo for a ! message shows the text without the !, matching :user.
 - Held messages are carried across restart-image in the resume message.
 - A file that passes the fresh boot is kept even if loading into the live image complains (same as write-files-and-load).
+
+## panes-load vs custom render fns (fixed 2026-10-24)
+- The context pane is :kind :buffer + a hook-installed PANE-RENDER (ctx-init-panes). state/layout.lisp only stores :kind, so re-registering from the file used to reset pane-render to pane-buf-render → blank context pane. Triggered by calling (panes-load) by hand.
+- Fix: panes-load-form preserves the existing pane-render when the spec kind matches the live kind. Boot order (panes-init → panes-load → hooks) is unaffected since the pane doesn't exist yet at load time.
+- pane-todo-render now shows "(no open todos)" instead of a blank pane.
+
+## pane-render holds SYMBOLS, not function objects (fixed 2026-10-24)
+- pane-register and ctx-init-panes used to store #'pane-todo-render etc.; redefining a renderer left the OLD function object in the registry, so the new code never ran for that pane (todo pane stayed blank after the placeholder fix). Now the slot holds a symbol and pane-draw-into-1 resolves it at call time, falling back to pane-buf-render if not fboundp.
+- Verifying panes visually: tmux capture-pane -t lisper:2 -p (right columns via cut -c163-208 = todo pane; bottom rows = context pane).
