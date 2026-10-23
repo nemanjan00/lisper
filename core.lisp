@@ -464,6 +464,12 @@ symbol, a function in another package), or NIL."
                      (when others
                        (format nil "A function with this name exists as: ~(~{~A~^, ~}~)" others)))))))))))
 
+(defun redefinition-warning-p (warning)
+  "True for SBCL's warning that a defstruct changed its slots. Reloading a file
+is meant to replace definitions, as in Emacs, so this isn't a problem; the old
+instances become invalid, which is the price of changing a struct."
+  (search "change in instance length of class" (princ-to-string warning)))
+
 (defun load-file (path)
   "Load the Lisp file PATH (relative to *root*) form by form, like Emacs's load,
 but a form that fails to read or evaluate is reported and skipped instead of
@@ -500,7 +506,8 @@ also added to *LOAD-PROBLEMS*, so nested loads are reported to the outer one."
                       ;; which is neither an error nor a warning, and the function then
                       ;; fails when called. Count it as a problem.
                       (handler-bind ((warning (lambda (w)
-                                                (unless (typep w 'style-warning)
+                                                (unless (or (typep w 'style-warning)
+                                                            (redefinition-warning-p w))
                                                   (problem start (form-label form) w))))
                                      (sb-c:compiler-error
                                        (lambda (c)
