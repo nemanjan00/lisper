@@ -163,6 +163,7 @@ read-char on their own /dev/tty stream and would steal keystrokes."
   (tui-log-crash condition)
   (let ((ui *tui*))
     (setf *tui* nil)
+    (tui-kill-threads)
     (when ui
       (ignore-errors
         (write-string (format nil "~C[0m~C[?25h~C[?1049l~%TUI died: ~A~%"
