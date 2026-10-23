@@ -7,7 +7,9 @@
                 tui-read-ss3 tui-parse-mouse tui-mouse tui-scroll-chat-by
                 tui-prefix-key tui-normal-key tui-submit-input tui-input-backspace
                 tui-clear-input tui-ctrl-d tui-scroll-chat
-                pane-scroll-by pane-at pane-focus-pane))
+                tui-cursor-move tui-input-insert tui-input-delete
+                pane-scroll-by pane-at pane-focus-pane
+                pane-focus-nth pane-focus-step))
 (declaim (special *pane-focus*))
 
 (defvar *tui-quit* nil "Set by prefix q / C-d: the key loop then stops the UI.")
