@@ -39,22 +39,31 @@
 
 (defun tui-raw-mode ()
   "Put the terminal in raw-ish mode in-process (shell stty would hang:
-the image runs in a background process group and gets SIGTTOU). Saves
-the original termios for TUI-RESTORE-MODE."
-  (when (and *tui* (null *tui-saved-termios*))
+the image runs in a background process group and gets SIGTTOU). Always
+applies; saves the original termios for TUI-RESTORE-MODE, unless a saved
+one is already live. Returns true if the mode verified by reading back."
+  (when *tui*
     (let* ((fd (sb-sys:fd-stream-fd (tui-state-tty *tui*)))
-           (saved (sb-posix:tcgetattr fd))
-           (raw (sb-posix:tcgetattr fd)))
-      (setf (sb-posix:termios-lflag raw)
-            (logand (sb-posix:termios-lflag raw)
+           (cur (sb-posix:tcgetattr fd)))
+      ;; A saved termios is stale if the terminal is currently cooked
+      ;; (e.g. a crash restored it): saving it again would restore wrong.
+      (when (and *tui-saved-termios*
+                 (plusp (logand (sb-posix:termios-lflag cur) sb-posix:icanon)))
+        (setf *tui-saved-termios* nil))
+      (unless *tui-saved-termios*
+        (setf *tui-saved-termios* cur))
+      (setf (sb-posix:termios-lflag cur)
+            (logand (sb-posix:termios-lflag cur)
                     (lognot (logior sb-posix:icanon sb-posix:echo sb-posix:isig
                                     sb-posix:iexten)))
-            (sb-posix:termios-iflag raw)
-            (logand (sb-posix:termios-iflag raw)
+            (sb-posix:termios-iflag cur)
+            (logand (sb-posix:termios-iflag cur)
                     (lognot (logior sb-posix:icrnl sb-posix:inlcr sb-posix:igncr
                                     sb-posix:ixon))))
-      (sb-posix:tcsetattr fd sb-posix:tcsanow raw)
-      (setf *tui-saved-termios* saved))))
+      (sb-posix:tcsetattr fd sb-posix:tcsanow cur)
+      (let ((back (sb-posix:tcgetattr fd)))
+        (zerop (logand (sb-posix:termios-lflag back)
+                      (logior sb-posix:icanon sb-posix:echo sb-posix:isig)))))))
 
 (defun tui-restore-mode ()
   "Restore the terminal settings saved by TUI-RAW-MODE."
