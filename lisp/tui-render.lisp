@@ -366,11 +366,16 @@ and empty messages are skipped."
                    (sb-thread:with-recursive-lock (*tui-lock*)
                      (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
                            do (sb-thread:condition-wait *tui-cv* *tui-lock*
-                                                        :timeout (tui-seconds-to-next-minute))
-                              ;; A timeout is only the once-a-minute clock
-                              ;; tick; TUI-DIRTY wakes the wait otherwise.
-                              ;; Note: CONDITION-WAIT returns T even on
-                              ;; timeout here, so test the clock, not it.
+                                                        :timeout 2)
+                              ;; Wake every 2 s: TUI-DRAW runs
+                              ;; TUI-MAYBE-UPDATE-SIZE (a cheap counter/
+                              ;; time check — stty only when SIGWINCH
+                              ;; fired or 2 s passed), so a terminal
+                              ;; resize is noticed even when nothing else
+                              ;; dirties the TUI.  Also the once-a-minute
+                              ;; clock tick.  Note: CONDITION-WAIT returns
+                              ;; T even on timeout here, so test the
+                              ;; clock, not it.
                               (when (and (zerop *tui-dirty*)
                                          (tui-minute-changed-p))
                                 (incf *tui-dirty*)))
