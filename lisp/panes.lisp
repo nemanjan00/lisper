@@ -254,11 +254,21 @@ it needs a redraw; a clean pane's cells stay as they are."
       (ui-grid-write g (+ x 1) y (format nil " ~A " (pane-title p)) tattr (+ x w))
       (let ((lines (ignore-errors
                     (funcall (pane-render p) p w (1- h)))))
+        (when (eq (pane-kind p) :chat)
+          (setf *tui-chat-pane-width* w))
         (when lines
           (loop for line in lines
                 for j from 1
                 while (< j h)
-                do (ui-grid-write-chunks g x (+ y j) line (+ x w))))))
+                do (ui-grid-write-chunks g x (+ y j) line (+ x w))))
+        ;; "↓ N new" marker on the bottom edge while scrolled up.
+        (when (and (eq (pane-kind p) :chat)
+                   (plusp (pane-scroll p))
+                   (plusp *tui-chat-new*))
+          (let* ((label (format nil " ~D new " *tui-chat-new*))
+                 (lx (max x (- (+ x w) (length label) 1))))
+            (ui-grid-write g lx (+ y h -1)
+                           (concatenate 'string "↓" label) 8 (+ x w))))))
     (setf (pane-needs-redraw p) 0)))
 
 (defun panes-draw (g)
