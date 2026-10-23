@@ -157,7 +157,7 @@ modifier/motion bits we ignore."
   "Handle an SGR mouse event (:mouse b x y kind). Only the wheel scrolls,
 and only while the pointer is over the chat pane (not input or status)."
   (destructuring-bind (_ b x y kind) key
-    (declare (ignore _))
+    (declare (ignore _ x))
     (when (and (eq kind :press)
                (<= 64 b 67)                    ; wheel up/down (h-wheel too)
                (<= 2 y (- (tui-ui-height ui) 2))) ; chat rows, 1-based
