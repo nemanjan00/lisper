@@ -167,7 +167,8 @@ that does not emit :user events)."
       (let ((lines (tui-visible-lines buf inner-w inner-h scroll)))
         (loop for line in lines
               for i from 0
-              do (ui-grid-write-chunks g (1+ x) (+ y 1 i) line inner-w))))))
+              do (ui-grid-write-chunks g (1+ x) (+ y 1 i) line
+                                       (+ x 1 inner-w)))))))
 
 (defun tui-visible-lines (buf width height scroll)
   "Top-first chunk-lists fitting HEIGHT rows, scrolled up SCROLL lines."
