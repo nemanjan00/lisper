@@ -33,14 +33,18 @@
           (decf (fill-pointer v) excess))))))
 
 (defun uibuf-remove-matching (buf pred)
-  "Remove every line matching PRED (a function of ULINE) from BUF."
+  "Remove every line matching PRED (a function of ULINE) from BUF.
+Single downward pass: after a match at I the elements above I are
+already tested, so the same index is never revisited. (Re-testing I
+after DECF of the fill-pointer would read the stale slot past the end
+of the active region and could match it again, double-decrementing the
+fill-pointer and finally erroring in REPLACE with a :START2 past the
+end — the boot crash on the queued->user line upgrade.)"
   (let ((v (uibuf-lines buf)))
-    (loop with i = (1- (length v))
-          while (>= i 0)
-          do (if (funcall pred (aref v i))
-                 (progn (replace v v :start1 i :start2 (1+ i))
-                        (decf (fill-pointer v)))
-                 (decf i)))))
+    (loop for i from (1- (length v)) downto 0
+          when (funcall pred (aref v i))
+            do (replace v v :start1 i :start2 (1+ i))
+               (decf (fill-pointer v)))))
 
 (defun ui-split-lines (text)
   (loop with start = 0

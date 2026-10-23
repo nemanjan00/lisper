@@ -321,3 +321,39 @@ Backtrace for: #<SB-THREAD:THREAD tid=411303 "tui-redraw" RUNNING {120248CD53}>
 7: (SB-THREAD::RUN)
 8: ("foreign function: call_into_lisp_")
 9: ("foreign function: funcall1")
+--- TUI crash 4001761406 ---
+The bounding indices 19 and NIL are bad for a sequence of length 18.
+See also:
+  The ANSI Standard, Glossary entry for "bounding index designator"
+  The ANSI Standard, writeup for Issue SUBSEQ-OUT-OF-BOUNDS:IS-AN-ERROR
+Backtrace for: #<SB-THREAD:THREAD tid=509267 "agent" RUNNING {1202A14DF3}>
+0: (LISPING::TUI-LOG-CRASH #<SB-KERNEL:BOUNDING-INDICES-BAD-ERROR expected-type: (CONS (INTEGER 0 18) (INTEGER 19 18)) datum: (19)>)
+1: (LISPING::TUI-CRASH #<SB-KERNEL:BOUNDING-INDICES-BAD-ERROR expected-type: (CONS (INTEGER 0 18) (INTEGER 19 18)) datum: (19)>)
+2: (LISPING-CORE:EMIT :USER :TEXT #<(SIMPLE-ARRAY CHARACTER (2135)) [boot] Restart with new core. Verify: (1) tail state/tui-crash.log is clean and *tui* is alive with 2 threads (tui-keys, tui-redraw), single chat pane, no weather. (2) cursor: tmux display -p -t lispe... {1202A3428F}>)
+3: (LISPING-CORE::ADD-MESSAGE #<HASH-TABLE :TEST EQUAL :COUNT 2 {1202A363F3}>)
+4: (LISPING-CORE::AGENT-LOOP)
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+8: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+9: (SB-THREAD::RUN)
+10: ("foreign function: call_into_lisp_")
+11: ("foreign function: funcall1")
+--- TUI crash 4001761503 ---
+The bounding indices 3 and NIL are bad for a sequence of length 2.
+See also:
+  The ANSI Standard, Glossary entry for "bounding index designator"
+  The ANSI Standard, writeup for Issue SUBSEQ-OUT-OF-BOUNDS:IS-AN-ERROR
+Backtrace for: #<SB-THREAD:THREAD tid=521421 "agent" RUNNING {1202AFCA03}>
+0: (LISPING::TUI-LOG-CRASH #<SB-KERNEL:BOUNDING-INDICES-BAD-ERROR expected-type: (CONS (INTEGER 0 2) (INTEGER 3 2)) datum: (3)>)
+1: (LISPING::TUI-CRASH #<SB-KERNEL:BOUNDING-INDICES-BAD-ERROR expected-type: (CONS (INTEGER 0 2) (INTEGER 3 2)) datum: (3)>)
+2: (LISPING-CORE:EMIT :USER :TEXT "[boot] [verify] Boot clean. Run the full TUI verification checklist: threads, cursor, CPU, bytes, queued-line upgrade, then report numbers.")
+3: (LISPING-CORE::ADD-MESSAGE #<HASH-TABLE :TEST EQUAL :COUNT 2 {1202B9C353}>)
+4: (LISPING-CORE::AGENT-LOOP)
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+8: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+9: (SB-THREAD::RUN)
+10: ("foreign function: call_into_lisp_")
+11: ("foreign function: funcall1")

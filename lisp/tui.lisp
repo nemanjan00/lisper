@@ -96,6 +96,17 @@ read-char on their own /dev/tty stream and would steal keystrokes."
 (defvar *tui-winch-count* 0 "Bumped by the SIGWINCH handler.")
 (defvar *tui-winch-seen* 0 "Value of *TUI-WINCH-COUNT* last handled.")
 
+;; --- Redraw state -----------------------------------
+(defvar *TUI-PREV-GRID* NIL "Grid string of the last frame drawn, or NIL.")
+(defvar *TUI-PREV-CURSOR* NIL "(ROW COL) of the cursor last placed, or NIL.")
+(defvar *TUI-CLOCK-MINUTE* NIL "Minute string last drawn; NIL forces a redraw.")
+(defvar *TUI-FRAMES-TOTAL* 0 "Frames requested.")
+(defvar *TUI-FRAMES-SKIPPED* 0 "Frames skipped because nothing changed.")
+(defvar *TUI-FRAMES-FULL* 0 "Frames written in full (no diff base).")
+
+;; --- Perf counters ----------------------------------
+(defvar *tui-bytes-total* 0 "Terminal bytes written since TUI-START.")
+
 (defun tui-install-sigwinch ()
   "Notice terminal resizes promptly instead of waiting for the poll."
   (ignore-errors
