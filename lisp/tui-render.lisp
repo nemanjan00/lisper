@@ -6,7 +6,8 @@
 
 (declaim (ftype function tui-draw-chat tui-draw-separator
                 tui-tool-call-line tui-tool-summary tui-chat-result
-                tui-replay-history))
+                tui-replay-history panes-ensure-canvas panes-draw))
+(declaim (special *todos* *panes-canvas*))
 
 ;;; ---------------------------------------------------------------
 ;;; Frame state and perf counters. Only the redraw thread touches these.
