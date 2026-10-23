@@ -17,21 +17,17 @@
 
 ;;; ---------------------------------------------------------------- state
 
-(defvar *ctx-ids* (make-hash-table :test #'eq :weakness :key)
-  "message object -> entry id (integer).  Weak on the message: stubs and
-dropped messages GC away instead of leaking an id each request.")
-
-(defvar *ctx-id-messages* (make-hash-table :weakness :value)
-  "entry id -> message object.  Weak on the value, for the same reason.")
-
 (defvar *ctx-next-id* 0)
 
 (defvar *ctx-originals* (make-hash-table)
   "entry id -> (kind . value): :content for an offloaded string, :message
-for a message object removed by a rewind.")
+for a message object removed by a rewind.  Persisted to the session's
+ctx-originals.json after every mutation (see CTX-SAVE-STATE).")
 
 (defvar *ctx-stretches* nil
-  "List of (from-id to-id short-summary marker-message count est-tokens).")
+  "List of (from-id to-id short-summary marker-id count est-tokens).
+marker-id is the collapse marker message's x-id; persisted with the
+originals.")
 
 (defvar *ctx-offloaded-count* 0)
 
@@ -106,12 +102,83 @@ to the core, hence the ::.)"
        lisping-core::*session-log*))
 
 (defun ctx-entry-id (msg)
-  "Stable entry id (integer) for a message object, assigning on first use."
-  (or (gethash msg *ctx-ids*)
-      (let ((id (incf *ctx-next-id*)))
-        (setf (gethash msg *ctx-ids*) id
-              (gethash id *ctx-id-messages*) msg)
-        id)))
+  "Stable entry id (integer) for MSG: stored ON the message as x-id.
+The core strips x-* keys from requests but saves them with the session,
+so the message<->id mapping survives a restart.  Reading an existing
+x-id bumps *CTX-NEXT-ID* past it, so a state file older than the last
+id assignment can never hand out a live message's id."
+  (let ((id (gethash "x-id" msg)))
+    (cond (id (setf *ctx-next-id* (max *ctx-next-id* id))
+               id)
+          (t (setf (gethash "x-id" msg) (incf *ctx-next-id*))))))
+
+(defun ctx-find-message (id)
+  "The message in *messages* whose x-id is ID, or NIL."
+  (and id (find-if (lambda (m) (eql (gethash "x-id" m) id)) *messages*)))
+
+;;; ------------------------------------------------------- persistence
+
+(defun ctx-originals-file ()
+  (lisping-core:session-path "ctx-originals.json"))
+
+(defun ctx-save-state ()
+  "Persist *CTX-ORIGINALS*, *CTX-STRETCHES* and *CTX-NEXT-ID* to the
+session dir, so entry ids still resolve after a restart."
+  (ignore-errors
+    (let ((f (ctx-originals-file)))
+      (when f
+        (with-open-file (s f :direction :output
+                           :if-exists :supersede :if-does-not-exist :create)
+          (write-string
+           (json-encode
+            (obj :next-id *ctx-next-id*
+                 :originals (coerce
+                             (loop for id being the hash-keys of *ctx-originals*
+                                   using (hash-value rec)
+                                   collect (obj :id id
+                                                :kind (if (eq (car rec) :content) "content" "message")
+                                                :value (cdr rec)))
+                             'vector)
+                 :stretches (coerce
+                             (loop for st in *ctx-stretches*
+                                   collect (obj :from (first st) :to (second st)
+                                                :short (third st) :marker (fourth st)
+                                                :count (fifth st) :est (sixth st)))
+                             'vector)))
+           s))))))
+
+(defun ctx-load-state ()
+  "Reload the persisted originals and stretches; rebuild *CTX-NEXT-ID*
+as the largest id seen anywhere (CTX-ENTRY-ID also ratchets it up
+whenever it meets a higher x-id)."
+  (let ((f (ctx-originals-file)))
+    (when (and f (probe-file f))
+      (let ((data (ignore-errors
+                    (json-decode
+                     (with-open-file (s f)
+                       (let ((out (make-string-output-stream)))
+                         (loop for ch = (read-char s nil nil)
+                               while ch do (write-char ch out))
+                         (get-output-stream-string out)))))))
+        (when (hash-table-p data)
+          (clrhash *ctx-originals*)
+          (loop for rec across (or (gethash "originals" data) #())
+                do (setf (gethash (gethash "id" rec) *ctx-originals*)
+                         (cons (if (equal (gethash "kind" rec) "content") :content :message)
+                               (gethash "value" rec))))
+          (setf *ctx-stretches*
+                (loop for st across (or (gethash "stretches" data) #())
+                      collect (list (gethash "from" st) (gethash "to" st)
+                                    (gethash "short" st) (gethash "marker" st)
+                                    (gethash "count" st) (gethash "est" st)))
+                *ctx-offloaded-count* (loop for rec being the hash-values of *ctx-originals*
+                                            count (eq (car rec) :content))
+                *ctx-next-id*
+                (max (or (gethash "next-id" data) 0)
+                     (or (loop for id being the hash-keys of *ctx-originals* maximize id) 0)
+                     (or (loop for st in *ctx-stretches* maximize (second st)) 0)
+                     (or (loop for m in *messages*
+                               maximize (or (gethash "x-id" m) 0)) 0))))))))
 
 (defun ctx-parse-id (x)
   "Accept \"12\", \"e12\", \"E12\" or the integer 12 → 12, or NIL."
@@ -245,10 +312,12 @@ calls produce several)."
          (setf (gethash "x-kind" marker) "collapse")
          (dolist (m stretch)
            (setf (gethash (ctx-entry-id m) *ctx-originals*) (cons :message m)))
-         (push (list from-id to-id (ctx-short summary) marker (length stretch) est)
+         (push (list from-id to-id (ctx-short summary)
+                     (ctx-entry-id marker) (length stretch) est)
                *ctx-stretches*)
          (ctx-replace-range i j marker)
          (setf *ctx-requests-since-collapse* 0)
+         (ctx-save-state)
          (pane-dirty "context")
          (format nil "[ctx] collapsed entries e~D … e~D (~D messages, ~A est tokens); takes effect from the next request."
                  from-id to-id (length stretch) (ctx-fmt-k est)))))))
@@ -258,8 +327,8 @@ calls produce several)."
   (let* ((from (ctx-parse-id (arg args "from")))
          (to (ctx-parse-id (arg args "to")))
          (summary (or (arg args "summary") ""))
-         (from-msg (and from (gethash from *ctx-id-messages*)))
-         (to-msg (and (or to from) (gethash (or to from) *ctx-id-messages*))))
+         (from-msg (and from (ctx-find-message from)))
+         (to-msg (and (or to from) (ctx-find-message (or to from)))))
     (cond
       ((null from-msg) "[ctx] ERROR: unknown from entry — see [entry N] prefixes in tool results.")
       ((null to-msg) "[ctx] ERROR: unknown to entry.")
@@ -270,7 +339,7 @@ calls produce several)."
 one-line pointer text."
   (let* ((id (ctx-parse-id (arg args "entry")))
          (text (or (arg args "text") ""))
-         (msg (and id (gethash id *ctx-id-messages*))))
+         (msg (and id (ctx-find-message id))))
     (cond
       ((null msg) "[ctx] ERROR: unknown entry.")
       ((null (position msg *messages* :test #'eq))
@@ -290,6 +359,7 @@ one-line pointer text."
                           (ctx-short text) (length content) id))
             (incf *ctx-offloaded-count*)
             (setf *ctx-requests-since-collapse* 0)
+            (ctx-save-state)
             (pane-dirty "context")
             (format nil "[ctx] offloaded entry e~D (~D chars); takes effect from the next request."
                     id (length content)))))))))
@@ -313,7 +383,7 @@ entry as a quoted message, so it can never orphan a tool call)."
       ((null id) "[ctx] ERROR: unknown entry.")
       ((null rec)
        ;; Not offloaded/collapsed: maybe a visible message — read a piece.
-       (let ((msg (and id (gethash id *ctx-id-messages*))))
+       (let ((msg (and id (ctx-find-message id))))
          (cond
            ((null msg)
             "[ctx] ERROR: no original kept for that entry; it may be from before this boot. Try context_search over the session log.")
@@ -328,10 +398,11 @@ entry as a quoted message, so it can never orphan a tool call)."
            ((or offset length)
             (ctx-piece text id offset length))
            ((eq kind :content)
-            (let ((msg (gethash id *ctx-id-messages*)))
+            (let ((msg (ctx-find-message id)))
               (setf (gethash "content" msg) text)
               (remhash id *ctx-originals*)
               (decf *ctx-offloaded-count*)
+              (ctx-save-state)
               (pane-dirty "context")
               (format nil "[ctx] restored entry e~D (~D chars) into the conversation, at its original place."
                       id (length text))))
@@ -341,8 +412,8 @@ entry as a quoted message, so it can never orphan a tool call)."
                 ((null cell)
                  "[ctx] ERROR: collapse record for that entry is gone (image restarted?). Use context_search over the session log.")
                 (t
-                 (let* ((marker (fourth cell))
-                        (at (position marker *messages* :test #'eq))
+                 (let* ((marker (ctx-find-message (fourth cell)))
+                        (at (and marker (position marker *messages* :test #'eq)))
                         (role (gethash "role" value)))
                    (if (null at)
                        "[ctx] ERROR: collapse marker no longer in the conversation."
@@ -358,6 +429,7 @@ entry as a quoted message, so it can never orphan a tool call)."
                                          (list quoted)
                                          (subseq *messages* (1+ at)))))
                          (remhash id *ctx-originals*)
+                         (ctx-save-state)
                          (pane-dirty "context")
                          (format nil "[ctx] re-inserted entry e~D as a quoted message after its collapse marker; takes effect from the next request."
                                  id))))))))))))))
@@ -470,6 +542,7 @@ registry).  Returns T if it offloaded."
                (subseq content (max *ctx-pointer-head* (- (length content) *ctx-pointer-tail*)))))
         (incf *ctx-offloaded-count*)
         (setf *ctx-requests-since-collapse* 0)
+        (ctx-save-state)
         (pane-dirty "context")
         t))))
 
@@ -711,6 +784,7 @@ Idempotent."
   (ctx-init-panes)
   (unless *ctx-autoloaded*
     (setf *ctx-autoloaded* t)
+    (ctx-load-state)
     (pushnew 'ctx-before-request *before-request*)
     ;; The todo-done watcher lives on *observers*, not an *emit* wrapper:
     ;; tui-start rebinds *emit* at every UI (re)start and would drop it.
