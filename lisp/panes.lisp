@@ -415,13 +415,14 @@ hsplit reserves one uncovered column — see hsplit-left-width)."
     (panes-draw-gap-columns g rects)))
 
 (defun panes-draw-gap-columns (g rects)
-  "Fill every cell no pane rect covers with a dim vertical bar — the
-1-column gaps hsplit leaves between side-by-side panes, at any depth.
-Coverage is checked PER CELL: a column partially covered (e.g. by a
-full-width pane below a vsplit) must still get its bar in the uncovered
-rows — the old per-column SOME let the context pane's full-width rect
-suppress the separators above it.  (A cell is either pane-covered or
-a gap; vsplit reserves no gap rows.)"
+  "Blank every cell no pane rect covers — the 1-column gaps hsplit
+leaves between side-by-side panes, at any depth.  The gap is drawn as
+a plain blank column (a drawn bar looked cluttered); it is still the
+mouse drag target for resizing.  Coverage is checked PER CELL: a
+column partially covered (e.g. by a full-width pane below a vsplit)
+must still be blanked in the uncovered rows — the old per-column SOME
+let the context pane's full-width rect suppress the gaps above it.
+(A cell is either pane-covered or a gap; vsplit reserves no gap rows.)"
   (let ((w (uigrid-w g))
         (h (uigrid-h g)))
     (dotimes (x w)
@@ -432,7 +433,7 @@ a gap; vsplit reserves no gap rows.)"
                              (<= (third r) y)
                              (< y (+ (third r) (fifth r)))))
                       rects)
-          (ui-grid-put g x y (code-char 9474) 8))))))
+          (ui-grid-put g x y #\Space 8))))))
 
 
 ;;; ---------------------------------------------------------------
