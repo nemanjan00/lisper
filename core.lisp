@@ -12,7 +12,7 @@
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
            ;; files
-           #:home-path #:session-path #:*home* #:*session* #:*cwd* #:session-save #:session-forget #:home-commit #:read-file
+           #:home-path #:session-path #:*home* #:*session* #:*cwd* #:session-save #:session-forget #:home-commit #:read-file #:session-list #:session-switch
            #:load-file #:write-files-and-load #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
@@ -29,7 +29,7 @@
 
 (in-package :lisping-core)
 
-(declaim (ftype function emit client-error-p complete-once without-x-kind synthetic-message-p session-save note-file)) ; used before their definitions further down
+(declaim (ftype function emit client-error-p complete-once without-x-kind synthetic-message-p session-save note-file session-name-p)) ; used before their definitions further down
 
 (defvar *root* (make-pathname :name nil :type nil :version nil :defaults *load-truename*)
   "The harness's code: core.lisp, init.lisp and the files it loads, .git. Runtime
@@ -1359,8 +1359,58 @@ its working directory. Written atomically; resumed at the next boot."
     (write-text (session-path "meta.json")
                 (json-encode (obj :session *session* :cwd (namestring (or *cwd* *root*))
                                   :model *model* :saved (get-universal-time)
-                                  :messages (length *messages*))))
+                                  :messages (length *messages*)
+                                  :title (session-title))))
     t))
+
+(defun session-title ()
+  "The start of this session's first user message, as a name for it in lists."
+  (let ((m (find-if (lambda (m) (and (equal (gethash "role" m) "user")
+                                     (not (synthetic-message-p m))
+                                     (stringp (gethash "content" m))
+                                     (not (string-prefix-p "[" (gethash "content" m)))))
+                    *messages*)))
+    (when m
+      (let ((text (substitute #\Space #\Newline (gethash "content" m))))
+        (subseq text 0 (min 80 (length text)))))))
+
+(defun session-running-p (name)
+  "True if another process is running session NAME (its pid file names a live process)."
+  (let* ((text (read-text (merge-pathnames (format nil "sessions/~A/pid" name) *home*)))
+         (pid (and text (parse-integer text :junk-allowed t))))
+    (and pid (/= pid (sb-unix:unix-getpid))
+         (probe-file (format nil "/proc/~D/" pid)) t)))
+
+(defun session-list ()
+  "Every saved session, most recently saved first, as plists with :session :cwd
+:saved (universal time) :messages :title and :running (another process has it)."
+  (let ((sessions
+          (loop for meta in (directory (merge-pathnames "sessions/*/meta.json" *home*))
+                for m = (ignore-errors (json-decode (read-text meta)))
+                when (hash-table-p m)
+                  collect (let ((name (gethash "session" m)))
+                            (list :session name :cwd (gethash "cwd" m) :saved (gethash "saved" m)
+                                  :messages (gethash "messages" m) :title (gethash "title" m)
+                                  :current (equal name *session*)
+                                  :running (and (stringp name) (session-running-p name)))))))
+    (sort sessions #'> :key (lambda (s) (or (getf s :saved) 0)))))
+
+(defun session-name-p (name)
+  (and (stringp name) (plusp (length name))
+       (every (lambda (c) (or (alphanumericp c) (find c "-_"))) name)))
+
+(defun session-switch (name &key cwd)
+  "End this process and have the supervisor start session NAME in its place
+(resumed if it exists, else new; CWD sets a new session's working directory).
+This session is saved first and can be switched back to. Refused if another
+process is running NAME: one session, one process."
+  (cond ((not (session-name-p name))
+         (format nil "~S isn't a session name (letters, digits, - and _)." name))
+        ((equal name *session*) (format nil "Already in session ~A." name))
+        ((session-running-p name)
+         (format nil "Session ~A is running in another process." name))
+        (t (write-text (home-path "switch") (format nil "~A~%~@[~A~]~%" name cwd))
+           (restart-image))))
 
 (defparameter +home-ignore+
   "# lisper: data is versioned; transcripts, logs and scratch files aren't.
@@ -1372,6 +1422,8 @@ sessions/*/messages.json*
 sessions/*/meta.json
 sessions/*/resume.txt
 sessions/*/queue.*
+sessions/*/pid
+switch
 "
   "The .gitignore written into a new *home*.")
 
@@ -1528,10 +1580,10 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
                                        (namestring (merge-pathnames ".lisper/" (user-homedir-pathname))))))
                            (if (char= (char h (1- (length h))) #\/) h (concatenate 'string h "/"))))
         *session* (let ((id (sb-ext:posix-getenv "LISPER_SESSION")))
-                    (if (and id (plusp (length id)) (every (lambda (c) (or (alphanumericp c) (find c "-_"))) id))
-                        id "main"))
+                    (if (session-name-p id) id "main"))
         *cwd* (let ((d (sb-ext:posix-getenv "LISPER_CWD"))) (and d (plusp (length d)) (pathname (if (char= (char d (1- (length d))) #\/) d (concatenate 'string d "/"))))))
   (ensure-directories-exist (session-dir))
+  (write-text (session-path "pid") (format nil "~D~%" (sb-unix:unix-getpid)))
   (configure)
   ;; Terminal input starts before init.lisp, so a UI loaded from it can stop it and take over.
   (unless (sb-ext:posix-getenv "LISPING_HEADLESS")

@@ -158,6 +158,11 @@ working directory. Code lives in the repo; everything else lives in
   without the saved conversation. If the image crashes three times in a row
   soon after starting, the supervisor sets the conversation aside and starts
   fresh.
+- On exit, `run.sh` prints the command that resumes the session. Inside, the
+  kernel offers `(session-list)` (every session with its cwd, size, first
+  message and whether a process has it) and `(session-switch name)`, which
+  saves this session and has the supervisor start the other one in its place.
+  The model builds the `/resume` command on top of them.
 - `~/.lisper` is its own git repo, committed after every turn (transcripts and
   logs excluded), so a bad rewrite of the model's notes can be undone.
 

@@ -14,10 +14,36 @@ MAX_BOOT_CRASHES=3
 QUICK=300          # seconds; crashes sooner than this after start count toward a crash loop
 MAX_QUICK_CRASHES=3
 
+# On the way out, say how to come back to this session.
+resume_hint() {
+  [ -f "$SESSION_DIR/messages.json" ] || return 0
+  local cmd="$PWD/run.sh"
+  [ "$SESSION" = main ] || cmd="LISPER_SESSION=$(printf %q "$SESSION") $cmd"
+  [ -n "${LISPER_HOME_SET:-}" ] && cmd="LISPER_HOME=$(printf %q "$LISPER_HOME") $cmd"
+  echo "[lisper] session $SESSION saved. Resume it with:"
+  echo "  $cmd"
+}
+trap resume_hint EXIT
 trap 'exit 0' INT
 
+[ -n "${LISPER_HOME:-}" ] && LISPER_HOME_SET=1
 LISPER_HOME="${LISPER_HOME:-$HOME/.lisper}"
-SESSION_DIR="$LISPER_HOME/sessions/${LISPER_SESSION:-main}"
+SESSION="${LISPER_SESSION:-main}"
+SESSION_DIR="$LISPER_HOME/sessions/$SESSION"
+
+# session-switch writes the next session's name (and optionally a cwd for a new
+# one) to $LISPER_HOME/switch, then restarts; start that session in its place.
+switch_session() {
+  local file="$LISPER_HOME/switch" name cwd
+  [ -f "$file" ] || return 0
+  { read -r name; read -r cwd; } < "$file"
+  rm -f "$file"
+  [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || return 0
+  SESSION="$name"; SESSION_DIR="$LISPER_HOME/sessions/$SESSION"
+  export LISPER_SESSION="$SESSION"
+  if [ -n "$cwd" ]; then export LISPER_CWD="$cwd"; else unset LISPER_CWD; fi
+  echo "[supervisor] switching to session $SESSION"
+}
 resume() { mkdir -p "$SESSION_DIR" && printf '%s\n' "$1" >> "$SESSION_DIR/resume.txt"; }
 
 # The pre-commit hook boot-checks every commit, however it's made. It's kept in
@@ -51,7 +77,7 @@ while true; do
   [ -t 0 ] && stty sane 2>/dev/null   # a UI may have left the terminal in raw mode
   case $code in
     0) exit 0 ;;
-    42) boot_crashes=0; quick_crashes=0; continue ;;
+    42) boot_crashes=0; quick_crashes=0; switch_session; continue ;;
   esac
 
   if (( $(date +%s) - started < QUICK )); then
