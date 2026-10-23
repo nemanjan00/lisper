@@ -187,14 +187,14 @@ modifier/motion bits we ignore."
         (t nil)))
 (defun tui-submit-input (ui)
   (let* ((in (tui-ui-input ui))
-         ;; COPY-SEQ: IN is already a string, so COERSE returns the same
+         ;; COPY-SEQ: IN is already a string, so COERCE returns the same
          ;; object and STRING-TRIM may too — TEXT must not alias IN, or
          ;; resetting IN's fill-pointer below would blank the message
          ;; before SEND-USER-MESSAGE reads it.
          (text (string-trim " " (copy-seq in))))
     (when (plusp (length text))
       (setf (fill-pointer in) 0
-            *tui-input-cursor* 0)
+            (tui-ui-input-cursor ui) 0)
       ;; Enter always jumps the chat to the bottom and clears the
       ;; "N new" marker.
       (let ((p (pane-of-kind :chat)))
@@ -206,7 +206,6 @@ modifier/motion bits we ignore."
       ;; TUI-SHOW-USER dedupe and upgrade this line.
       (tui-show-queued ui text)
       (send-user-message text))))
-
 (defun tui-cursor-move (ui delta)
   "Move the input cursor DELTA characters, clamped to the buffer."
   (let ((len (length (tui-ui-input ui))))
