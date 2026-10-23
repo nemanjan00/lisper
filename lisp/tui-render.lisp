@@ -363,32 +363,44 @@ and empty messages are skipped."
         do (handler-bind ((serious-condition #'tui-log-crash-at-signal))
              (handler-case
                  (progn
-                   (sb-thread:with-recursive-lock (*tui-lock*)
-                     (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
-                           do (sb-thread:condition-wait *tui-cv* *tui-lock*
-                                                        :timeout 2)
-                              ;; Wake every 2 s: TUI-DRAW runs
-                              ;; TUI-MAYBE-UPDATE-SIZE (a cheap counter/
-                              ;; time check — stty only when SIGWINCH
-                              ;; fired or 2 s passed), so a terminal
-                              ;; resize is noticed even when nothing else
-                              ;; dirties the TUI.  Also the once-a-minute
-                              ;; clock tick.  Note: CONDITION-WAIT returns
-                              ;; T even on timeout here, so test the
-                              ;; clock, not it.
-                              (when (and (zerop *tui-dirty*)
-                                         (tui-minute-changed-p))
-                                (incf *tui-dirty*)))
-                     ;; Consume the flag BEFORE drawing: emitters append
-                     ;; state first and bump the counter under the same
-                     ;; lock, so nothing can be lost; a bump during the
-                     ;; draw schedules exactly one more pass.
-                     (when (and *tui* (eq *tui* ui))
-                       (setf *tui-dirty* 0)))
+                   ;; Wait for work.  CONDITION-WAIT with :TIMEOUT can
+                   ;; return NIL WITHOUT re-acquiring the lock (the
+                   ;; timeout covers re-acquisition, per its docstring).
+                   ;; The next CONDITION-WAIT must then NOT run inside
+                   ;; this WITH-RECURSIVE-LOCK: it would release a mutex
+                   ;; the thread does not hold and kill the UI ("not
+                   ;; holding #<MUTEX>", tui-crash.log 20:20:49).  Bail
+                   ;; out of the lock scope entirely and re-acquire on
+                   ;; the next iteration instead.
+                   (block wait-done
+                     (loop
+                       (sb-thread:with-recursive-lock (*tui-lock*)
+                         (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
+                               do (if (sb-thread:condition-wait *tui-cv* *tui-lock*
+                                                                :timeout 2)
+                                      ;; Wake every 2 s: TUI-DRAW runs
+                                      ;; TUI-MAYBE-UPDATE-SIZE (a cheap
+                                      ;; counter/time check — stty only
+                                      ;; when SIGWINCH fired or 2 s
+                                      ;; passed), so a terminal resize is
+                                      ;; noticed even when nothing else
+                                      ;; dirties the TUI.  Also the
+                                      ;; once-a-minute clock tick.
+                                      (when (and (zerop *tui-dirty*)
+                                                 (tui-minute-changed-p))
+                                        (incf *tui-dirty*))
+                                      (return-from wait-done)))
+                         ;; Consume the flag BEFORE drawing: emitters
+                         ;; append state first and bump the counter under
+                         ;; the same lock, so nothing can be lost; a bump
+                         ;; during the draw schedules exactly one more
+                         ;; pass.
+                         (when (and *tui* (eq *tui* ui))
+                           (setf *tui-dirty* 0))
+                         (return-from wait-done))))
                    (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
                (serious-condition (c)
                  (when (eq *tui* ui) (tui-crash c)))))))
-
 (defun tui-draw (ui)
   (tui-maybe-update-size ui)
   (sb-thread:with-recursive-lock (*tui-lock*)
