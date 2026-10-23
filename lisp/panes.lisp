@@ -13,17 +13,22 @@
 (declaim (ftype function tui-visible-lines tui-chat-add tui-dirty))
 (declaim (special *tui* *tui-lock* *todos* *tui-prev-grid*))
 
-(defstruct pane
-  name
-  (title "")
-  (kind :buffer)                ; :chat :todo :buffer :cmd
-  (buf nil)                     ; uibuf for :buffer/:cmd
-  (cmd nil)                     ; shell command for :cmd
-  (interval 10)                 ; seconds between :cmd re-runs
-  (last-run 0)
-  (render nil)                  ; fn (pane width height) -> chunk-line list
-  (scroll 0)
-  (needs-redraw 1))
+;;; PANE is a DEFCLASS (not defstruct) so slots can be added and
+;;; redefined on live instances: SBCL reinitializes existing instances
+;;; on class redefinition, while a defstruct redefinition breaks them.
+;;; Accessors keep the old defstruct names, so call sites are
+;;; unchanged. Construct with (make-instance 'pane :name name).
+(defclass pane ()
+  ((name :initarg :name :accessor pane-name)
+   (title :initform "" :accessor pane-title)
+   (kind :initform :buffer :accessor pane-kind)   ; :chat :todo :buffer :cmd
+   (buf :initform nil :accessor pane-buf)         ; uibuf for :buffer/:cmd
+   (cmd :initform nil :accessor pane-cmd)         ; shell command for :cmd
+   (interval :initform 10 :accessor pane-interval) ; seconds between :cmd re-runs
+   (last-run :initform 0 :accessor pane-last-run)
+   (render :initform nil :accessor pane-render)   ; fn (pane width height) -> chunk-line list
+   (scroll :initform 0 :accessor pane-scroll)
+   (needs-redraw :initform 1 :accessor pane-needs-redraw)))
 
 (defvar *panes* (make-hash-table :test 'equal)
   "Registry of name -> pane.")
@@ -62,7 +67,7 @@ source literals (:chat :todo ...) and every EQ comparison elsewhere
 use uppercase keyword names, so a lowercase :todo never matches them
 — that mismatch sent every pane to pane-buf-render and left all
 pane content blank (2026-10-23)."
-  (let ((p (or (gethash name *panes*) (make-pane :name name)))
+  (let ((p (or (gethash name *panes*) (make-instance 'pane :name name)))
         (k (or kind :buffer)))
     (setf (pane-title p) (or title name)
           (pane-kind p) (intern (string-upcase (if (symbolp k) (symbol-name k) (string k)))
