@@ -160,7 +160,7 @@ and only while the pointer is over the chat pane (not input or status)."
     (declare (ignore _ x))
     (when (and (eq kind :press)
                (<= 64 b 67)                    ; wheel up/down (h-wheel too)
-               (<= 2 y (- (tui-ui-height ui) 2))) ; chat rows, 1-based
+               (<= 1 y (- (tui-ui-height ui) 2))) ; not input/status, 1-based
       (tui-scroll-chat-by ui (if (evenp b) 3 -3)))))
 
 (defun tui-scroll-chat (ui key)
