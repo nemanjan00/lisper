@@ -104,15 +104,25 @@ for a message object removed by a rewind.")
                    "")))
     (format nil "e~D (~A): ~A" id role (subseq text 0 (min 60 (length text))))))
 
+(defun ctx-synthetic-p (m)
+  "True for a message the SYSTEM wrote (x-kind set), not the user or
+the model.  Looks up the core's SYNTHETIC-MESSAGE-P at runtime so this
+file still loads on cores that predate it."
+  (let ((s (find-symbol "SYNTHETIC-MESSAGE-P" :lisping-core)))
+    (and s (fboundp s) (funcall s m))))
+
 (defun ctx-latest-user-index ()
   "Index of the latest real user message — the current task; rewinds and
-offloads must never touch it or anything after it."
+offloads must never touch it or anything after it.  System-written
+messages (x-kind) and the older text-marked markers don't count."
   (position-if (lambda (m)
                  (and (equal (gethash "role" m) "user")
                       (stringp (gethash "content" m))
+                      (not (ctx-synthetic-p m))
                       (not (ctx-head-p "[core]" (gethash "content" m)))
                       (not (ctx-head-p "[boot]" (gethash "content" m)))
-                      (not (ctx-head-p "[collapsed" (gethash "content" m)))))
+                      (not (ctx-head-p "[collapsed" (gethash "content" m)))
+                      (not (ctx-head-p "[context:" (gethash "content" m)))))
                *messages* :from-end t))
 
 ;;; ---------------------------------------------------------------- tools
