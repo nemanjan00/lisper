@@ -450,13 +450,18 @@ peppered with repeats."
       (format s "Collapse finished stretches with context_rewind {from, to, summary}; summaries keep what later work needs verbatim (paths, ids, decisions).~%"))))
 
 (defun ctx-emit-watch (event)
-  "Notice finished tasks (a todo marked done) for the next nudge."
-  (when (and (eq (getf event :type) :tool-result)
-             (equal (getf event :name) "todo")
-             (ctx-head-p "done:" (getf event :text)))
-    (setf *ctx-pending-note*
-          (format nil "[context: a task is done] ~A The work for it above is finished; once nothing below needs it verbatim, collapse it with context_rewind {from, to, summary} (summaries keep paths, ids, decisions later work needs), or offload its big results with context_offload {entry, text}."
-                  (ctx-short (getf event :text)))))
+  "Notice finished tasks (a todo marked done) for the next nudge; retire
+the nudge only when a response actually arrives (clearing it at
+injection would lose it on a failed request)."
+  (case (getf event :type)
+    (:tool-result
+     (when (and (equal (getf event :name) "todo")
+                (ctx-head-p "done:" (getf event :text)))
+       (setf *ctx-pending-note*
+             (format nil "[context: a task is done] ~A The work for it above is finished; once nothing below needs it verbatim, collapse it with context_rewind {from, to, summary} (summaries keep paths, ids, decisions later work needs), or offload its big results with context_offload {entry, text}."
+                     (ctx-short (getf event :text))))))
+    (:assistant
+     (setf *ctx-pending-note* nil)))
   event)
 
 (defun ctx-before-request (body)
