@@ -936,16 +936,21 @@ both and would fail every later request."
 
 (defparameter +context-overflow-phrases+
   '("context length" "context_length" "context window" "maximum context"
-    "prompt is too long" "input is too long" "too many tokens" "reduce the length")
-  "How providers word an over-long request. Single words like \"maximum\" also
-appear in unrelated 400s (a max_tokens limit, say), which history-dropping can't fix.")
+    "prompt is too long" "input is too long" "too many tokens" "reduce the length"
+    "token limit" "max_tokens")
+  "How providers word an over-long request: the prompt plus max_tokens is past the
+window, or max_tokens alone is too large. Single words like \"maximum\" are avoided:
+they appear in unrelated 400s. Some providers (Kimi's coding endpoint, as tested)
+don't reject at all and truncate silently, so watch *last-usage* too.")
 
 (defun context-too-long-p (condition)
   "True when the API rejected the request for being longer than the model's context."
   (and (client-error-p condition)
        (let ((body (string-downcase (princ-to-string (http-error-body condition)))))
-         (and (some (lambda (phrase) (search phrase body)) +context-overflow-phrases+)
-              (not (search "max_tokens" body))))))
+         (some (lambda (phrase) (search phrase body)) +context-overflow-phrases+))))
+
+(defun string-prefix-p (prefix string)
+  (and (>= (length string) (length prefix)) (string= prefix string :end2 (length prefix))))
 
 (defun drop-oldest-messages ()
   "Make *messages* smaller after a context-length error: drop about the oldest
@@ -953,7 +958,15 @@ quarter, cutting only at a user message so no tool call loses its result, and
 leave a note saying what went. Returns the number dropped (0 if nothing could be)."
   (let* ((n (length *messages*))
          (cut (max 1 (floor n 4)))
-         (rest (nthcdr cut *messages*)))
+         (rest (nthcdr cut *messages*))
+         ;; The latest real user message is what the current task is about; it
+         ;; must survive even when it sits in the part being dropped.
+         (task (find-if (lambda (m)
+                          (and (equal (gethash "role" m) "user")
+                               (stringp (gethash "content" m))
+                               (not (string-prefix-p "[core]" (gethash "content" m)))
+                               (not (string-prefix-p "[boot]" (gethash "content" m)))))
+                        *messages* :from-end t)))
     ;; Cut where a complete unit starts: a user message, or an assistant message
     ;; (its tool results follow it). An agentic task can run hundreds of tool
     ;; calls with no user message in between, so user messages alone are too rare.
@@ -962,10 +975,12 @@ leave a note saying what went. Returns the number dropped (0 if nothing could be
     (cond
       (rest
        (setf *messages*
-             (cons (obj :role "user"
-                        :content (format nil "[core] ~D earlier messages were dropped because the context was too long for the model. The full transcript is in ~A."
-                                         cut (and *session-log* (namestring *session-log*))))
-                   rest))
+             (append (list (obj :role "user"
+                                :content (format nil "[core] ~D earlier messages were dropped because the context was too long for the model. The full transcript is in ~A.~@[ The message that started the current task is kept below.~]"
+                                                 cut (and *session-log* (namestring *session-log*))
+                                                 (and task (not (member task rest :test #'eq))))))
+                     (and task (not (member task rest :test #'eq)) (list task))
+                     rest))
        cut)
       (t
        ;; One long turn with no user message to cut at: shorten big tool results instead.
@@ -988,19 +1003,26 @@ the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
   "Send the conversation to the model and return its message. If the API says
 the conversation is longer than the model's context, drop the oldest part and
 try again, so the session can't get stuck with a history that never fits."
-  (let ((previous nil) (repeats 0))
+  (let ((previous nil) (*max-tokens* *max-tokens*))
     (loop for tries from 1
           do (handler-case (return (complete-once))
                (error (c)
                  (unless (and (context-too-long-p c) (< tries 6))
                    (error c))
-                 ;; The same rejection after dropping twice means it isn't about length.
                  (let ((text (princ-to-string (http-error-body c))))
-                   (if (equal text previous) (incf repeats) (setf repeats 0 previous text))
-                   (when (>= repeats 2) (error c)))
-                 (let ((dropped (drop-oldest-messages)))
-                   (when (zerop dropped) (error c))
-                   (emit :error :text (format nil "context too long for the model: dropped ~D old messages and retrying" dropped))))))))
+                   ;; A real overflow error usually names token counts, which change
+                   ;; as the request shrinks; the same body again means it's not length.
+                   (when (equal text previous) (error c))
+                   (setf previous text))
+                 (cond
+                   ;; First room for the reply: overflow is prompt + max_tokens.
+                   ((> *max-tokens* 4096)
+                    (setf *max-tokens* (max 4096 (floor *max-tokens* 2)))
+                    (emit :error :text (format nil "context too long for the model: retrying with max_tokens ~D" *max-tokens*)))
+                   (t
+                    (let ((dropped (drop-oldest-messages)))
+                      (when (zerop dropped) (error c))
+                      (emit :error :text (format nil "context too long for the model: dropped ~D old messages and retrying" dropped))))))))))
 
 (defun complete-once ()
   (let ((body (request-body)))
