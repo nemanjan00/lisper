@@ -137,8 +137,7 @@ read-char on their own /dev/tty stream and would steal keystrokes."
     (setf *tui* nil)
     (when ui
       (setf *emit* 'terminal-emit)
-      (dolist (th (tui-state-threads ui))
-        (ignore-errors (sb-thread:terminate-thread th)))
+      (tui-kill-threads)
       (ignore-errors
         (write-string (format nil "~C[0m~C[?25h~C[?1049l" #\Esc #\Esc #\Esc)
                       (tui-state-tty ui))
