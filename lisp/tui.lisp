@@ -10,8 +10,11 @@
                 tui-replay-history panes-init))
 
 (defvar *tui* nil "The live TUI-UI, or NIL when the UI is not running.")
+
 (defvar *tui-lock* (sb-thread:make-mutex))
+
 (defvar *tui-cv* (sb-thread:make-waitqueue))
+
 (defvar *tui-dirty* 0)
 ;;; TUI-UI is a DEFCLASS (not defstruct) so slots can be added and
 ;;; redefined on the live instance: SBCL reinitializes existing
@@ -37,6 +40,7 @@
    ;; once the text is wider than the input row (TUI-INPUT-WINDOW).
    (input-cursor :initform 0 :accessor tui-ui-input-cursor)
    (input-hscroll :initform 0 :accessor tui-ui-input-hscroll)))
+
 (defun tui-dirty ()
   "Ask the redraw thread to redraw."
   (sb-thread:with-recursive-lock (*tui-lock*)
@@ -44,6 +48,7 @@
     (sb-thread:condition-notify *tui-cv*)))
 
 (defvar *tui-saved-termios* nil)
+
 (defvar *tui-queued-text* nil "Text of the dimmed queued echo on screen.")
 
 (defun tui-raw-mode (tty)
@@ -116,15 +121,22 @@ read-char on their own /dev/tty stream and would steal keystrokes."
       (ignore-errors (sb-thread:terminate-thread th)))))
 
 (defvar *tui-size-checked-at* 0 "Last time the terminal size was probed.")
+
 (defvar *tui-winch-count* 0 "Bumped by the SIGWINCH handler.")
+
 (defvar *tui-winch-seen* 0 "Value of *TUI-WINCH-COUNT* last handled.")
 
 ;; --- Redraw state -----------------------------------
 (defvar *TUI-PREV-GRID* NIL "Grid string of the last frame drawn, or NIL.")
+
 (defvar *TUI-PREV-CURSOR* NIL "(ROW COL) of the cursor last placed, or NIL.")
+
 (defvar *TUI-CLOCK-MINUTE* NIL "Minute string last drawn; NIL forces a redraw.")
+
 (defvar *TUI-FRAMES-TOTAL* 0 "Frames requested.")
+
 (defvar *TUI-FRAMES-SKIPPED* 0 "Frames skipped because nothing changed.")
+
 (defvar *TUI-FRAMES-FULL* 0 "Frames written in full (no diff base).")
 
 ;; --- Perf counters ----------------------------------
