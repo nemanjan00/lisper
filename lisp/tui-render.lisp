@@ -563,10 +563,12 @@ until then). Returns an integer."
 (defun tui-draw-status (g ui y w)
   (let ((attr (ui-attr 7 :bright t :bg 4)))
     (dotimes (x w) (ui-grid-put g x y #\Space attr))
-    (ui-grid-write g 1 y (format nil " lisping-ai ~A [~D todo~:P open] ~A"
+    (ui-grid-write g 1 y (format nil " lisping-ai ~A [~D todo~:P open] ~A~@[ [~D held]~]"
                                  *model*
                                  (count-if-not #'cdr *todos*)
-                                 *pane-focus*)
+                                 *pane-focus*
+                                 (let ((h (tui-held-count)))
+                                   (unless (zerop h) h)))
                    attr (1- w))
     (let* ((now (multiple-value-list (decode-universal-time (get-universal-time))))
            (time (format nil "~2,'0d:~2,'0d " (nth 2 now) (nth 1 now)))
