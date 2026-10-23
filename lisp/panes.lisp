@@ -614,6 +614,18 @@ itself here or vanishes on UI restart."
                           :interval (or (lisping-core::arg args "interval") 10)))
       (:remove (pane-remove (lisping-core::arg args "name"))))))
 
+(defun layout-normalize-leaves (tree)
+  "Rewrite (LEAF name) heads named \"LEAF\" in any package to
+LISPING::LEAF: layout sexprs read from strings (the layout tool's SET)
+must not depend on which package READ-FROM-STRING ran in."
+  (if (atom tree)
+      tree
+      (mapcar (lambda (x)
+                (if (and (symbolp x) (string-equal (symbol-name x) "LEAF"))
+                    'leaf
+                    (layout-normalize-leaves x)))
+              tree)))
+
 (defun layout-tool (args)
   (let ((action (or (lisping-core::arg args "action") "get")))
     (ecase (intern (string-upcase action) :keyword)
