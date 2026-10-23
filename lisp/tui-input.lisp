@@ -106,7 +106,11 @@
 
 (defun tui-submit-input (ui)
   (let* ((in (tui-state-input ui))
-         (text (string-trim " " (coerce in 'string))))
+         ;; COPY-SEQ: IN is already a string, so COERSE returns the same
+         ;; object and STRING-TRIM may too — TEXT must not alias IN, or
+         ;; resetting IN's fill-pointer below would blank the message
+         ;; before SEND-USER-MESSAGE reads it.
+         (text (string-trim " " (copy-seq in))))
     (when (plusp (length text))
       (setf (tui-state-pending-user ui) text
             (fill-pointer in) 0)
