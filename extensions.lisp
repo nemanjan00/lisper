@@ -1,184 +1,164 @@
-;;;; ============================================================
-;;;; tmux-inspired UI — chunk A: grid, attrs, ansi, buffers, layout
-;;;; ============================================================
 
-;; attrs: bits 0-2 fg color, bit3 fg bright, bits 4-6 bg color+1 (0=none), bit7 bg bright
-(defconstant +ui-fg-mask+ #x0f)
-
-(defconstant +ui-bg-mask+ #xf0)
-
-(defun ui-attr (fg &key bright bg bgbright)
-  (logior (logand fg 7)
-          (if bright 8 0)
-          (if bg (ash (1+ (logand bg 7)) 4) 0)
-          (if bgbright 128 0)))
-
-(defun ui-attr-codes (attr)
-  (let ((fg (logand attr 7))
-        (fb (logbitp 3 attr))
-        (bg (ash attr -4))
-        (bb (logbitp 7 attr))
-        (codes nil))
-    (when (plusp bg) (push (+ 39 bg (if bb 60 0)) codes))
-    (push (+ 30 fg (if fb 60 0)) codes)
-    (nreverse codes)))
-
-(defun ui-attr-string (attr prev)
-  (if (= attr prev) ""
-      (format nil "~C[0m~C[~{~d~^;~}m" #\Esc #\Esc (ui-attr-codes attr))))
-
-(defun ui-c256 (n)                      ; 256-color -> basic 0-15
-  (cond ((< n 16) n)
-        ((< n 232)
-         (let* ((m (- n 16))
-                (r (floor m 36)) (g (floor (mod m 36) 6)) (b (mod m 6))
-                (hi (max r g b)) (lo (min r g b)))
-           (if (<= (- hi lo) 1)
-               (if (< (/ (+ r g b) 3.0) 2.5) 0 7)
-               (+ (cond ((and (>= r g) (>= g b)) 3) ; yellow
-                        ((and (>= g r) (>= r b)) 2)
-                        ((and (>= r b) (>= b g)) 1)
-                        ((and (>= g b) (>= b r)) 2)
-                        ((and (>= b r) (>= r g)) 5)
-                        (t 4))
-                  (if (>= hi 4) 8 0)))))
-        (t (if (> (- n 232) 12) 15 8))))
-
-(defun ui-sgr-apply (params attr)       ; apply SGR params to attr
-  (let ((ps params))
-    (loop while ps do
-      (let ((p (pop ps)))
-        (cond ((= p 0) (setf attr 7))
-              ((= p 1) (setf attr (logior attr 8)))
-              ((= p 22) (setf attr (logand attr (lognot 8))))
-              ((= p 39) (setf attr (logior (logand attr (lognot +ui-fg-mask+)) 7)))
-              ((= p 49) (setf attr (logand attr (lognot +ui-bg-mask+))))
-              ((<= 30 p 37) (setf attr (logior (logand attr (lognot +ui-fg-mask+)) (- p 30))))
-              ((<= 40 p 47) (setf attr (logior (logand attr (lognot +ui-bg-mask+)) (ash (1+ (- p 40)) 4))))
-              ((<= 90 p 97) (setf attr (logior (logand attr (lognot +ui-fg-mask+)) (+ 8 (- p 90)))))
-              ((<= 100 p 107) (setf attr (logior (logand attr (lognot +ui-bg-mask+)) (ash (1+ (- p 100)) 4) 128)))
-              ((or (= p 38) (= p 48))
-               (let* ((fgp (= p 38))
-                      (mask (if fgp +ui-fg-mask+ +ui-bg-mask+))
-                      (mode (and ps (pop ps))))
-                 (cond ((and mode (= mode 5) ps)
-                        (let ((c (ui-c256 (pop ps))))
-                          (setf attr (logior (logand attr (lognot mask))
-                                             (if fgp c (logior (ash (1+ c) 4) 128))))))
-                       ((and mode (= mode 2)) (dotimes (k 3) (when ps (pop ps)))))))
-              (t nil))))
-    attr))
-
-(defun ui-split-params (s)              ; "38;5;226" -> (38 5 226), "" -> (0)
-  (if (zerop (length s)) (list 0)
-      (loop with start = 0
-            for i = (position #\; s :start start)
-            collect (parse-integer s :start start :end (or i (length s)) :junk-allowed t)
-            while i do (setf start (1+ i)))))
-
-(defun ui-parse-ansi (line)             ; -> list of chunks (string . attr); strips escapes
-  (let ((chunks nil) (attr 7) (cur (make-string-output-stream)) (i 0) (n (length line)))
-    (labels ((flush ()
-               (let ((s (get-output-stream-string cur)))
-                 (when (plusp (length s)) (push (cons s attr) chunks)))))
-      (loop while (< i n) do
-        (let ((ch (char line i)))
-          (cond ((char= ch #\Esc)
-                 (let ((j (1+ i)))
-                   (if (and (< j n) (char= (char line j) #\[))
-                       (let ((k (1+ j)))
-                         (loop while (and (< k n) (not (alpha-char-p (char line k)))) do (incf k))
-                         (when (< k n)
-                           (when (char= (char line k) #\m)
-                             (flush)
-                             (setf attr (ui-sgr-apply (ui-split-params (subseq line (1+ j) k)) attr)))
-                           (setf i (1+ k))))
-                       (setf i (1+ j)))))
-                ((or (char= ch #\Return) (char= ch #\Nul)) (incf i))
-                (t (write-char ch cur) (incf i))))))
-      (flush))
-    (or (nreverse chunks) (list (cons "" 7))))
-
-(defun ui-parse-ansi (line)             ; -> list of chunks (string . attr); strips escapes
-  (let ((chunks nil) (attr 7) (cur (make-string-output-stream)) (i 0) (n (length line)))
-    (labels ((flush ()
-               (let ((s (get-output-stream-string cur)))
-                 (when (plusp (length s)) (push (cons s attr) chunks)))))
-      (loop while (< i n) do
-        (let ((ch (char line i)))
-          (cond ((char= ch #\Esc)
-                 (let ((j (1+ i)))
-                   (if (and (< j n) (char= (char line j) #\[))
-                       (let ((k (1+ j)))
-                         (loop while (and (< k n) (not (alpha-char-p (char line k)))) do (incf k))
-                         (when (< k n)
-                           (when (char= (char line k) #\m)
-                             (flush)
-                             (setf attr (ui-sgr-apply (ui-split-params (subseq line (1+ j) k)) attr)))
-                           (setf i (1+ k))))
-                       (setf i (1+ j)))))
-                ((or (char= ch #\Return) (char= ch #\Nul)) (incf i))
-                (t (write-char ch cur) (incf i))))))
-      (flush))
-    (or (nreverse chunks) (list (cons "" 7))))
-
-(defun str-replace (new old s)
-  (with-output-to-string (out)
-    (let ((start 0))
-      (loop for i = (search old s :start2 start)
-            while i do
-              (write-string s out :start start :end i)
-              (write-string new out)
-              (setf start (+ i (length old))))
-      (write-string s out :start start))))
-
-(defun ui-parse-ansi (line)
-  (let ((chunks nil) (attr 7) (cur (make-string-output-stream)) (i 0) (n (length line)))
-    (labels ((flush ()
-               (let ((s (get-output-stream-string cur)))
-                 (when (plusp (length s)) (push (cons s attr) chunks)))))
-      (loop while (< i n) do
-        (let ((ch (char line i)))
-          (cond ((char= ch #\Esc)
-                 (let ((j (1+ i)))
-                   (if (and (< j n) (char= (char line j) #\[))
-                       (let ((k (1+ j)))
-                         (loop while (and (< k n) (not (alpha-char-p (char line k)))) do (incf k))
-                         (when (< k n)
-                           (when (char= (char line k) #\m)
-                             (flush)
-                             (setf attr (ui-sgr-apply (ui-split-params (subseq line (1+ j) k)) attr)))
-                           (setf i (1+ k))))
-                       (setf i (1+ j)))))
-                ((or (char= ch #\Return) (char= ch #\Nul)) (incf i))
-                (t (write-char ch cur) (incf i))))))
-      (flush))
-    (or (nreverse chunks) (list (cons "" 7))))
-
-(defun ui-parse-ansi (line)
-  (let ((chunks nil) (attr 7) (cur (make-string-output-stream)) (i 0) (n (length line)))
-    (labels ((flush ()
-               (let ((s (get-output-stream-string cur)))
-                 (when (plusp (length s)) (push (cons s attr) chunks)))))
-      (loop while (< i n)
-            do (let ((ch (char line i)))
-                 (cond
-                  ((char= ch #\Esc)
-                   (let ((j (1+ i)))
-                     (if (and (< j n) (char= (char line j) #\[))
-                         (let ((k (1+ j)))
-                           (loop while (and (< k n) (not (alpha-char-p (char line k))))
-                                 do (incf k))
-                           (when (< k n)
-                             (when (char= (char line k) #\m)
-                               (flush)
-                               (setf attr
-                                       (ui-sgr-apply (ui-split-params (subseq line (1+ j) k))
-                                                     attr)))
-                             (setf i (1+ k))))
-                         (setf i (1+ j)))))
-                  ((or (char= ch #\Return) (char= ch #\Nul)) (incf i))
-                  (t (write-char ch cur) (incf i)))))
-      (flush))
-    (or (nreverse chunks) (list (cons "" 7)))))
+(DEFCONSTANT +UI-FG-MASK+ 15) 
+(DEFCONSTANT +UI-BG-MASK+ 240) 
+(DEFUN UI-ATTR (FG &KEY BRIGHT BG BGBRIGHT)
+  (LOGIOR (LOGAND FG 7)
+          (IF BRIGHT
+              8
+              0)
+          (IF BG
+              (ASH (1+ (LOGAND BG 7)) 4)
+              0)
+          (IF BGBRIGHT
+              128
+              0))) 
+(DEFUN UI-ATTR-CODES (ATTR)
+  (LET ((FG (LOGAND ATTR 7))
+        (FB (LOGBITP 3 ATTR))
+        (BG (ASH ATTR -4))
+        (BB (LOGBITP 7 ATTR))
+        (CODES NIL))
+    (WHEN (PLUSP BG)
+      (PUSH
+       (+ 39 BG
+          (IF BB
+              60
+              0))
+       CODES))
+    (PUSH
+     (+ 30 FG
+        (IF FB
+            60
+            0))
+     CODES)
+    (NREVERSE CODES))) 
+(DEFUN UI-ATTR-STRING (ATTR PREV)
+  (IF (= ATTR PREV)
+      ""
+      (FORMAT NIL "~C[0m~C[~{~d~^;~}m" #\Esc #\Esc (UI-ATTR-CODES ATTR)))) 
+(DEFUN UI-C256 (N)
+  (COND ((< N 16) N)
+        ((< N 232)
+         (LET* ((M (- N 16))
+                (R (FLOOR M 36))
+                (G (FLOOR (MOD M 36) 6))
+                (B (MOD M 6))
+                (HI (MAX R G B))
+                (LO (MIN R G B)))
+           (IF (<= (- HI LO) 1)
+               (IF (< (/ (+ R G B) 3.0) 2.5)
+                   0
+                   7)
+               (+
+                (COND ((AND (>= R G) (>= G B)) 3) ((AND (>= G R) (>= R B)) 2)
+                      ((AND (>= R B) (>= B G)) 1) ((AND (>= G B) (>= B R)) 2)
+                      ((AND (>= B R) (>= R G)) 5) (T 4))
+                (IF (>= HI 4)
+                    8
+                    0)))))
+        (T
+         (IF (> (- N 232) 12)
+             15
+             8)))) 
+(DEFUN UI-SGR-APPLY (PARAMS ATTR)
+  (LET ((PS PARAMS))
+    (LOOP WHILE PS
+          DO (LET ((P (POP PS)))
+               (COND ((= P 0) (SETF ATTR 7))
+                     ((= P 1) (SETF ATTR (LOGIOR ATTR 8)))
+                     ((= P 22) (SETF ATTR (LOGAND ATTR (LOGNOT 8))))
+                     ((= P 39)
+                      (SETF ATTR
+                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-FG-MASK+)) 7)))
+                     ((= P 49) (SETF ATTR (LOGAND ATTR (LOGNOT +UI-BG-MASK+))))
+                     ((<= 30 P 37)
+                      (SETF ATTR
+                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-FG-MASK+))
+                                      (- P 30))))
+                     ((<= 40 P 47)
+                      (SETF ATTR
+                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-BG-MASK+))
+                                      (ASH (1+ (- P 40)) 4))))
+                     ((<= 90 P 97)
+                      (SETF ATTR
+                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-FG-MASK+))
+                                      (+ 8 (- P 90)))))
+                     ((<= 100 P 107)
+                      (SETF ATTR
+                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-BG-MASK+))
+                                      (ASH (1+ (- P 100)) 4) 128)))
+                     ((OR (= P 38) (= P 48))
+                      (LET* ((FGP (= P 38))
+                             (MASK
+                              (IF FGP
+                                  +UI-FG-MASK+
+                                  +UI-BG-MASK+))
+                             (MODE (AND PS (POP PS))))
+                        (COND
+                         ((AND MODE (= MODE 5) PS)
+                          (LET ((C (UI-C256 (POP PS))))
+                            (SETF ATTR
+                                    (LOGIOR (LOGAND ATTR (LOGNOT MASK))
+                                            (IF FGP
+                                                C
+                                                (LOGIOR (ASH (1+ C) 4)
+                                                        128))))))
+                         ((AND MODE (= MODE 2))
+                          (DOTIMES (K 3) (WHEN PS (POP PS)))))))
+                     (T NIL))))
+    ATTR)) 
+(DEFUN UI-SPLIT-PARAMS (S)
+  (IF (ZEROP (LENGTH S))
+      (LIST 0)
+      (LOOP WITH START = 0
+            FOR I = (POSITION #\; S :START START)
+            COLLECT (PARSE-INTEGER S :START START :END (OR I (LENGTH S))
+                                   :JUNK-ALLOWED T)
+            WHILE I
+            DO (SETF START (1+ I))))) 
+(DEFUN STR-REPLACE (NEW OLD S)
+  (WITH-OUTPUT-TO-STRING (OUT)
+    (LET ((START 0))
+      (LOOP FOR I = (SEARCH OLD S :START2 START)
+            WHILE I
+            DO (WRITE-STRING S OUT :START START :END I) (WRITE-STRING NEW
+                                                                      OUT) (SETF START
+                                                                                   (+
+                                                                                    I
+                                                                                    (LENGTH
+                                                                                     OLD))))
+      (WRITE-STRING S OUT :START START)))) 
+(DEFUN UI-PARSE-ANSI (LINE)
+  (LET ((CHUNKS NIL)
+        (ATTR 7)
+        (CUR (MAKE-STRING-OUTPUT-STREAM))
+        (I 0)
+        (N (LENGTH LINE)))
+    (LABELS ((FLUSH ()
+               (LET ((S (GET-OUTPUT-STREAM-STRING CUR)))
+                 (WHEN (PLUSP (LENGTH S)) (PUSH (CONS S ATTR) CHUNKS)))))
+      (LOOP WHILE (< I N)
+            DO (LET ((CH (CHAR LINE I)))
+                 (COND
+                  ((CHAR= CH #\Esc)
+                   (LET ((J (1+ I)))
+                     (IF (AND (< J N) (CHAR= (CHAR LINE J) #\[))
+                         (LET ((K (1+ J)))
+                           (LOOP WHILE (AND (< K N)
+                                            (NOT (ALPHA-CHAR-P (CHAR LINE K))))
+                                 DO (INCF K))
+                           (WHEN (< K N)
+                             (WHEN (CHAR= (CHAR LINE K) #\m)
+                               (FLUSH)
+                               (SETF ATTR
+                                       (UI-SGR-APPLY
+                                        (UI-SPLIT-PARAMS
+                                         (SUBSEQ LINE (1+ J) K))
+                                        ATTR)))
+                             (SETF I (1+ K))))
+                         (SETF I (1+ J)))))
+                  ((OR (CHAR= CH #\Return) (CHAR= CH #\Nul)) (INCF I))
+                  (T (WRITE-CHAR CH CUR) (INCF I)))))
+      (FLUSH))
+    (OR (NREVERSE CHUNKS) (LIST (CONS "" 7))))) (progn (load (merge-pathnames "state/ui.lisp" *root*)))
 

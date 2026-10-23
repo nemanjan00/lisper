@@ -1,8 +1,6 @@
 
 (IN-PACKAGE :LISPING) 
-
 (DEFSTRUCT ULINE CHUNKS) 
-
 (DEFSTRUCT UIBUF
   NAME
   (LINES (MAKE-ARRAY 128 :ADJUSTABLE T :FILL-POINTER 0))
@@ -10,7 +8,6 @@
   (ALIGN :BOTTOM)
   (WRAP T)
   (LAST-ATTR -1)) 
-
 (DEFUN UIBUF-APPEND (BUF CHUNKS &KEY FRESH)
   (WHEN (AND CHUNKS (SOME (LAMBDA (C) (PLUSP (LENGTH (CAR C)))) CHUNKS))
     (LET* ((ATTR (OR (CDR (FIRST CHUNKS)) 7))
@@ -27,19 +24,16 @@
         (WHEN (PLUSP EXCESS)
           (REPLACE V V :START2 EXCESS)
           (DECF (FILL-POINTER V) EXCESS)))))) 
-
 (DEFUN UI-SPLIT-LINES (TEXT)
   (LOOP WITH START = 0
         FOR I = (POSITION #\Newline TEXT :START START)
         COLLECT (SUBSEQ TEXT START I)
         WHILE I
         DO (SETF START (1+ I)))) 
-
 (DEFUN UIBUF-ADD-TEXT (BUF TEXT ATTR &KEY FRESH)
   (LOOP FOR P IN (UI-SPLIT-LINES TEXT)
         FOR I FROM 0
         DO (UIBUF-APPEND BUF (LIST (CONS P ATTR)) :FRESH (OR FRESH (> I 0))))) 
-
 (DEFUN UI-WRAP-CHUNKS (CHUNKS WIDTH)
   (WHEN (PLUSP WIDTH)
     (LET ((OUT NIL) (CUR NIL) (LEN 0))
@@ -56,7 +50,6 @@
                              LEN 0))))))
       (WHEN CUR (PUSH (NREVERSE CUR) OUT))
       (NREVERSE OUT)))) 
-
 (DEFUN UI-TRUNCATE-CHUNKS (CHUNKS WIDTH)
   (WHEN (PLUSP WIDTH)
     (LET ((OUT NIL) (LEN 0))
@@ -65,21 +58,17 @@
           (WHEN (PLUSP M) (PUSH (CONS (SUBSEQ S 0 M) (CDR CK)) OUT))
           (INCF LEN M)))
       (NREVERSE OUT)))) 
-
 (DEFSTRUCT UIGRID W H CHARS ATTRS) 
-
 (DEFUN UI-GRID-MAKE (W H)
   (MAKE-UIGRID :W W :H H :CHARS (MAKE-STRING (* W H) :INITIAL-ELEMENT #\ )
                :ATTRS
                (MAKE-ARRAY (* W H) :ELEMENT-TYPE '(UNSIGNED-BYTE 16)
                            :INITIAL-ELEMENT 7))) 
-
 (DEFUN UI-GRID-PUT (G X Y CH ATTR)
   (WHEN (AND (<= 0 X) (< X (UIGRID-W G)) (<= 0 Y) (< Y (UIGRID-H G)))
     (LET ((I (+ X (* Y (UIGRID-W G)))))
       (SETF (CHAR (UIGRID-CHARS G) I) CH
             (AREF (UIGRID-ATTRS G) I) ATTR)))) 
-
 (DEFUN UI-GRID-WRITE (G X Y STRING ATTR MAX-W)
   (LET ((N (MIN (LENGTH STRING) (MAX 0 (- (UIGRID-W G) X)) MAX-W))
         (W (UIGRID-W G)))
@@ -88,13 +77,10 @@
         (SETF (CHAR (UIGRID-CHARS G) I) (CHAR STRING K)
               (AREF (UIGRID-ATTRS G) I) ATTR)))
     (+ X N))) 
-
 (DEFUN UI-GRID-WRITE-CHUNKS (G X Y CHUNKS MAX-W)
   (DOLIST (CK CHUNKS X)
     (SETF X (UI-GRID-WRITE G X Y (CAR CK) (CDR CK) (MAX 0 (- MAX-W X)))))) 
-
 (DEFPARAMETER +UI-BOX-CHARS+ "─│┌┐└┘├┤┬┴┼") 
-
 (DEFUN UI-DRAW-BOX (G X Y W H ATTR TITLE)
   (WHEN (OR (< W 2) (< H 2)) (RETURN-FROM UI-DRAW-BOX))
   (UI-GRID-PUT G X Y #\BOX_DRAWINGS_LIGHT_DOWN_AND_RIGHT ATTR)
@@ -110,11 +96,8 @@
   (WHEN (AND TITLE (PLUSP (LENGTH TITLE)) (> W 4))
     (UI-GRID-WRITE G (+ X 2) Y (SUBSEQ TITLE 0 (MIN (LENGTH TITLE) (- W 4)))
                    ATTR (- W 4)))) 
-
 (DEFUN UI-BOX-HCONN (CH) (FIND CH "─┌┐├┤┬┴┼")) 
-
 (DEFUN UI-BOX-VCONN (CH) (FIND CH "│┌┐└┘├┤┬┴┼")) 
-
 (DEFUN UI-FIX-BOXES (G)
   (LET ((W (UIGRID-W G)) (H (UIGRID-H G)) (CHARS (UIGRID-CHARS G)))
     (DOTIMES (Y H)
@@ -144,128 +127,3 @@
                      ((AND S E2) #\BOX_DRAWINGS_LIGHT_UP_AND_RIGHT)
                      ((AND S W2) #\BOX_DRAWINGS_LIGHT_UP_AND_LEFT) (T CH))))
               (SETF (CHAR CHARS (+ X (* Y W))) FIXED)))))))) 
-
-(DEFCONSTANT +UI-FG-MASK+ 15) 
-
-(DEFCONSTANT +UI-BG-MASK+ 240) 
-
-(DEFUN UI-ATTR (FG &KEY BRIGHT BG BGBRIGHT)
-  (LOGIOR (LOGAND FG 7)
-          (IF BRIGHT
-              8
-              0)
-          (IF BG
-              (ASH (1+ (LOGAND BG 7)) 4)
-              0)
-          (IF BGBRIGHT
-              128
-              0))) 
-
-(DEFUN UI-ATTR-CODES (ATTR)
-  (LET ((FG (LOGAND ATTR 7))
-        (FB (LOGBITP 3 ATTR))
-        (BG (ASH ATTR -4))
-        (BB (LOGBITP 7 ATTR))
-        (CODES NIL))
-    (WHEN (PLUSP BG)
-      (PUSH
-       (+ 39 BG
-          (IF BB
-              60
-              0))
-       CODES))
-    (PUSH
-     (+ 30 FG
-        (IF FB
-            60
-            0))
-     CODES)
-    (NREVERSE CODES))) 
-
-(DEFUN UI-ATTR-STRING (ATTR PREV)
-  (IF (= ATTR PREV)
-      ""
-      (FORMAT NIL "~C[0m~C[~{~d~^;~}m" #\Esc #\Esc (UI-ATTR-CODES ATTR)))) 
-
-(DEFUN UI-C256 (N)
-  (COND ((< N 16) N)
-        ((< N 232)
-         (LET* ((M (- N 16))
-                (R (FLOOR M 36))
-                (G (FLOOR (MOD M 36) 6))
-                (B (MOD M 6))
-                (HI (MAX R G B))
-                (LO (MIN R G B)))
-           (IF (<= (- HI LO) 1)
-               (IF (< (/ (+ R G B) 3.0) 2.5)
-                   0
-                   7)
-               (LOGIOR
-                (COND ((AND (>= R G) (>= G B)) 3) ((AND (>= G R) (>= R B)) 2)
-                      ((AND (>= R B) (>= B G)) 1) ((AND (>= G B) (>= B R)) 2)
-                      ((AND (>= B R) (>= R G)) 5) (T 4))
-                (IF (>= HI 4)
-                    8
-                    0)))))
-        (T
-         (IF (> (- N 232) 12)
-             15
-             8)))) 
-
-(DEFUN UI-SGR-APPLY (PARAMS ATTR)
-  (LET ((PS PARAMS))
-    (LOOP WHILE PS
-          DO (LET ((P (POP PS)))
-               (COND ((= P 0) (SETF ATTR 7))
-                     ((= P 1) (SETF ATTR (LOGIOR ATTR 8)))
-                     ((= P 22) (SETF ATTR (LOGAND ATTR (LOGNOT 8))))
-                     ((= P 39)
-                      (SETF ATTR
-                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-FG-MASK+)) 7)))
-                     ((= P 49) (SETF ATTR (LOGAND ATTR (LOGNOT +UI-BG-MASK+))))
-                     ((<= 30 P 37)
-                      (SETF ATTR
-                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-FG-MASK+))
-                                      (- P 30))))
-                     ((<= 40 P 47)
-                      (SETF ATTR
-                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-BG-MASK+))
-                                      (ASH (1+ (- P 40)) 4))))
-                     ((<= 90 P 97)
-                      (SETF ATTR
-                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-FG-MASK+))
-                                      (+ 8 (- P 90)))))
-                     ((<= 100 P 107)
-                      (SETF ATTR
-                              (LOGIOR (LOGAND ATTR (LOGNOT +UI-BG-MASK+))
-                                      (ASH (1+ (- P 100)) 4) 128)))
-                     ((OR (= P 38) (= P 48))
-                      (LET* ((FGP (= P 38))
-                             (MASK
-                              (IF FGP
-                                  +UI-FG-MASK+
-                                  +UI-BG-MASK+))
-                             (MODE (AND PS (POP PS))))
-                        (COND
-                         ((AND MODE (= MODE 5) PS)
-                          (LET ((C (UI-C256 (POP PS))))
-                            (SETF ATTR
-                                    (LOGIOR (LOGAND ATTR (LOGNOT MASK))
-                                            (IF FGP
-                                                C
-                                                (LOGIOR (ASH (1+ C) 4)
-                                                        128))))))
-                         ((AND MODE (= MODE 2))
-                          (DOTIMES (K 3) (WHEN PS (POP PS)))))))
-                     (T NIL))))
-    ATTR)) 
-
-(DEFUN UI-SPLIT-PARAMS (S)
-  (IF (ZEROP (LENGTH S))
-      (LIST 0)
-      (LOOP WITH START = 0
-            FOR I = (POSITION #\; S :START START)
-            COLLECT (PARSE-INTEGER S :START START :END (OR I (LENGTH S))
-                                   :JUNK-ALLOWED T)
-            WHILE I
-            DO (SETF START (1+ I))))) 
