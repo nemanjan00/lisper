@@ -97,7 +97,11 @@ there would silently delete blank lines and comment headers."
   (let ((*read-eval* nil))
     (with-input-from-string (s text)
       (loop for raw = (file-position s)
-            for form = (read s nil :eof)
+            ;; READ-PRESERVING-WHITESPACE: plain READ consumes one
+            ;; whitespace char past the form, so END would include the
+            ;; newline ending the form's line — replacing the range
+            ;; then eats the blank line AFTER the form too.
+            for form = (read-preserving-whitespace s nil :eof)
             until (eq form :eof)
             collect (list form (rf-form-start text raw) (file-position s))))))
 
