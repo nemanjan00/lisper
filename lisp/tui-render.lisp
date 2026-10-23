@@ -498,13 +498,41 @@ the top."
            (start (max 0 (- end height))))
       (subseq all start end))))
 
+(defun tui-input-window (len cursor avail)
+  "Horizontal window of the input text for AVAIL screen columns (what
+remains of the row after the prompt). Returns (values start count left
+right): draw COUNT chars starting at START; LEFT/RIGHT call for a dim
+</> overflow marker at that edge. *tui-input-hscroll* scrolls minimally
+to keep CURSOR visible; while scrolling, one column per edge is reserved
+for the markers. The cursor never lands on a marker column."
+  (if (or (<= len avail) (< avail 3))
+      (progn (setf *tui-input-hscroll* 0)
+             (values 0 (min len avail) nil (> len avail)))
+      (let ((inner (- avail 2)))
+        (setf *tui-input-hscroll*
+              (max 0 (min *tui-input-hscroll* cursor (- len inner))))
+        (when (> (- cursor *tui-input-hscroll*) (1- inner))
+          (setf *tui-input-hscroll* (1+ (- cursor inner))))
+        (let ((end (min len (+ *tui-input-hscroll* inner))))
+          (values *tui-input-hscroll* (- end *tui-input-hscroll*)
+                  (> *tui-input-hscroll* 0) (< end len))))))
+
 (defun tui-draw-input (g ui y w)
+  "Draw prompt and the horizontally scrolled input line. Returns the
+terminal column (1-based) the cursor belongs on."
   (let* ((prefix (tui-ui-prefix ui))
          (pattr (if prefix (ui-attr 3 :bright t) (ui-attr 2 :bright t)))
-         (prompt (if prefix "*> " "> ")))
+         (prompt (if prefix "*> " "> "))
+         (text (coerce (tui-ui-input ui) 'string))
+         (plen (length prompt)))
     (ui-grid-write g 0 y prompt pattr w)
-    (ui-grid-write g (length prompt) y
-                   (coerce (tui-ui-input ui) 'string) 7 w)))
+    (multiple-value-bind (start count left right)
+        (tui-input-window (length text) *tui-input-cursor* (- w plen))
+      (let ((x plen))
+        (when left (ui-grid-put g x y #\‹ 8) (incf x))
+        (ui-grid-write g x y (subseq text start (+ start count)) 7 w)
+        (when right (ui-grid-put g (1- w) y #\› 8))
+        (+ x (- *tui-input-cursor* start) 1)))))
 
 (defun tui-draw-status (g ui y w)
   (let ((attr (ui-attr 7 :bright t :bg 4)))
