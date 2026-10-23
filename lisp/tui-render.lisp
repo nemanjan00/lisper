@@ -40,9 +40,7 @@ not enough — it would faithfully re-blit a corrupted *panes-canvas*."
 ;;; Hooks: events in, chat buffer out.
 
 (defun tui-install-hooks ()
-  (setf *emit* 'tui-emit)
-  (unless (member 'tui-before-request *before-request*)
-    (setf *before-request* (append *before-request* (list 'tui-before-request)))))
+  (setf *emit* 'tui-emit))
 
 (defvar *tui-display-error-times* nil
   "Recent universal-times of display (per-event formatting) errors, for
