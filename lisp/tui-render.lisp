@@ -128,7 +128,7 @@ embedded newlines must never reach the grid."
       (when (eq *tui* ui)
         (dolist (line (tui-chunk-lines chunks))
           (uibuf-append (tui-ui-chat ui) line :fresh t))))
-    (tui-dirty)))
+    (pane-dirty "chat")))
 
 (defun tui-chunk-lines (chunks)
   "Split (text . attr) CHUNKS into a list of chunk-lists, one per line."
