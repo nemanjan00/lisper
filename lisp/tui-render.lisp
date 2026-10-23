@@ -66,12 +66,36 @@ that does not emit :user events)."
       (t nil))))
 
 (defun tui-chat-add (chunks)
-  "Append one logical line of CHUNKS to the chat buffer."
+  "Append CHUNKS to the chat buffer, one buffer line per text line:
+embedded newlines must never reach the grid."
   (when *tui*
     (sb-thread:with-mutex (*tui-lock*)
       (when *tui*
-        (uibuf-append (tui-state-chat *tui*) chunks :fresh t)))
+        (dolist (line (tui-chunk-lines chunks))
+          (uibuf-append (tui-state-chat *tui*) line :fresh t))))
     (tui-dirty)))
+
+(defun tui-chunk-lines (chunks)
+  "Split (text . attr) CHUNKS into a list of chunk-lists, one per line."
+  (let ((out nil)
+        (cur nil))
+    (dolist (ck chunks)
+      (let ((s (car ck))
+            (a (cdr ck))
+            (start 0))
+        (loop
+          (let ((p (position #\Newline s :start start)))
+            (if p
+                (progn
+                  (push (cons (subseq s start p) a) cur)
+                  (push (nreverse cur) out)
+                  (setf cur nil)
+                  (setf start (1+ p)))
+                (progn
+                  (push (cons (subseq s start) a) cur)
+                  (return)))))))
+    (when cur (push (nreverse cur) out))
+    (nreverse out)))
 
 (defun first-line (s)
   (subseq s 0 (or (position #\Newline s) (length s))))
