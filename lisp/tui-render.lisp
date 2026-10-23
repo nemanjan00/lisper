@@ -196,28 +196,29 @@ embedded newlines must never reach the grid."
 
 (defun tui-redraw-loop (ui)
   (loop while (and *tui* (eq *tui* ui))
-        do (handler-case
-               (progn
-                 (sb-thread:with-mutex (*tui-lock*)
-                   (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
-                         do (sb-thread:condition-wait *tui-cv* *tui-lock*
-                                                      :timeout (tui-seconds-to-next-minute))
-                            ;; A timeout is only the once-a-minute clock
-                            ;; tick; TUI-DIRTY wakes the wait otherwise.
-                            ;; Note: CONDITION-WAIT returns T even on
-                            ;; timeout here, so test the clock, not it.
-                            (when (and (zerop *tui-dirty*)
-                                       (tui-minute-changed-p))
-                              (incf *tui-dirty*)))
-                   ;; Consume the flag BEFORE drawing: emitters append
-                   ;; state first and bump the counter under the same
-                   ;; lock, so nothing can be lost; a bump during the
-                   ;; draw schedules exactly one more pass.
-                   (when (and *tui* (eq *tui* ui))
-                     (setf *tui-dirty* 0)))
-                 (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
-             (serious-condition (c)
-               (when (eq *tui* ui) (tui-crash c))))))
+        do (handler-bind ((serious-condition #'tui-log-crash-at-signal))
+             (handler-case
+                 (progn
+                   (sb-thread:with-mutex (*tui-lock*)
+                     (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
+                           do (sb-thread:condition-wait *tui-cv* *tui-lock*
+                                                        :timeout (tui-seconds-to-next-minute))
+                              ;; A timeout is only the once-a-minute clock
+                              ;; tick; TUI-DIRTY wakes the wait otherwise.
+                              ;; Note: CONDITION-WAIT returns T even on
+                              ;; timeout here, so test the clock, not it.
+                              (when (and (zerop *tui-dirty*)
+                                         (tui-minute-changed-p))
+                                (incf *tui-dirty*)))
+                     ;; Consume the flag BEFORE drawing: emitters append
+                     ;; state first and bump the counter under the same
+                     ;; lock, so nothing can be lost; a bump during the
+                     ;; draw schedules exactly one more pass.
+                     (when (and *tui* (eq *tui* ui))
+                       (setf *tui-dirty* 0)))
+                   (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
+               (serious-condition (c)
+                 (when (eq *tui* ui) (tui-crash c)))))))
 
 (defun tui-draw (ui)
   (tui-maybe-update-size ui)
