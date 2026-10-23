@@ -14,34 +14,37 @@
 
 (defun tui-emit (event)
   "Receives every agent event. With no UI running, print like the core."
-  (if (null *tui*)
-      (terminal-emit event)
-      (handler-case (tui-log-event event)
-        (serious-condition (c) (tui-crash c)))))
+  (let ((ui *tui*))
+    (if (null ui)
+        (terminal-emit event)
+        (handler-case (tui-log-event ui event)
+          (serious-condition (c) (when (eq *tui* ui) (tui-crash c)))))))
 
 (defun tui-before-request (body)
   "Show the newest user message (covers the queue and the pre-restart core
 that does not emit :user events)."
-  (when *tui*
-    (handler-case
-        (let* ((msgs (gethash "messages" body))
-               (last (and (vectorp msgs) (plusp (length msgs))
-                          (aref msgs (1- (length msgs))))))
-          (when (and last (string= (gethash "role" last) "user")
-                     (stringp (gethash "content" last)))
-            (tui-show-user (gethash "content" last))))
-      (serious-condition (c) (tui-crash c))))
+  (let ((ui *tui*))
+    (when ui
+      (handler-case
+          (let* ((msgs (gethash "messages" body))
+                 (last (and (vectorp msgs) (plusp (length msgs))
+                            (aref msgs (1- (length msgs))))))
+            (when (and last (string= (gethash "role" last) "user")
+                       (stringp (gethash "content" last)))
+              (tui-show-user ui (gethash "content" last))))
+        (serious-condition (c) (when (eq *tui* ui) (tui-crash c))))))
   body)
 
-(defun tui-show-user (text)
+(defun tui-show-user (ui text)
   "Log a user message unless it is already on screen."
   (sb-thread:with-mutex (*tui-lock*)
-    (when (and *tui* (not (equal text (tui-state-shown-user *tui*))))
-      (setf (tui-state-shown-user *tui*) text
-            (tui-state-pending-user *tui*) nil
-            (tui-state-scroll *tui*) 0)
-      (uibuf-append (tui-state-chat *tui*)
-                    (list (cons "you ❯ " (ui-attr 2 :bright t))
+    (when (and (eq *tui* ui)
+               (not (equal text (tui-state-shown-user ui))))
+      (setf (tui-state-shown-user ui) text
+            (tui-state-pending-user ui) nil
+            (tui-state-scroll ui) 0)
+      (uibuf-append (tui-state-chat ui)
+                    (list (cons "you> " (ui-attr 2 :bright t))
                           (cons text (ui-attr 2 :bright t)))
                     :fresh t)))
   (tui-dirty))
