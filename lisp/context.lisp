@@ -468,13 +468,15 @@ injection would lose it on a failed request)."
   "Rough token estimate of what the next request carries: message
 contents AND tool-call arguments — the part content-only estimates
 miss, and the part that dominated before the first collapse."
-  (reduce #'+ (mapcar (lambda (m)
-                        (+ (ctx-est-tokens (or (gethash "content" m) ""))
-                           (reduce #'+ (mapcar (lambda (tc)
-                                                 (ctx-est-tokens (or (gethash "arguments" tc) "")))
-                                               (gethash "tool_calls" m))
-                                   :initial-value 0)))
-                      *messages*)))
+  ;; *MESSAGES* is a list, but "tool_calls" arrives from the wire as a
+  ;; VECTOR — iterate it with ACROSS, never mapcar/for-in.  (A mapcar
+  ;; over it was the "#(...) is not of type LIST" that locked out every
+  ;; request.)
+  (flet ((est (x) (ctx-est-tokens (if (stringp x) x ""))))
+    (loop for m in *messages*
+          sum (+ (est (gethash "content" m))
+                 (loop for tc across (or (gethash "tool_calls" m) #())
+                       sum (est (gethash "arguments" tc)))))))
 
 (defun ctx-before-request (body)
   "The compactor's view of every request: assign entry ids, offload

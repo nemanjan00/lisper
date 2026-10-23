@@ -442,3 +442,16 @@ Backtrace for: #<SB-THREAD:THREAD tid=1119026 "tui-redraw" RUNNING {1201ACEC83}>
 7: (SB-THREAD::RUN)
 8: ("foreign function: call_into_lisp_")
 9: ("foreign function: funcall1")
+--- TUI crash 4001768449 ---
+The current thread is not holding #<SB-THREAD:MUTEX free owner=0 {1200E34973}>.
+Backtrace for: #<SB-THREAD:THREAD tid=1517882 "tui-redraw" RUNNING {12029F2753}>
+0: (LISPING::TUI-LOG-CRASH #<SIMPLE-ERROR "The current thread is not holding ~s." {1202B666C3}>)
+1: (LISPING::TUI-CRASH #<SIMPLE-ERROR "The current thread is not holding ~s." {1202B666C3}>)
+2: (LISPING::TUI-REDRAW-LOOP #S(LISPING::TUI-UI :TTY #<SB-SYS:FD-STREAM for "tui-tty" {120290E893}> :WIDTH 208 :HEIGHT 62 :CHAT #S(LISPING::UIBUF :NAME NIL :LINES #(#S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (# #))) :CAP 2000 :ALIGN :BOTTOM :WRAP T :LAST-ATTR 10) :INPUT "" :PREFIX NIL :SCROLL 0 :SHOWN-USER #<(SIMPLE-ARRAY CHARACTER (576)) [entry 1] [boot] [developer] I restarted you: your ctx-before-request hook (edited at 20:17:52 in lisp/context.lisp) failed on every request with "#(...) is not of type LIST", because the request body... {1202ABD22F}> :PENDING-USER NIL :THREADS (#<SB-THREAD:THREAD tid=1517881 "tui-keys" RUNNING {12029F2573}> #<SB-THREAD:THREAD tid=1517882 "tui-redraw" RUNNING {12029F2753}>)))
+3: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+4: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: (SB-THREAD::RUN)
+8: ("foreign function: call_into_lisp_")
+9: ("foreign function: funcall1")
