@@ -510,60 +510,72 @@ PREVIOUS request recalibrates the ratio, so this tracks reality."
 over-long tool results (originals kept), prefix [entry N] marks on tool
 results and user messages, and inject threshold / truncation /
 milestone notes.  Only the request copy is prefixed; stored messages
-stay clean."
+stay clean.  Also calibrates the token estimate: PT (reported usage of
+the request just answered) against the chars we counted for it."
   (let ((messages (gethash "messages" body)))
     (when (vectorp messages)
-      (let ((notes '()))
-        (loop for m across messages
-              unless (equal (gethash "role" m) "system")
-              do (ctx-entry-id m)
-                 (ctx-auto-offload m))
-        (let* ((usage *last-usage*)
-               (pt (and (hash-table-p usage) (integerp (gethash "prompt_tokens" usage))
-                        (gethash "prompt_tokens" usage)))
-               (est (ctx-local-estimate))
-               ;; Threshold on whichever says MORE: once the endpoint
-               ;; starts truncating, prompt_tokens freezes and hides it.
-               (basis (max (or pt 0) est))
-               (percent (round (* 100 basis) *ctx-window*))
-               (low-pt (and pt (plusp est) (< pt (* 7/10 est)))))
-          ;; Ratchet reset: a collapse dropped us below the threshold —
-          ;; let the nudges fire again.
-          (when (< percent *ctx-note-at*)
-            (setf *ctx-noted-percent* 0))
-          (setf *ctx-last-prompt-tokens* pt
-                *ctx-last-visible-count* (length *messages*))
-          ;; Truncation check: the endpoint reports far fewer prompt_tokens
-          ;; than the local estimate of the SAME request, twice running, and
-          ;; not right after a collapse (which legitimately shrinks the
-          ;; request; *last-usage* lags one request, so the drop showed up
-          ;; when the count had grown again — the old "flat or falling while
-          ;; it grew" test fired on exactly that and was a false alarm).
-          (incf *ctx-requests-since-collapse*)
-          (if low-pt
-              (incf *ctx-low-pt-streak*)
-              (setf *ctx-low-pt-streak* 0))
-          (when (and (>= *ctx-low-pt-streak* 2)
-                     (>= *ctx-requests-since-collapse* 2))
-            (push (format nil "[context: TRUNCATION LIKELY] prompt_tokens ~D is under 70% of the local estimate ~:D two requests running — the endpoint may be silently dropping the middle. Rewind the biggest finished stretch NOW: context_rewind {from, to, summary}."
-                          pt est)
-                  notes))
-          (let ((note (ctx-threshold-note percent)))
-            (when note (push note notes))))
-        (when *ctx-pending-note*
-          (push *ctx-pending-note* notes))
-        (setf (gethash "messages" body)
-              (coerce (append (loop for m across messages
-                                    collect (ctx-prefix-message m (ctx-entry-id m)))
-                              (mapcar (lambda (n)
-                                        (let ((m (obj :role "user" :content n)))
-                                          (setf (gethash "x-kind" m) "note")
-                                          m))
-                                      (reverse notes)))
-                      'vector))
-        (pane-dirty "context")
-        body))))
-
+      ;; Chars of THIS request: system prompt + tool specs + messages.
+      (let ((tools (gethash "tools" body)))
+        (setf *ctx-tools-chars*
+              (if tools (length (json-encode tools)) 0)))
+      (let ((chars (+ (length (ctx-system-prompt-text))
+                      *ctx-tools-chars*
+                      (loop for m across messages sum (ctx-message-chars m)))))
+        (let ((notes '()))
+          (loop for m across messages
+                unless (equal (gethash "role" m) "system")
+                do (ctx-entry-id m)
+                   (ctx-auto-offload m))
+          (let* ((usage *last-usage*)
+                 (pt (and (hash-table-p usage)
+                          (integerp (gethash "prompt_tokens" usage))
+                          (gethash "prompt_tokens" usage)))
+                 ;; Calibrate: PT describes the request whose chars we
+                 ;; counted last time (*CTX-PREV-REQUEST-CHARS*).
+                 (dummy (when (and pt *ctx-prev-request-chars*
+                                   (plusp *ctx-prev-request-chars*) (plusp pt))
+                          (setf *ctx-chars-per-token*
+                                (min 8.0 (max 1.5 (/ (float *ctx-prev-request-chars*) pt))))))
+                 (est (max 1 (round chars *ctx-chars-per-token*)))
+                 (basis (max (or pt 0) est))
+                 (percent (round (* 100 basis) *ctx-budget*))
+                 (low-pt (and pt (plusp est) (< pt (* 7/10 est)))))
+            (declare (ignore dummy))
+            (setf *ctx-prev-request-chars* chars
+                  *ctx-last-est* est)
+            ;; Ratchet reset: a collapse dropped us below the threshold —
+            ;; let the nudges fire again.
+            (when (< percent *ctx-note-at*)
+              (setf *ctx-noted-percent* 0))
+            (setf *ctx-last-prompt-tokens* pt
+                  *ctx-last-visible-count* (length *messages*))
+            ;; Truncation check: the endpoint reports far fewer
+            ;; prompt_tokens than the local estimate of the SAME request,
+            ;; twice running, and not right after a collapse.
+            (incf *ctx-requests-since-collapse*)
+            (if low-pt
+                (incf *ctx-low-pt-streak*)
+                (setf *ctx-low-pt-streak* 0))
+            (when (and (>= *ctx-low-pt-streak* 2)
+                       (>= *ctx-requests-since-collapse* 2))
+              (push (format nil "[context: TRUNCATION LIKELY] prompt_tokens ~D is under 70% of the local estimate ~:D two requests running — the endpoint may be silently dropping the middle. Rewind the biggest finished stretch NOW: context_rewind {from, to, summary}."
+                            pt est)
+                    notes))
+            (let ((note (ctx-threshold-note percent)))
+              (when note (push note notes))))
+          (when *ctx-pending-note*
+            (push *ctx-pending-note* notes))
+          (setf (gethash "messages" body)
+                (coerce (append (loop for m across messages
+                                      collect (ctx-prefix-message m (ctx-entry-id m)))
+                                (mapcar (lambda (n)
+                                          (let ((m (obj :role "user" :content n)))
+                                            (setf (gethash "x-kind" m) "note")
+                                            m))
+                                        (reverse notes)))
+                        'vector))
+          (pane-dirty "context")
+          body)))))
 ;;; ----------------------------------------------------------- the pane
 
 (defun pane-context-render (pane w h)
