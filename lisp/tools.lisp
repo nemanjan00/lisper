@@ -59,6 +59,7 @@ user's terminal forever."
 (defun todo-clear ()
   (setf *todos* nil)
   (todo-save)
+  (ignore-errors (pane-dirty "todo"))
   "cleared")
 
 (defun todo-tool (args)
