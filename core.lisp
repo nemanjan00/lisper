@@ -366,7 +366,14 @@ A git pre-commit hook boot-checks every commit, however it's made."
         (return line)))))
 
 (defun restart-image (&optional resume-message)
-  "Exit so the supervisor restarts the image. RESUME-MESSAGE is sent to you after boot."
+  "Exit so the supervisor restarts the image. RESUME-MESSAGE is sent to you after boot,
+followed by any user messages that were still held, waiting for the turn to end."
+  (let ((held (and (boundp '*held*) (symbol-value '*held*))))
+    (when held
+      (setf resume-message
+            (format nil "~@[~A~%~%~]Messages that were waiting when the image restarted, oldest first:~{~%- ~A~}"
+                    resume-message
+                    (mapcar (lambda (item) (if (consp item) (car item) item)) held)))))
   (when resume-message
     (with-open-file (out (resume-path) :direction :output :if-exists :supersede
                                        :if-does-not-exist :create :external-format :utf-8)
@@ -688,10 +695,13 @@ everything is committed together."
                   lisp (mapcar #'first entries) problems))))))
 
 (defun write-file-and-load (path code)
-  "Write CODE verbatim to PATH, relative to *root*. A .lisp file is then loaded,
-like saving a buffer and running eval-buffer in Emacs: if loading reports any
-problem, the previous version is put back (and loaded again), so the file only
-ever holds code that loaded cleanly. Commits what sticks."
+  "Write CODE verbatim to PATH, relative to *root*. A .lisp file is first checked
+in a fresh boot (TEST-BOOT); only if that's clean is it loaded into the running
+image and committed, like saving a buffer and running eval-buffer in Emacs.
+If the fresh boot reports problems, the previous version is put back and the
+running image isn't touched. Problems that show up only when loading into the
+running image come from state in that image, not the file, so the file is kept
+(as WRITE-FILES-AND-LOAD does) and they're reported."
   (let* ((file (merge-pathnames path *root*))
          (name (enough-namestring file *root*))
          (old (read-text file)))
@@ -704,9 +714,6 @@ ever holds code that loaded cleanly. Commits what sticks."
        (format nil "Wrote ~A (~D characters)." name (length code)))
       (t
        (write-text file code)
-       ;; First a fresh SBCL boots with the new file in place. If that reports
-       ;; problems, the running image is never touched: a failed load can't
-       ;; leave half-applied definitions behind in it.
        (let ((fresh (test-boot :timeout 60 :extra name)))
          (when fresh
            (if old (write-text file old) (ignore-errors (delete-file file)))
@@ -715,20 +722,14 @@ ever holds code that loaded cleanly. Commits what sticks."
                      name fresh old))))
        (let* ((out (make-string-output-stream))
               (problems (load-collecting file out))
-              (output (limit-output (get-output-stream-string out))))
-         (cond
-           ((null problems)
-            (commit (format nil "~:[add~;update~] ~A" old name) name)
-            (let ((init (read-text (init-path))))
-              (format nil "~@[~A~%~]Wrote and loaded ~A; committed.~:[~%Note: init.lisp doesn't mention ~A, so it won't be loaded at boot.~;~]"
-                      (and (string/= output "") output) name
-                      (or (string= name "init.lisp") (and init (search (pathname-name file) init)))
-                      name)))
-           (t
-            (if old (write-text file old) (ignore-errors (delete-file file)))
-            (when old (load-collecting file (make-broadcast-stream)))
-            (format nil "~@[~A~%~]NOT SAVED. Loading ~A reported:~%~{- ~A~%~}~:[The file was new, so it was removed.~;The previous version was put back and loaded again.~] Definitions made before the problem are still in the running image."
-                    (and (string/= output "") output) name problems old))))))))
+              (output (limit-output (get-output-stream-string out)))
+              (init (read-text (init-path))))
+         (commit (format nil "~:[add~;update~] ~A" old name) name)
+         (format nil "~@[~A~%~]Wrote and loaded ~A; committed.~@[~%~A~]~@[~%Loading into the running image reported (the file is kept, since it boots cleanly; a restart gives you exactly the files):~%~{- ~A~%~}~]"
+                 (and (string/= output "") output) name
+                 (unless (or (string= name "init.lisp") (and init (search (pathname-name file) init)))
+                   (format nil "Note: init.lisp doesn't mention ~A, so it won't be loaded at boot." name))
+                 problems))))))
 
 (register-tool "eval"
                "Evaluate Common Lisp in your own running SBCL image (package LISPING), like M-: in Emacs: it changes the running image only. With `file`, the code is instead written verbatim to that file and, for a .lisp file, loaded, like saving a buffer and eval-buffer; it is kept and committed only if it loads without errors or warnings."
@@ -785,7 +786,9 @@ it's kept as the message's x-kind and never sent to the model API."
     ;; emitted from a thread of its own: the caller may be a UI thread holding
     ;; its own lock, and *emit* calling back into that UI would deadlock or
     ;; hit a recursive lock.
-    (sb-thread:make-thread (lambda () (emit :queued :text text)) :name "emit-queued")
+    (let ((shown (if (char= (char text 0) #\!) (string-left-trim " " (subseq text 1)) text)))
+      ;; Shown as it will arrive: an urgent message's ! is stripped before :user too.
+      (sb-thread:make-thread (lambda () (emit :queued :text shown)) :name "emit-queued"))
     t))
 
 (defun fallback-emit (event)
