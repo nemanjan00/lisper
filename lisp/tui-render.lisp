@@ -172,7 +172,9 @@ that does not emit :user events)."
 (defun tui-visible-lines (buf width height scroll)
   "Top-first chunk-lists fitting HEIGHT rows, scrolled up SCROLL lines."
   (let* ((src (uibuf-lines buf))
-         (recent (last src (min (length src) 400)))
+         (n0 (length src))
+         (recent (loop for i from (max 0 (- n0 400)) below n0
+                       collect (aref src i)))
          (all (loop for ln in recent
                     append (or (ui-wrap-chunks (uline-chunks ln) width)
                                (list nil))))
