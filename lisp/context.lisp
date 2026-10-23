@@ -200,6 +200,7 @@ that owns them; a trailing assistant carries its tool results along."
          (push (list from-id to-id (ctx-short summary) marker (length stretch) est)
                *ctx-stretches*)
          (ctx-replace-range i j marker)
+         (setf *ctx-requests-since-collapse* 0)
          (pane-dirty "context")
          (format nil "[ctx] collapsed entries e~D … e~D (~D messages, ~DK est tokens); takes effect from the next request."
                  from-id to-id (length stretch) (round est 1000)))))))
