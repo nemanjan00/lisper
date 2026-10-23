@@ -175,7 +175,8 @@ modifier/motion bits we ignore."
          ;; before SEND-USER-MESSAGE reads it.
          (text (string-trim " " (copy-seq in))))
     (when (plusp (length text))
-      (setf (fill-pointer in) 0)
+      (setf (fill-pointer in) 0
+            *tui-input-cursor* 0)
       ;; Echo it dimmed right away; the core's :queued/:user events and
       ;; TUI-SHOW-USER dedupe and upgrade this line.
       (tui-show-queued ui text)
