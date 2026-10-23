@@ -186,8 +186,8 @@ messages (x-kind) and the older text-marked markers don't count."
 
 (defun ctx-marker-text (stretch from-id to-id summary est)
   (with-output-to-string (s)
-    (format s "[collapsed with context_rewind: ~D entries, e~D … e~D, ~D messages, ~DK est tokens]~%~A~%"
-            (length stretch) from-id to-id (length stretch) (round est 1000) summary)
+    (format s "[collapsed with context_rewind: ~D entries, e~D … e~D, ~D messages, ~A est tokens]~%~A~%"
+            (length stretch) from-id to-id (length stretch) (ctx-fmt-k est) summary)
     (format s "~%[index of what this replaced: find a detail in it with context_search {\"text\": ...}, or read one entry back with context_restore {\"entry\": \"e~D\"}]~%"
             from-id)
     (loop for m in stretch
@@ -232,8 +232,12 @@ calls produce several)."
        (let* ((stretch (subseq *messages* i (1+ j)))
               (from-id (ctx-entry-id (first stretch)))
               (to-id (ctx-entry-id (car (last stretch))))
-              (est (reduce #'+ (mapcar (lambda (m) (ctx-est-tokens (or (gethash "content" m) "")))
-                                       stretch)))
+              ;; Full estimate — content + reasoning + tool-call args,
+              ;; via CTX-MESSAGE-CHARS — measured BEFORE the stretch is
+              ;; replaced. The content-only estimate skipped tool-call
+              ;; arguments and whole-K rounding printed "(0K)".
+              (est (round (reduce #'+ (mapcar #'ctx-message-chars stretch))
+                          *ctx-chars-per-token*))
               (marker (obj :role "user" :content (ctx-marker-text stretch from-id to-id summary est))))
          ;; Provenance: the core strips x-kind before the request and
          ;; counts x-kind'd messages as system-written, so this marker
@@ -246,8 +250,8 @@ calls produce several)."
          (ctx-replace-range i j marker)
          (setf *ctx-requests-since-collapse* 0)
          (pane-dirty "context")
-         (format nil "[ctx] collapsed entries e~D … e~D (~D messages, ~DK est tokens); takes effect from the next request."
-                 from-id to-id (length stretch) (round est 1000)))))))
+         (format nil "[ctx] collapsed entries e~D … e~D (~D messages, ~A est tokens); takes effect from the next request."
+                 from-id to-id (length stretch) (ctx-fmt-k est)))))))
 
 (defun ctx-tool-rewind (args)
   "context_rewind {from, to?, summary}"
@@ -625,6 +629,15 @@ the request just answered) against the chars we counted for it."
           (pane-dirty "context")
           body)))))
 
+(defun ctx-fmt-k (n)
+  "Compact token count: 246 -> \"246\", 3954 -> \"3.9k\", 32768 -> \"32k\".
+For approximate counts (rewind sizes) where rounding to whole K would
+print 0."
+  (cond ((< n 1000) (format nil "~D" n))
+        ((< n 10000) (format nil "~,1Fk" (/ n 1000)))
+        ((< n 1000000) (format nil "~Dk" (round n 1000)))
+        (t (format nil "~,1FM" (/ n 1000000)))))
+
 (defun ctx-fmt-size (n)
   "Human token counts for the context line: 1048576 -> \"1M\", 8192 -> \"8K\";
 anything not an exact multiple keeps the full ~:D form."
@@ -663,9 +676,9 @@ shown as what has grown since."
               8)))
            (extra '()))
       (dolist (st *ctx-stretches*)
-        (push (line (format nil "rewind e~D…e~D: ~A (~DK)"
+        (push (line (format nil "rewind e~D…e~D: ~A (~A)"
                             (first st) (second st) (third st)
-                            (round (sixth st) 1000))
+                            (ctx-fmt-k (sixth st)))
                     8)
               extra))
       (when (plusp *ctx-offloaded-count*)
