@@ -113,12 +113,14 @@ queued echo of the same text instead of duplicating it."
 
 (defun tui-show-queued (ui text)
   "Echo a just-submitted message dimmed, ahead of the model picking it
-up; TUI-SHOW-USER replaces this line when the :user event arrives."
+up; TUI-SHOW-USER replaces this line when the :user event arrives.
+Queued messages can pile up (the core holds them until the turn ends),
+so *TUI-QUEUED-TEXT* is a list, oldest first."
   (when (and (eq *tui* ui) (stringp text) (plusp (length text))
-             (not (equal text *tui-queued-text*)))
+             (not (member text *tui-queued-text* :test #'equal)))
     (sb-thread:with-recursive-lock (*tui-lock*)
       (when (eq *tui* ui)
-        (setf *tui-queued-text* text)
+        (setf *tui-queued-text* (append *tui-queued-text* (list text)))
         (uibuf-append (tui-ui-chat ui)
                       (list (cons "you (queued)> " 8)
                             (cons text 8))
