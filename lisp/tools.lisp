@@ -44,6 +44,7 @@ user's terminal forever."
       (let ((item (nth (1- index) *todos*)))
         (setf (cdr item) t)
         (todo-save)
+        (ignore-errors (pane-dirty "todo"))
         (format nil "done: ~A" (car item)))
       (format nil "no todo at index ~A (~D todos)" index (length *todos*))))
 
