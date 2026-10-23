@@ -148,7 +148,7 @@ write-and-load check."
 
 (lisping-core::register-tool
  "replace_form"
- "Replace the whole top-level form (defun, defvar, defmacro, ...) defining `name` in `path` with `new_source`. The old form's character range is found by reading the file with the Lisp reader, and `new_source` must read as exactly one complete form — both checked before writing. The result then goes through the core's boot-checked write-and-load, like edit_file. Use this instead of edit_file when replacing an entire definition: no text matching, no paren-count slips."
+ "Replace the whole top-level form (defun, defvar, defmacro, defclass, ...) defining `name` in `path` with `new_source`. new_source must read as EXACTLY ONE complete form — a helper plus the defun (two forms) is refused; add the helper with edit_file instead. `name` must be defined exactly once at top level of `path`. The old form's character range is found by reading the file with the Lisp reader; whitespace and comments between forms are preserved. The result goes through the same boot-checked write-and-load as edit_file. Returns a status line."
  (lisping-core::obj "type" "object"
       "properties" (lisping-core::obj
                     "path" (lisping-core::obj "type" "string")
