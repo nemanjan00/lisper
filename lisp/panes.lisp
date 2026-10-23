@@ -630,7 +630,8 @@ must not depend on which package READ-FROM-STRING ran in."
   (let ((action (or (lisping-core::arg args "action") "get")))
     (ecase (intern (string-upcase action) :keyword)
       (:get (format nil "~S" *layout*))
-      (:set (let ((tree (read-from-string (lisping-core::arg args "sexpr"))))
+      (:set (let ((tree (layout-normalize-leaves
+                         (read-from-string (lisping-core::arg args "sexpr")))))
               (if (layout-valid-p tree)
                   (progn (setf *layout* tree) (panes-save)
                          (tui-drop-frame) (tui-dirty)
