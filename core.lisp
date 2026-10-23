@@ -575,7 +575,7 @@ ever holds code that loaded cleanly. Commits what sticks."
                       (or (string= name "init.lisp") (and init (search (pathname-name file) init)))
                       name)))
            (t
-            (if old (write-text file old) (delete-file file))
+            (if old (write-text file old) (ignore-errors (delete-file file)))
             (when old (load-collecting file (make-broadcast-stream)))
             (format nil "~@[~A~%~]NOT SAVED. Loading ~A reported:~%~{- ~A~%~}~:[The file was new, so it was removed.~;The previous version was put back and loaded again.~] Definitions made before the problem are still in the running image."
                     (and (string/= output "") output) name problems old))))))))
