@@ -31,8 +31,10 @@
         :bytes *tui-bytes-total*))
 
 (defun tui-force-redraw ()
-  "Drop the remembered frame so the next draw is a full render (C-b r)."
-  (setf *tui-prev-grid* nil))
+  "Repaint from scratch (C-b r): fresh panes canvas, every pane dirty,
+no diff against the previous frame.  Dropping only *tui-prev-grid* is
+not enough — it would faithfully re-blit a corrupted *panes-canvas*."
+  (tui-drop-frame))
 
 ;;; ---------------------------------------------------------------
 ;;; Hooks: events in, chat buffer out.
