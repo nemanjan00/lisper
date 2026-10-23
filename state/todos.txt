@@ -13,3 +13,14 @@
 [ ] Input line: horizontal scroll window around cursor once text exceeds terminal width
 [ ] Consider defclass for tui-ui/pane so slots can change on live instances (drops the *tui-input-cursor*-style globals)
 [x] Chat auto-scroll: Enter jumps to bottom; while scrolled up, new lines raise scroll offset (reading position pinned) + "↓ N new" marker on pane bottom edge until scrolled back down
+[ ] Compactor fix 1: reset *ctx-noted-percent* to 0 when percent drops below *ctx-note-at* (ratchet never resets; nudges die after first collapse)
+[ ] Compactor fix 2: move todo-done watcher from *emit* wrapper to core *observers*; re-register context pane renderer on every panes-init (hook or check in context-start, drop one-shot *ctx-autoloaded*)
+[ ] Compactor fix 3: skip layout changes + panes-save in test-boot (core now has *test-boot*; also guard *tui* nil) so state/layout.lisp isn't rewritten from test boots
+[ ] Compactor fix 4: context_rewind snap range to whole tool-call units (start at owning assistant msg, end after last tool result) — else core fills gap with false [core] No result stubs
+[ ] Compactor fix 5: provenance — tag synthetic messages with x-kind key + use core synthetic-message-p (restored entries currently become 'current task' and kill rewind protection)
+[ ] Compactor fix 6: threshold on max(prompt_tokens, local estimate); flag truncation when prompt_tokens flat/falling while *messages* grew; real window > 120k guess
+[ ] Compactor minors: pane-draw-into-1 log render errors (not silent ignore-errors); *ctx-ids* weak table (:weakness :key); clear *ctx-pending-note* only after request succeeds
+[ ] Resize fix: SIGWINCH handler calls tui-dirty; redraw loop wakes every 2s for cheap size check (no stty unless winch counter changed or 2s passed); full redraw on size change
+[ ] Frame integrity: tui-force-redraw drops *panes-canvas* + marks all panes dirty (C-b r repaints from scratch); pane split/add/remove also drop frame (prev-grid + canvas)
+[ ] Weather pane: restore it, make :cmd ticker actually populate it (last-run stayed 0), fix save/load (state/layout.lisp had :BUFFER upcased kind; normalize kinds case-insensitively)
+[ ] Separators: panes-draw-gap-columns is committed but didn't render — re-verify after frame fixes and debug on a COPY of the canvas, never the live one

@@ -47,10 +47,14 @@
 ;;; Registry
 
 (defun pane-register (name &key title kind cmd (interval 10))
-  "Register (or replace) a pane. KIND is :chat :todo :buffer :cmd."
+  "Register (or replace) a pane. KIND is :chat :todo :buffer :cmd —
+normalized to a lowercase keyword, so a hand-edited or upcased
+state/layout.lisp can't smuggle in :BUFFER (which silently disables
+the ticker and save/load round-trips)."
   (let ((p (or (gethash name *panes*) (make-pane :name name))))
     (setf (pane-title p) (or title name)
-          (pane-kind p) (or kind :buffer)
+          (pane-kind p) (intern (string-downcase (symbol-name (or kind :buffer)))
+                                :keyword)
           (pane-cmd p) cmd
           (pane-interval p) (max 1 (or interval 10))
           (pane-needs-redraw p) 1)
