@@ -357,3 +357,29 @@ Backtrace for: #<SB-THREAD:THREAD tid=521421 "agent" RUNNING {1202AFCA03}>
 9: (SB-THREAD::RUN)
 10: ("foreign function: call_into_lisp_")
 11: ("foreign function: funcall1")
+--- TUI crash 4001762124 ---
+Recursive lock attempt #<SB-THREAD:MUTEX free owner=0 {120452F283}>.
+Backtrace for: #<SB-THREAD:THREAD tid=597912 "tui-keys" RUNNING {1203D1B0A3}>
+0: (LISPING::TUI-LOG-CRASH #<SIMPLE-ERROR "Recursive lock attempt ~S." {1203D8E4C3}>)
+1: (LISPING::TUI-CRASH #<SIMPLE-ERROR "Recursive lock attempt ~S." {1203D8E4C3}>)
+2: (LISPING::TUI-KEY-LOOP #S(LISPING::TUI-UI :TTY #<SB-SYS:FD-STREAM for "tui-tty" {1203D18643}> :WIDTH 188 :HEIGHT 53 :CHAT #S(LISPING::UIBUF :NAME NIL :LINES #(#S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#))) :CAP 2000 :ALIGN :BOTTOM :WRAP T :LAST-ATTR 8) :INPUT "" :PREFIX NIL :SCROLL 0 :SHOWN-USER NIL :PENDING-USER NIL :THREADS (#<SB-THREAD:THREAD tid=597912 "tui-keys" RUNNING {1203D1B0A3}> #<SB-THREAD:THREAD tid=597913 "tui-redraw" RUNNING {1203D1B293}>)))
+3: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+4: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: (SB-THREAD::RUN)
+8: ("foreign function: call_into_lisp_")
+9: ("foreign function: funcall1")
+--- TUI crash 4001762238 ---
+Recursive lock attempt #<SB-THREAD:MUTEX free owner=0 {1204507A03}>.
+Backtrace for: #<SB-THREAD:THREAD tid=611057 "tui-keys" RUNNING {1202E095D3}>
+0: (LISPING::TUI-LOG-CRASH #<SIMPLE-ERROR "Recursive lock attempt ~S." {12035F1753}>)
+1: (LISPING::TUI-CRASH #<SIMPLE-ERROR "Recursive lock attempt ~S." {12035F1753}>)
+2: (LISPING::TUI-KEY-LOOP #S(LISPING::TUI-UI :TTY #<SB-SYS:FD-STREAM for "tui-tty" {1202D0FBA3}> :WIDTH 188 :HEIGHT 53 :CHAT #S(LISPING::UIBUF :NAME NIL :LINES #(#S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (# #)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) #S(LISPING::ULINE :CHUNKS (#)) ...) :CAP 2000 :ALIGN :BOTTOM :WRAP T :LAST-ATTR 8) :INPUT "" :PREFIX NIL :SCROLL 0 :SHOWN-USER "[boot] [verify] Post-core-fix restart. Re-run the full TUI checklist: threads, cursor, CPU, bytes, queued-line upgrade, plus typing a line + Enter via tmux send-keys. Report numbers." :PENDING-USER NIL :THREADS (#<SB-THREAD:THREAD tid=611057 "tui-keys" RUNNING {1202E095D3}> #<SB-THREAD:THREAD tid=611058 "tui-redraw" RUNNING {1202E097C3}>)))
+3: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+4: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+5: ((FLET SB-UNIX::BODY :IN SB-THREAD::RUN))
+6: ((FLET "WITHOUT-INTERRUPTS-BODY-" :IN SB-THREAD::RUN))
+7: (SB-THREAD::RUN)
+8: ("foreign function: call_into_lisp_")
+9: ("foreign function: funcall1")

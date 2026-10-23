@@ -19,6 +19,12 @@ Things I keep relearning on every restart — write them down once:
   old running core does not.) I renamed `tui-state` -> `tui-ui` to apply the
   weather-removal slot change before a restart.
 
+## Rules and boundaries
+- **tmux boundary**: only ever `capture-pane` / `send-keys` to MY pane —
+  `lisper:2` (the `bash run.sh` pane). All other tmux sessions/windows
+  belong to the user and other agents: never send keys there, don't read
+  them either. (Developer instruction, 2026-10-23.)
+
 ## Lessons from the UI work (expensive; do not relearn)
 
 1. **Define helpers before their callers.** An edit whose body calls a
