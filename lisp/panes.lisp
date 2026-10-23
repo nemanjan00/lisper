@@ -104,8 +104,9 @@
   (let* ((lines
           (let ((cur nil))
             (loop for (text . done) in *todos*
-                  for i from 1
-                  collect (list (cons (str-truncate (format nil "~D. ~A" i text) w)
+                  collect (list (cons (str-truncate
+                                       (format nil "[~A] ~A" (if done "x" " ") text)
+                                       w)
                                       (cond (done 8)
                                             ((null cur) (setf cur t)
                                              (ui-attr 7 :bright t :bg 4))

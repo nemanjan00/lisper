@@ -3,3 +3,5 @@
 [x] Tool lines: render dim+indented, apart from conversation (--> name / <-- N lines); smarter summaries — skip progn/let wrappers, show real defuns called or 'edit lisp/x.lisp'
 [x] Window manager: pane registry (name/title/render-fn/scroll/dirty), split-tree layout with ratios, dynamic renderers (buffer/log tail/clock), pane_add/pane_remove/pane_split/layout tools, persist state/layout.lisp; chat becomes one pane
 [x] test: live pane update
+[ ] Todo pane: render [ ]/[x] checkboxes, done ones dimmed
+[ ] Input line: cursor movement with Left/Right/Home/End, insert/backspace at cursor, draw terminal cursor there; move pane switching to C-b Left/Right and C-b 1/2/...
