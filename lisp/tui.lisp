@@ -78,13 +78,21 @@ the original termios for TUI-RESTORE-MODE."
           (values (parse-integer out :end sp)
                   (parse-integer out :start (1+ sp))))))))
 
-(defun tui-update-size ()
+(defun tui-kill-threads ()
+  "Terminate any stale tui-* worker threads. Old ones may be blocked in
+read-char on their own /dev/tty stream and would steal keystrokes."
+  (dolist (th (sb-thread:list-all-threads))
+    (when (and (not (eq th sb-thread:*current-thread*))
+               (search "tui-" (or (sb-thread:thread-name th) "")))
+      (ignore-errors (sb-thread:terminate-thread th)))))
+
+(defun tui-update-size (ui)
   (multiple-value-bind (rows cols) (tty-size)
     (when (and rows cols (plusp rows) (plusp cols)
-               (or (/= rows (tui-state-height *tui*))
-                   (/= cols (tui-state-width *tui*))))
-      (setf (tui-state-height *tui*) rows
-            (tui-state-width *tui*) cols)
+               (or (/= rows (tui-state-height ui))
+                   (/= cols (tui-state-width ui))))
+      (setf (tui-state-height ui) rows
+            (tui-state-width ui) cols)
       (tty-write (format nil "~C[2J" #\Esc)))))
 
 (defun tui-open-tty ()
