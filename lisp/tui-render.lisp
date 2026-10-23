@@ -4,7 +4,9 @@
 
 (in-package :lisping)
 
-(declaim (ftype function tui-draw-chat tui-draw-separator))
+(declaim (ftype function tui-draw-chat tui-draw-separator
+                tui-tool-call-line tui-tool-summary tui-chat-result
+                tui-replay-history))
 
 ;;; ---------------------------------------------------------------
 ;;; Frame state and perf counters. Only the redraw thread touches these.
