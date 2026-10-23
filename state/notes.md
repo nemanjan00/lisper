@@ -137,3 +137,26 @@ Things I keep relearning on every restart — write them down once:
   the pane's last content row, cleared when scroll hits 0 (229e96d).
 - **Pane gaps**: hsplit reserves a 1-column gap; panes-draw-separator repaints
   a dim │ every frame (no diff cost) so stale text can't linger (229e96d).
+
+## Session 2026-10-24 evening (compactor installed, first real collapse)
+- **lisp/context.lisp is the compactor** (ported from the user's ~/compactor/README.md):
+  context_rewind / context_offload / context_restore / context_search tools;
+  entry ids via *before-request* ([entry N] prefix on the request copy only —
+  stored messages stay clean); auto-offload of tool results over 20000 chars
+  (head+tail kept, original in the registry); threshold notes edge-triggered
+  (+5 points, *ctx-window* 120000); todo-done milestone nudge via the *emit*
+  watcher; context pane shows size + collapses. Wired in init.lisp:
+  (load-file "lisp/context.lisp") then (context-start) AFTER (tui-start).
+  Rewind guard: never the latest real user message or anything after it.
+- **First real collapse: entries e3…e136 (~134 messages) after prompt hit
+  ~177k tokens** — this endpoint silently truncates; *last-usage*
+  prompt_tokens lags one request behind the collapse.
+- **Pane renderers MUST return chunk lists** ((list (cons text attr)) per
+  line); plain strings crash the redraw thread (took the whole UI down once).
+- **Pane fault isolation** (panes.lisp): pane-draw-into wraps pane-draw-into-1
+  in handler-case, logs to tui-crash.log, draws 'pane error: ...' in the pane.
+- No COPY-HASH-TABLE in this CL — ctx-copy-message copies the hash by hand.
+- context_restore of a collapsed tool message re-inserts it as a QUOTED user
+  message, so it can never orphan a tool_call the API would then reject/drop.
+- **Never put a literal tilde in a format string** (~/, ~D eat the prose);
+  use write-line for notes and prose.

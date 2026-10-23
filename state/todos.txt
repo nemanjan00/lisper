@@ -6,8 +6,8 @@
 [x] Todo pane: render [ ]/[x] checkboxes, done ones dimmed
 [x] Input line: cursor movement with Left/Right/Home/End, insert/backspace at cursor, draw terminal cursor there; move pane switching to C-b Left/Right and C-b 1/2/...
 [ ] Notes hygiene: annotate each lesson in state/notes.md with evidence (commit hash / tui-crash.log timestamp); drop unverifiable ones on next review
-[ ] Context safety: watch *last-usage* prompt_tokens; past ~150k summarize old work into notes and restart (fallback rule; compactor is primary)
-[ ] Compactor (lisp/context.lisp, read ~/compactor/README.md first): context_rewind/offload/restore/search tools, entry ids via *before-request*, done/threshold nudges, context-size pane
+[x] Context safety: watch *last-usage* prompt_tokens; past ~150k summarize old work into notes and restart (fallback rule; compactor is primary)
+[x] Compactor (lisp/context.lisp, read ~/compactor/README.md first): context_rewind/offload/restore/search tools, entry ids via *before-request*, done/threshold nudges, context-size pane
 [ ] Thread safety: pane tools mutate *panes*/*layout* from agent thread while redraw thread iterates; wrap in *tui-lock* or make *panes* :synchronized
 [ ] state/layout.lisp: save as pure data (keyword :leaf), read back with *read-eval* nil in an explicit package
 [ ] Input line: horizontal scroll window around cursor once text exceeds terminal width
