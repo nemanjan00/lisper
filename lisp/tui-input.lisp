@@ -171,8 +171,8 @@ modifier/motion bits we ignore."
       (tui-input-backspace ui)))
 
 (defun tui-scroll-chat-by (ui delta)
-  (declare (ignore ui))
   "Scroll the FOCUSED pane (the chat by default)."
+  (declare (ignore ui))
   (pane-scroll-by *pane-focus* delta))
 
 (defun tui-mouse (ui key)
