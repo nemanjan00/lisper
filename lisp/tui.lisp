@@ -32,6 +32,9 @@
 ;;; slots breaks existing instances).
 
 (defvar *tui-input-cursor* 0 "Cursor index into *tui*'s input buffer.")
+(defvar *tui-input-hscroll* 0
+  "Index of the leftmost visible input character once the text is wider
+than the input row. Adjusted by TUI-INPUT-WINDOW at draw time.")
 
 (defun tui-dirty ()
   "Ask the redraw thread to redraw."
