@@ -201,13 +201,13 @@ embedded newlines must never reach the grid."
          (start (max 0 (- end height))))
     (subseq all start end)))
 
-(defun tui-draw-input (g y w)
-  (let* ((prefix (tui-state-prefix *tui*))
+(defun tui-draw-input (g ui y w)
+  (let* ((prefix (tui-state-prefix ui))
          (pattr (if prefix (ui-attr 3 :bright t) (ui-attr 2 :bright t)))
          (prompt (if prefix "*> " "> ")))
     (ui-grid-write g 0 y prompt pattr w)
     (ui-grid-write g (length prompt) y
-                   (coerce (tui-state-input *tui*) 'string) 7 w)))
+                   (coerce (tui-state-input ui) 'string) 7 w)))
 
 (defun tui-draw-status (g y w)
   (let ((attr (ui-attr 7 :bright t :bg 4)))
