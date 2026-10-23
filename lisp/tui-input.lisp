@@ -189,6 +189,6 @@ rows belong to no pane and are ignored."
              (pane-focus-pane target))))))
 
 (defun tui-scroll-chat (ui key)
-  (declare (ignore ui))
   "Page the FOCUSED pane up or down."
+  (declare (ignore ui))
   (pane-scroll-by *pane-focus* (if (eq key :pgup) 15 -15)))
