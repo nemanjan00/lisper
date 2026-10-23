@@ -215,13 +215,12 @@ modifier/motion bits we ignore."
   "Insert C at the cursor, shifting the tail right. REPLACE copies as if
 via an intermediate, so the overlapping shift is safe."
   (let* ((in (tui-ui-input ui))
-         (len (length in)))
+         (len (length in))
+         (cur (tui-ui-input-cursor ui)))
     (vector-push-extend #\Nul in)     ; grow one slot at the end
-    (replace in in :start1 (1+ *tui-input-cursor*)
-             :start2 *tui-input-cursor* :end2 len)
-    (setf (char in *tui-input-cursor*) c)
-    (incf *tui-input-cursor*)))
-
+    (replace in in :start1 (1+ cur) :start2 cur :end2 len)
+    (setf (char in cur) c)
+    (setf (tui-ui-input-cursor ui) (1+ cur))))
 (defun tui-input-delete (ui)
   "Delete the character under the cursor (the Delete key)."
   (let ((in (tui-ui-input ui)))
