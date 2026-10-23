@@ -92,7 +92,9 @@
         ((eq key :pgup) (tui-scroll-chat ui :pgup))
         ((eq key :pgdn) (tui-scroll-chat ui :pgdn))
         ((member key '(:left :right)) (tui-cycle-pane ui key))
-        ((and (characterp key) (char= key #\Return)) (tui-submit-input ui))
+        ((and (characterp key)
+              (member key '(#\Return #\Newline)))
+         (tui-submit-input ui))
         ((and (characterp key) (member key '(#\Rubout #\Backspace)))
          (tui-input-backspace ui))
         ((and (characterp key) (char= key #\Nak)) (tui-clear-input ui)) ; C-u
