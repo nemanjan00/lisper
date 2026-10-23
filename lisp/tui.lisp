@@ -1,28 +1,23 @@
-;;;; lisp/tui.lisp -- tmux-inspired terminal UI: state, terminal control,
-;;;; start/stop. Rendered in lisp/tui-render.lisp, driven by
-;;;; lisp/tui-input.lisp (keys + weather).
+;;;; lisp/tui.lisp -- terminal UI: state, terminal control, start/stop.
+;;;; Rendered in lisp/tui-render.lisp, driven by lisp/tui-input.lisp.
 ;;;;
 ;;;; One lock (*tui-lock*) protects all UI state. Only the redraw thread
 ;;;; writes to the screen. Other threads change state and call TUI-DIRTY.
 
 (in-package :lisping)
 
-(declaim (ftype function tui-install-hooks tui-key-loop
-                tui-weather-loop tui-redraw-loop))
+(declaim (ftype function tui-install-hooks tui-key-loop tui-redraw-loop))
 
-(defvar *tui* nil "The live TUI-STATE, or NIL when the UI is not running.")
+(defvar *tui* nil "The live TUI-UI, or NIL when the UI is not running.")
 (defvar *tui-lock* (sb-thread:make-mutex))
 (defvar *tui-cv* (sb-thread:make-waitqueue))
 (defvar *tui-dirty* 0)
 
-(defstruct tui-state
+(defstruct tui-ui
   tty                                ; single :io fd-stream on /dev/tty
   (width 80) (height 24)
   (chat (make-uibuf :cap 2000))
-  (weather (make-uibuf :align :top))
-  (weather-at 0)
   (input (make-array 64 :element-type 'character :adjustable t :fill-pointer 0))
-  (active 0)         ; index of focused pane: 0 chat, 1 weather
   (prefix nil)       ; C-b pressed, waiting for the prefix command key
   (scroll 0)         ; chat scroll-back offset in lines
   (shown-user nil)   ; content of the last user message shown in chat
@@ -36,6 +31,7 @@
     (sb-thread:condition-notify *tui-cv*)))
 
 (defvar *tui-saved-termios* nil)
+(defvar *tui-queued-text* nil "Text of the dimmed queued echo on screen.")
 
 (defun tui-raw-mode (tty)
   "Put the terminal in raw-ish mode in-process (shell stty would hang:
@@ -70,14 +66,14 @@ one is already live. Returns true if the mode verified by reading back."
   "Restore the terminal settings saved by TUI-RAW-MODE."
   (when *tui-saved-termios*
     (ignore-errors
-      (sb-posix:tcsetattr (sb-sys:fd-stream-fd (tui-state-tty *tui*))
+      (sb-posix:tcsetattr (sb-sys:fd-stream-fd (tui-ui-tty *tui*))
                           sb-posix:tcsanow *tui-saved-termios*))
     (setf *tui-saved-termios* nil)))
 
 (defun tty-write (string)
   (when *tui*
-    (write-string string (tui-state-tty *tui*))
-    (finish-output (tui-state-tty *tui*))))
+    (write-string string (tui-ui-tty *tui*))
+    (finish-output (tui-ui-tty *tui*))))
 
 (defun tty-size ()
   "Current terminal size as (values rows cols), or NIL."
@@ -124,10 +120,10 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
 (defun tui-update-size (ui)
   (multiple-value-bind (rows cols) (tty-size)
     (when (and rows cols (plusp rows) (plusp cols)
-               (or (/= rows (tui-state-height ui))
-                   (/= cols (tui-state-width ui))))
-      (setf (tui-state-height ui) rows
-            (tui-state-width ui) cols
+               (or (/= rows (tui-ui-height ui))
+                   (/= cols (tui-ui-width ui))))
+      (setf (tui-ui-height ui) rows
+            (tui-ui-width ui) cols
             *tui-prev-grid* nil)         ; size changed: next frame is full
       (tty-write (format nil "~C[2J" #\Esc)))))
 
@@ -155,24 +151,23 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
     (setf *tui-prev-grid* nil
           *tui-prev-cursor* nil
           *tui-clock-minute* nil
+          *tui-queued-text* nil
           *tui-frames-total* 0
           *tui-frames-skipped* 0
           *tui-frames-full* 0
           *tui-bytes-total* 0)
-    (setf *tui* (make-tui-state :tty tty))
+    (setf *tui* (make-tui-ui :tty tty))
     (unless (tui-raw-mode tty)
       (emit :error :text "TUI: terminal did not enter raw mode"))
     (let ((ui *tui*))
       (multiple-value-bind (rows cols) (tty-size)
         (when (and rows cols)
-          (setf (tui-state-height ui) rows
-                (tui-state-width ui) cols)))
+          (setf (tui-ui-height ui) rows
+                (tui-ui-width ui) cols)))
       (tty-write (format nil "~C[?1049h~C[?25l~C[0m~C[2J~C[H" #\Esc #\Esc #\Esc #\Esc #\Esc))
-      (setf (tui-state-threads ui)
+      (setf (tui-ui-threads ui)
             (list (sb-thread:make-thread (lambda () (tui-key-loop ui))
                                          :name "tui-keys")
-                  (sb-thread:make-thread (lambda () (tui-weather-loop ui))
-                                         :name "tui-weather")
                   (sb-thread:make-thread (lambda () (tui-redraw-loop ui))
                                          :name "tui-redraw")))
       (tui-install-hooks)
@@ -188,11 +183,11 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (tui-kill-threads)
       (ignore-errors
         (write-string (format nil "~C[0m~C[?25h~C[?1049l" #\Esc #\Esc #\Esc)
-                      (tui-state-tty ui))
-        (finish-output (tui-state-tty ui)))
-      (ignore-errors (close (tui-state-tty ui)))
+                      (tui-ui-tty ui))
+        (finish-output (tui-ui-tty ui)))
+      (ignore-errors (close (tui-ui-tty ui)))
       (tui-restore-mode)
-      (setf (tui-state-threads ui) nil)
+      (setf (tui-ui-threads ui) nil)
       (start-terminal-input)
       t)))
 
@@ -216,9 +211,9 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (ignore-errors
         (write-string (format nil "~C[0m~C[?25h~C[?1049l~%TUI died: ~A~%"
                               #\Esc #\Esc #\Esc condition)
-                      (tui-state-tty ui))
-        (finish-output (tui-state-tty ui)))
-      (ignore-errors (close (tui-state-tty ui)))
+                      (tui-ui-tty ui))
+        (finish-output (tui-ui-tty ui)))
+      (ignore-errors (close (tui-ui-tty ui)))
       (tui-restore-mode)
       (setf *emit* 'terminal-emit)
       (start-terminal-input)))
