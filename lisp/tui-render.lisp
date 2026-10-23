@@ -4,6 +4,8 @@
 
 (in-package :lisping)
 
+(declaim (ftype function tui-draw-chat tui-draw-separator))
+
 ;;; ---------------------------------------------------------------
 ;;; Frame state and perf counters. Only the redraw thread touches these.
 ;;; The previous frame's grid is kept so frames can be diffed: a full
