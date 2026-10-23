@@ -367,8 +367,7 @@ plus nothing else."
   (pane-unregister name)
   (when (equal *pane-focus* name) (setf *pane-focus* "chat"))
   (panes-save)
-  (panes-mark-all-dirty)
-  (tui-dirty)
+  (tui-drop-frame)
   (format nil "removed pane ~A" name))
 
 ;;; ---------------------------------------------------------------
