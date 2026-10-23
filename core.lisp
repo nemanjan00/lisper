@@ -12,7 +12,7 @@
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
            ;; files
-           #:home-path #:session-path #:*home* #:*session* #:*cwd* #:session-save #:session-forget
+           #:home-path #:session-path #:*home* #:*session* #:*cwd* #:session-save #:session-forget #:home-commit
            #:load-file #:write-files-and-load #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
@@ -29,7 +29,7 @@
 
 (in-package :lisping-core)
 
-(declaim (ftype function emit client-error-p complete-once without-x-kind synthetic-message-p session-save)) ; used before their definitions further down
+(declaim (ftype function emit client-error-p complete-once without-x-kind synthetic-message-p session-save note-file)) ; used before their definitions further down
 
 (defvar *root* (make-pathname :name nil :type nil :version nil :defaults *load-truename*)
   "The harness's code: core.lisp, init.lisp and the files it loads, .git. Runtime
@@ -370,16 +370,25 @@ the index lock. Return (values output exit-code)."
            (sleep 0.4))
   (shell command :directory *root*))
 
-(defun commit (message &optional path)
+(defun commit (message &optional path checked)
   "Commit under the project directory: just PATH when given (so the commit holds
 exactly the file that was checked), else everything. Does nothing during boot.
-A git pre-commit hook boot-checks every commit, however it's made."
+A git pre-commit hook boot-checks every commit, however it's made; CHECKED
+means a fresh boot just passed with these files, so the hook skips its own.
+Returns NIL on success, else git's output explaining why nothing was committed."
   (unless *booting*
-    (if path
-        (progn (git (format nil "git add -- ~A" (shell-quote path)))
-               (git (format nil "git commit -q -m ~A -- ~A" (shell-quote message) (shell-quote path))))
-        (progn (git "git add -A")
-               (git (format nil "git commit -q -m ~A" (shell-quote message)))))))
+    (let ((env (if checked "LISPER_BOOT_CHECKED=1 " "")))
+      (multiple-value-bind (out code)
+          (if path
+              (progn (git (format nil "git add -- ~A" (shell-quote path)))
+                     (git (format nil "~Agit commit -q -m ~A -- ~A" env (shell-quote message) (shell-quote path))))
+              (progn (git "git add -A")
+                     (git (format nil "~Agit commit -q -m ~A" env (shell-quote message)))))
+        (unless (or (eql code 0) (search "nothing to commit" out) (search "no changes added" out))
+          (string-trim '(#\Space #\Newline) out))))))
+
+(defun commit-note (failure)
+  (if failure (format nil "NOT committed (the file is written and loaded): ~A" failure) "committed"))
 
 (defun skip-to-next-toplevel-form (in start)
   "Move IN past the form starting at START, to the next line that begins with (."
@@ -537,7 +546,7 @@ also added to *LOAD-PROBLEMS*, so nested loads are reported to the outer one."
   (let* ((file (merge-pathnames path *root*))
          (name (enough-namestring file *root*))
          (text (read-text file))
-         (problems '())
+         (problems (progn (when text (note-file name text)) '()))
          (*package* (find-package :lisping)))
     (flet ((problem (start what condition)
              (when (member condition *reported-conditions* :test #'eq)
@@ -685,24 +694,32 @@ from earlier; this shows whether the files work from scratch."
           (list (format nil "the test boot didn't finish (exit ~A): ~A" code
                         (subseq out (max 0 (- (length out) 1500)))))))))
 
-(defun write-files-and-load (files)
+(defun write-files-and-load (files &key bases)
   "Write several files as ONE change. FILES is a list of (path . code). All are
 written, then a single fresh boot checks them together, so a change spanning
 files (a rename, a moved definition) never has to pass through a broken
 intermediate state. On any problem every file is put back and the running image
 isn't touched; otherwise the .lisp files are loaded into the image and
-everything is committed together."
+everything is committed together. BASES, an alist of (path . text the new code
+was made from), works as BASE does for WRITE-FILE-AND-LOAD."
   (let* ((entries (loop for (path . code) in files
                         for file = (merge-pathnames path *root*)
-                        collect (list (enough-namestring file *root*) file code (read-text file))))
+                        collect (list (enough-namestring file *root*) file code (read-text file)
+                                      (cdr (assoc path bases :test #'equal)))))
          (core (find-if (lambda (e) (member (first e) +core-files+ :test #'string=)) entries)))
     (when core
       (return-from write-files-and-load
         (format nil "~A is part of the core and can't be written from here." (first core))))
+    (let ((stale (loop for (name nil nil old base) in entries
+                       for refusal = (stale-write name old base)
+                       when refusal collect refusal)))
+      (when stale
+        (return-from write-files-and-load
+          (format nil "~{~A~%~}Nothing was written." stale))))
     (flet ((restore ()
              (dolist (e entries)
-               (destructuring-bind (name file code old) e
-                 (declare (ignore name code))
+               (destructuring-bind (name file code old base) e
+                 (declare (ignore name code base))
                  (if old (write-text file old) (ignore-errors (delete-file file)))))))
       (handler-case (dolist (e entries) (write-text (second e) (third e)))
         (error (c) (restore) (return-from write-files-and-load (format nil "NOT SAVED: ~A" c))))
@@ -713,34 +730,60 @@ everything is committed together."
           (return-from write-files-and-load
             (format nil "NOT SAVED. In a fresh boot with these ~D files, loading reported:~%~{- ~A~%~}Every file was put back; the running image was not touched."
                     (length entries) fresh)))
-        (let ((out (make-string-output-stream)) (problems '()))
+        (dolist (e entries) (note-file (first e) (third e)))
+        (let ((out (make-string-output-stream)) (problems '()) (failure nil))
           (dolist (e lisp)
             (setf problems (append problems (load-collecting (second e) out))))
           (git (format nil "git add -- ~{~A ~}" (mapcar (lambda (e) (shell-quote (first e))) entries)))
-          (git (format nil "git commit -q -m ~A -- ~{~A ~}"
-                         (shell-quote (format nil "update ~{~A~^, ~}" (mapcar #'first entries)))
-                         (mapcar (lambda (e) (shell-quote (first e))) entries)))
-          (format nil "Wrote~:[~; and loaded~] ~{~A~^, ~}; committed together.~@[~%Loading into the running image reported (the files are kept: they boot cleanly):~%~{- ~A~%~}~]"
-                  lisp (mapcar #'first entries) problems))))))
+          (multiple-value-bind (gout code)
+              (git (format nil "~:[~;LISPER_BOOT_CHECKED=1 ~]git commit -q -m ~A -- ~{~A ~}"
+                           lisp
+                           (shell-quote (format nil "update ~{~A~^, ~}" (mapcar #'first entries)))
+                           (mapcar (lambda (e) (shell-quote (first e))) entries)))
+            (unless (or (eql code 0) (search "nothing to commit" gout))
+              (setf failure (string-trim '(#\Space #\Newline) gout))))
+          (format nil "Wrote~:[~; and loaded~] ~{~A~^, ~}; ~:[committed together~;~:*~A~].~@[~%Loading into the running image reported (the files are kept: they boot cleanly):~%~{- ~A~%~}~]"
+                  lisp (mapcar #'first entries) (and failure (commit-note failure)) problems))))))
 
-(defun write-file-and-load (path code)
+(defvar *file-seen* (make-hash-table :test 'equal)
+  "File name (relative to *root*) -> the text this image last loaded, wrote or
+was refused over. Whole-file writes compare the disk against it, so a session
+can't silently overwrite a change another session made after it last looked.")
+
+(defun note-file (name text) (setf (gethash name *file-seen*) text))
+
+(defun stale-write (name disk base)
+  "When writing NAME would overwrite a change this image hasn't seen, return a
+refusal message and remember DISK as seen (so a deliberate retry goes through).
+BASE is the text the new code was made from, when the caller knows it."
+  (let ((seen (if base (list base) (multiple-value-list (gethash name *file-seen*)))))
+    (when (and disk (if base t (second seen)) (string/= disk (first seen)))
+      (note-file name disk)
+      (format nil "NOT SAVED: ~A on disk ~:[changed since this image last loaded or wrote it~;isn't the text this edit was made from~] (another session or a shell command wrote it). Read it again and redo the change on the current text; writing the whole file again now replaces their change." name base))))
+
+(defun write-file-and-load (path code &key base)
   "Write CODE verbatim to PATH, relative to *root*. A .lisp file is first checked
 in a fresh boot (TEST-BOOT); only if that's clean is it loaded into the running
 image and committed, like saving a buffer and running eval-buffer in Emacs.
 If the fresh boot reports problems, the previous version is put back and the
 running image isn't touched. Problems that show up only when loading into the
 running image come from state in that image, not the file, so the file is kept
-(as WRITE-FILES-AND-LOAD does) and they're reported."
+(as WRITE-FILES-AND-LOAD does) and they're reported.
+Like Emacs's \"file changed on disk\", the write is refused once if the file
+changed since this image last saw it; BASE, the text CODE was edited from, makes
+that check exact (edit tools should pass it)."
   (let* ((file (merge-pathnames path *root*))
          (name (enough-namestring file *root*))
          (old (read-text file)))
     (cond
       ((member name +core-files+ :test #'string=)
        (format nil "~A is part of the core and can't be written from here." name))
+      ((stale-write name old base))
       ((not (equalp (pathname-type file) "lisp"))
        (write-text file code)
-       (commit (format nil "~:[add~;update~] ~A" old name) name)
-       (format nil "Wrote ~A (~D characters)." name (length code)))
+       (note-file name code)
+       (format nil "Wrote ~A (~D characters); ~A." name (length code)
+               (commit-note (commit (format nil "~:[add~;update~] ~A" old name) name))))
       (t
        (write-text file code)
        (let ((fresh (test-boot :timeout 60 :extra name)))
@@ -749,13 +792,14 @@ running image come from state in that image, not the file, so the file is kept
            (return-from write-file-and-load
              (format nil "NOT SAVED. In a fresh boot with this version of ~A, loading reported:~%~{- ~A~%~}~:[The file was new, so it was removed.~;The previous version was put back.~] The running image was not touched."
                      name fresh old))))
+       (note-file name code)
        (let* ((out (make-string-output-stream))
               (problems (load-collecting file out))
               (output (limit-output (get-output-stream-string out)))
-              (init (read-text (init-path))))
-         (commit (format nil "~:[add~;update~] ~A" old name) name)
-         (format nil "~@[~A~%~]Wrote and loaded ~A; committed.~@[~%~A~]~@[~%Loading into the running image reported (the file is kept, since it boots cleanly; a restart gives you exactly the files):~%~{- ~A~%~}~]"
-                 (and (string/= output "") output) name
+              (init (read-text (init-path)))
+              (failure (commit (format nil "~:[add~;update~] ~A" old name) name t)))
+         (format nil "~@[~A~%~]Wrote and loaded ~A; ~A.~@[~%~A~]~@[~%Loading into the running image reported (the file is kept, since it boots cleanly; a restart gives you exactly the files):~%~{- ~A~%~}~]"
+                 (and (string/= output "") output) name (commit-note failure)
                  (unless (or (string= name "init.lisp") (and init (search (pathname-name file) init)))
                    (format nil "Note: init.lisp doesn't mention ~A, so it won't be loaded at boot." name))
                  problems))))))
@@ -915,7 +959,7 @@ Files and persistence, the way Emacs does it:
 - So, to keep something, put it in a file that init.lisp loads. The image and the files can drift apart while you work, as in Emacs; at boot, the files win.
 - Writing a whole file to change one function gets slow as files grow. Keep files small and focused, and consider building yourself what Emacs users have: buffers, editing part of a file, and re-evaluating just the form you changed (C-M-x). Tools you register get their arguments as plain JSON strings, so a file-editing tool avoids escaping code inside Lisp strings.
 - Your conversation is resumed after a restart (see Sessions), but write down what you learn anyway, e.g. in (home-path \"notes.md\"): a fresh session, or another session, won't have it. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
-- State lives outside the code repo, in *home* (~/.lisper/ by default): (home-path \"notes.md\") for your own data files, (session-path \"x\") for this session's files. *home* is not in git. The code repo (*root*) holds only code.
+- State lives outside the code repo, in *home* (~/.lisper/ by default): (home-path \"notes.md\") for your own data files, (session-path \"x\") for this session's files. *home* is its own git repo, committed after every turn (transcripts and logs excluded), so a bad rewrite of a data file can be undone with git there. The code repo (*root*) holds only code. Whole-file writes (eval with file, write-file(s)-and-load) are refused once if the file changed on disk since your image last loaded or wrote it, as another session may have edited it; edit tools can pass :base, the text they edited, to make that check exact.
 - Sessions: one process is one session (*session*, from LISPER_SESSION; default \"main\"). After every turn the core saves the conversation (as compacted) and *cwd*; the next boot of the same session resumes it, so a restart no longer loses the conversation. (session-forget) makes the next boot start fresh; LISPER_FRESH=1 does too. Several sessions can run at once, each in its own process and terminal, sharing the code and git.
 - *cwd* is the session's working directory (LISPER_CWD): shell runs there by default, for work on a project outside the harness. Your own code stays in *root*.
 - (restart-image \"message\") restarts the image; the message is sent to you after boot. Use it to check that what you built comes back.
@@ -1264,6 +1308,30 @@ its working directory. Written atomically; resumed at the next boot."
                                   :messages (length *messages*))))
     t))
 
+(defparameter +home-ignore+
+  "# lisper: data is versioned; transcripts, logs and scratch files aren't.
+tmp/
+*.log
+*.jsonl
+*.tmp
+sessions/*/messages.json*
+sessions/*/resume.txt
+sessions/*/queue.*
+"
+  "The .gitignore written into a new *home*.")
+
+(defun home-commit (message)
+  "Commit the data in *home* (notes, todos, layouts...) to its own git repo,
+creating it on first use, so a bad rewrite of a data file can be undone. Cheap:
+no boot check. Returns NIL on success, else git's complaint."
+  (unless (probe-file (merge-pathnames ".git/" *home*))
+    (write-text (merge-pathnames ".gitignore" *home*) +home-ignore+)
+    (shell "git init -q" :directory *home*))
+  (multiple-value-bind (out code)
+      (shell (format nil "git add -A && git commit -q -m ~A" (shell-quote message)) :directory *home*)
+    (unless (or (eql code 0) (search "nothing to commit" out) (search "nothing added" out))
+      out)))
+
 (defun session-forget ()
   "Drop the saved conversation, so the next boot starts this session fresh."
   (ignore-errors (delete-file (session-path "messages.json")))
@@ -1291,7 +1359,10 @@ number of messages restored."
           (emit :error :text (format nil "turn failed: ~A" c))))
       (handler-case (session-save)
         (serious-condition (c)
-          (emit :error :text (format nil "saving the session failed: ~A" c)))))))
+          (emit :error :text (format nil "saving the session failed: ~A" c))))
+      (let ((failure (ignore-errors (home-commit (format nil "~A: after a turn" *session*)))))
+        (when failure
+          (emit :info :text (format nil "committing ~A failed: ~A" *home* failure)))))))
 
 ;;; ------------------------------------------------------------------
 ;;; Terminal input. Like terminal-emit, these live in the unlocked LISPING

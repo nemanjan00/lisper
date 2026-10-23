@@ -11,6 +11,8 @@ cd "$(dirname "$0")"
 # Model settings come from ./.env (see .env.example), or the file named by LISPING_DOTENV.
 BOOT_GRACE=15      # seconds; a crash sooner than this counts as a boot crash
 MAX_BOOT_CRASHES=3
+QUICK=300          # seconds; crashes sooner than this after start count toward a crash loop
+MAX_QUICK_CRASHES=3
 
 trap 'exit 0' INT
 
@@ -27,6 +29,19 @@ install_hook() {
     { cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; }
 }
 
+# The last step down: if the image keeps crashing soon after start, the
+# resumed conversation may be what crashes it, so set it aside (not deleted)
+# and boot this session fresh.
+quick_crashes=0
+forget_session() {
+  local saved="$SESSION_DIR/messages.json"
+  [ -f "$saved" ] || return 0
+  local kept="$SESSION_DIR/messages.crashed-$(date +%Y%m%d-%H%M%S).json"
+  mv "$saved" "$kept"
+  echo "[supervisor] $quick_crashes quick crashes in a row; starting the session fresh"
+  resume "[supervisor] The image crashed $quick_crashes times in a row soon after starting, so this session's conversation was set aside ($kept) and you start fresh. Your files and notes are untouched."
+}
+
 boot_crashes=0
 while true; do
   install_hook
@@ -36,8 +51,15 @@ while true; do
   [ -t 0 ] && stty sane 2>/dev/null   # a UI may have left the terminal in raw mode
   case $code in
     0) exit 0 ;;
-    42) boot_crashes=0; continue ;;
+    42) boot_crashes=0; quick_crashes=0; continue ;;
   esac
+
+  if (( $(date +%s) - started < QUICK )); then
+    quick_crashes=$((quick_crashes + 1))
+    if (( quick_crashes >= MAX_QUICK_CRASHES )); then forget_session; quick_crashes=0; fi
+  else
+    quick_crashes=0
+  fi
 
   if (( $(date +%s) - started >= BOOT_GRACE )); then
     echo "[supervisor] image crashed (exit $code), restarting"
