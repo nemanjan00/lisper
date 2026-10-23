@@ -157,7 +157,6 @@ modifier/motion bits we ignore."
         ((and (characterp key) (digit-char-p key))
          (pane-focus-nth (digit-char-p key)))
         (t nil)))
-
 (defun tui-normal-key (ui key)
   (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-ui-prefix ui) t))
         ;; The terminal wheel becomes Up/Down arrows when the host tmux
@@ -171,8 +170,9 @@ modifier/motion bits we ignore."
         ;; typing and Backspace/Delete act at the cursor.
         ((eq key :left) (tui-cursor-move ui -1))
         ((eq key :right) (tui-cursor-move ui 1))
-        ((eq key :home) (setf *tui-input-cursor* 0))
-        ((eq key :end) (setf *tui-input-cursor* (length (tui-ui-input ui))))
+        ((eq key :home) (setf (tui-ui-input-cursor ui) 0))
+        ((eq key :end) (setf (tui-ui-input-cursor ui)
+                             (length (tui-ui-input ui))))
         ((eq key :delete) (tui-input-delete ui))
         ((and (characterp key)
               (member key '(#\Return #\Newline)))
@@ -185,7 +185,6 @@ modifier/motion bits we ignore."
         ((and (characterp key) (graphic-char-p key))
          (tui-input-insert ui key))
         (t nil)))
-
 (defun tui-submit-input (ui)
   (let* ((in (tui-ui-input ui))
          ;; COPY-SEQ: IN is already a string, so COERSE returns the same
