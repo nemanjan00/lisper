@@ -97,8 +97,8 @@ read-char on their own /dev/tty stream and would steal keystrokes."
       (ignore-errors (sb-thread:terminate-thread th)))))
 
 (defvar *tui-size-checked-at* 0 "Last time the terminal size was probed.")
-(sb-ext:defglobal *tui-sigwinch-tick* 0 "Bumped by the SIGWINCH handler.")
-(defvar *tui-sigwinch-seen* 0 "Value of *TUI-SIGWINCH-TICK* last handled.")
+(defvar *tui-winch-count* 0 "Bumped by the SIGWINCH handler.")
+(defvar *tui-winch-seen* 0 "Value of *TUI-WINCH-COUNT* last handled.")
 
 (defun tui-install-sigwinch ()
   "Notice terminal resizes promptly instead of waiting for the poll."
@@ -106,16 +106,19 @@ read-char on their own /dev/tty stream and would steal keystrokes."
     (sb-sys:enable-interrupt sb-unix:sigwinch
       (lambda (sig code scp)
         (declare (ignore sig code scp))
-        (sb-ext:atomic-incf *tui-sigwinch-tick*)))))
+        ;; Plain INCF, not ATOMIC-INCF: this SBCL's ATOMIC-INCF rejects
+        ;; symbol places. A fixnum store is atomic in practice on x86-64,
+        ;; and the 2s poll in TUI-MAYBE-UPDATE-SIZE is the safety net.
+        (incf *tui-winch-count*)))))
 
 (defun tui-maybe-update-size (ui)
   "Probe the terminal size at most every 2 seconds, or right away after
 a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
   (let ((now (get-universal-time)))
     (when (or (>= now (+ *tui-size-checked-at* 2))
-              (> *tui-sigwinch-tick* *tui-sigwinch-seen*))
+              (> *tui-winch-count* *tui-winch-seen*))
       (setf *tui-size-checked-at* now
-            *tui-sigwinch-seen* *tui-sigwinch-tick*)
+            *tui-winch-seen* *tui-winch-count*)
       (tui-update-size ui))))
 
 (defun tui-update-size (ui)
