@@ -106,12 +106,8 @@ up; TUI-SHOW-USER replaces this line when the :user event arrives."
       (:assistant (tui-chat-add ui (ui-parse-ansi (getf event :text))))
       (:thinking (tui-chat-add ui (list (cons (getf event :text) 8))))
       (:tool-call
-       (tui-chat-add
-        ui
-        (list (cons (format nil "* ~A ~A"
-                            (getf event :name)
-                            (tui-short-args (getf event :args)))
-                    (ui-attr 4 :bright t)))))
+       (tui-chat-add ui (tui-tool-call-line (getf event :name)
+                                            (getf event :args))))
       (:tool-result (tui-chat-result ui (getf event :name) (getf event :text)))
       (:error (tui-chat-add ui (ui-parse-ansi (getf event :text))))
       (:info (tui-chat-add ui (list (cons (getf event :text) 8))))
