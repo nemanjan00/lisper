@@ -101,7 +101,7 @@ and tool-call arguments — which live at tc -> function -> arguments."
 
 (defun ctx-session-log ()
   "The current session's jsonl path, or NIL. (*SESSION-LOG* is internal
-to the core, hence the ::."
+to the core, hence the ::.)"
   (and (boundp 'lisping-core::*session-log*)
        lisping-core::*session-log*))
 
