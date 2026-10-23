@@ -12,6 +12,13 @@
 
 (in-package :lisping)
 
+(require :sb-posix)
+
+(defvar *setsid* (or (probe-file "/usr/bin/setsid") (probe-file "/bin/setsid"))
+  "setsid(8), when present: tasks start as their own session/process
+group, so bg_stop can signal the whole GROUP (killing just the /bin/sh
+wrapper left the real job running).")
+
 (defstruct (task (:constructor %make-task (name cmd)))
   name cmd process stream file
   (start (get-universal-time))
@@ -73,8 +80,12 @@ MONITOR, also start a reader forwarding matching lines to the agent."
                 (stream (open file :direction :output :if-exists :supersede
                               :if-does-not-exist :create))
                 (proc (handler-case
-                          (sb-ext:run-program "/bin/sh" (list "-c" cmd)
-                                              :wait nil :output stream :error :output)
+                          (if *setsid*
+                              (sb-ext:run-program *setsid*
+                                                  (list "/bin/sh" "-c" cmd)
+                                                  :wait nil :output stream :error :output)
+                              (sb-ext:run-program "/bin/sh" (list "-c" cmd)
+                                                  :wait nil :output stream :error :output))
                         (error (e)
                           (close stream)
                           (return-from bg-start
@@ -112,12 +123,21 @@ with a synthetic message (kind \"task\" — delivered when the turn ends)."
            (task-name task) (task-status-string task) (task-line-count task))
    :kind "task"))
 
+(defun task-kill (task &optional (sig 15))
+  "Signal TASK's whole process group (the setsid wrapper makes pid ==
+pgid); without setsid, just the process."
+  (let ((pid (sb-ext:process-pid (task-process task))))
+    (if *setsid*
+        (ignore-errors (sb-posix:kill (- pid) sig))
+        (ignore-errors (sb-ext:process-kill (task-process task) sig)))))
+
 (defun bg-stop (name)
-  "SIGTERM task NAME (a no-op with a message if it already exited)."
+  "SIGTERM task NAME's process group (a no-op with a message if it
+already exited)."
   (let ((task (gethash name *tasks*)))
     (cond ((null task) (format nil "no task ~S (bg_list shows names)" name))
           ((eq (task-status task) :running)
-           (ignore-errors (sb-ext:process-kill (task-process task) 15))
+           (task-kill task)
            (format nil "stopped ~S (SIGTERM); the exit message follows" name))
           (t (format nil "task ~S already ~A" name (task-status-string task))))))
 
@@ -242,10 +262,11 @@ it must run after CTX-INIT-PANES) and called once by TASKS-START."
     (when *tui* (tui-dirty))))
 
 (defun tasks-stop-all ()
-  "SIGTERM every running task; runs from TUI-STOP, so on restarts too."
+  "SIGTERM every running task's process group; runs from TUI-STOP, so on
+restarts too."
   (dolist (task (task-list))
     (when (eq (task-status task) :running)
-      (ignore-errors (sb-ext:process-kill (task-process task) 15)))))
+      (task-kill task))))
 
 ;;; ---------------------------------------------------------------
 ;;; tools
