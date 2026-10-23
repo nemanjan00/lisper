@@ -703,8 +703,11 @@ rejects an empty user message, and one in *messages* would fail every request."
   (when (and (stringp text) (string/= "" (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
     (sb-concurrency:send-message *inbox* text)
     ;; Right away, so a UI can show the message is in; :user follows when the
-    ;; agent takes it into the conversation, before its next model call.
-    (emit :queued :text text)
+    ;; agent takes it into the conversation, before its next model call. It's
+    ;; emitted from a thread of its own: the caller may be a UI thread holding
+    ;; its own lock, and *emit* calling back into that UI would deadlock or
+    ;; hit a recursive lock.
+    (sb-thread:make-thread (lambda () (emit :queued :text text)) :name "emit-queued")
     t))
 
 (defun fallback-emit (event)
