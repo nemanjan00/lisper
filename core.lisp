@@ -698,9 +698,21 @@ that did resolve through, and catches the ones that never will."
         (push (format nil "~(~A~) is called but never defined" s) found)))
     (sort found #'string<)))
 
+(defun configure-session ()
+  "Set *home*, *session* and *cwd* from LISPER_HOME, LISPER_SESSION and LISPER_CWD.
+Run by MAIN and by TEST-BOOT's fresh process, so files see the same values in both."
+  (flet ((dir (d) (and d (plusp (length d))
+                       (pathname (if (char= (char d (1- (length d))) #\/) d (concatenate 'string d "/"))))))
+    (setf *home* (dir (or (sb-ext:posix-getenv "LISPER_HOME")
+                          (namestring (merge-pathnames ".lisper/" (user-homedir-pathname)))))
+          *session* (let ((id (sb-ext:posix-getenv "LISPER_SESSION")))
+                      (if (session-name-p id) id "main"))
+          *cwd* (dir (sb-ext:posix-getenv "LISPER_CWD")))))
+
 (defun print-boot-problems (&optional extra)
   "Used by TEST-BOOT in the child process: load init.lisp, then EXTRA (a file
 name, so a file init.lisp doesn't load yet is checked too), and print the problems."
+  (configure-session)
   (let* ((problems (let ((*booting* t) (*test-boot* t))
                     (append (load-collecting (init-path) (make-broadcast-stream))
                             (loop for file in (if (listp extra) extra (list extra))
@@ -718,8 +730,9 @@ clean). The running image can pass a check only because of state left over
 from earlier; this shows whether the files work from scratch. DIRECTORY is the
 project to boot (the working tree by default)."
   (multiple-value-bind (out code)
-      (shell (format nil "cd ~A && LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
+      (shell (format nil "cd ~A && LISPER_HOME=~A LISPER_SESSION=~A LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
                      (shell-quote (namestring directory))
+                     (shell-quote (namestring *home*)) (shell-quote *session*)
                      timeout
                      (shell-quote (namestring sb-ext:*runtime-pathname*))
                      (shell-quote (namestring sb-ext:*core-pathname*))
@@ -1597,12 +1610,7 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
                              (sb-thread:make-thread
                               (lambda () (restart-image "[supervisor] Restarted from outside with SIGUSR1."))
                               :name "sigusr1-restart")))
-  (setf *home* (pathname (let ((h (or (sb-ext:posix-getenv "LISPER_HOME")
-                                       (namestring (merge-pathnames ".lisper/" (user-homedir-pathname))))))
-                           (if (char= (char h (1- (length h))) #\/) h (concatenate 'string h "/"))))
-        *session* (let ((id (sb-ext:posix-getenv "LISPER_SESSION")))
-                    (if (session-name-p id) id "main"))
-        *cwd* (let ((d (sb-ext:posix-getenv "LISPER_CWD"))) (and d (plusp (length d)) (pathname (if (char= (char d (1- (length d))) #\/) d (concatenate 'string d "/"))))))
+  (configure-session)
   (ensure-directories-exist (session-dir))
   ;; One session, one process: hold the session's lock for this process's life.
   (unless (setf *session-lock-fd* (try-session-lock *session*))
