@@ -199,7 +199,7 @@ embedded newlines must never reach the grid."
 (defun tui-draw-input (g y w)
   (let* ((prefix (tui-state-prefix *tui*))
          (pattr (if prefix (ui-attr 3 :bright t) (ui-attr 2 :bright t)))
-         (prompt (if prefix "C-b-» " "❯ ")))
+         (prompt (if prefix "*> " "> ")))
     (ui-grid-write g 0 y prompt pattr w)
     (ui-grid-write g (length prompt) y
                    (coerce (tui-state-input *tui*) 'string) 7 w)))
