@@ -35,6 +35,7 @@ user's terminal forever."
 (defun todo-add (text)
   (setf *todos* (append *todos* (list (cons text nil))))
   (todo-save)
+  (ignore-errors (pane-dirty "todo"))
   (format nil "added todo ~D: ~A" (length *todos*) text))
 
 (defun todo-done (index)
