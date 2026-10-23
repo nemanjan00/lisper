@@ -228,13 +228,15 @@ embedded newlines must never reach the grid."
     (when (and *tui* (eq *tui* ui))
       (let* ((w (tui-ui-width ui))
              (h (tui-ui-height ui))
-             (body-h (max 3 (- h 2)))
+             ;; chat rows 0..h-4: top title border + content; a thin
+             ;; separator at h-3; input at h-2; status at h-1.
+             (chat-h (max 3 (- h 3)))
              (g (ui-grid-make w h)))
-        (tui-draw-pane g 0 0 w body-h "chat"
-                       (tui-ui-chat ui) t (tui-ui-scroll ui))
+        (tui-draw-chat g 0 0 w chat-h "chat"
+                       (tui-ui-chat ui) (tui-ui-scroll ui))
+        (tui-draw-separator g chat-h w)
         (tui-draw-input g ui (- h 2) w)
         (tui-draw-status g ui (1- h) w)
-        (uifix-boxes g)
         (let* ((prompt-len (length (if (tui-ui-prefix ui) "*> " "> ")))
                (row (1- h))
                (col (min w (+ prompt-len (length (tui-ui-input ui)) 1)))
