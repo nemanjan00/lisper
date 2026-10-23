@@ -464,6 +464,25 @@ function updates the tool."
 (defvar *before-request* '()
   "Functions called with the request body (an OBJ) before each model call; each returns the body to use.")
 (defvar *session-log* nil)
+(defvar *trace-file* nil "Human-readable log of every event; state/trace.log points at the current one.")
+(defvar *trace-lock* (sb-thread:make-mutex :name "trace"))
+
+(defun trace-event (event)
+  "Append EVENT to the trace file. Written by the core, whatever *EMIT* does."
+  (when *trace-file*
+    (ignore-errors
+     (sb-thread:with-mutex (*trace-lock*)
+       (with-open-file (out *trace-file* :direction :output :if-exists :append
+                                         :if-does-not-exist :create :external-format :utf-8)
+         (multiple-value-bind (sec min hour) (get-decoded-time)
+           (format out "~&~%~2,'0D:~2,'0D:~2,'0D ~:@(~A~)~@[ ~A~]~%" hour min sec
+                   (getf event :type) (getf event :name)))
+         (let ((args (getf event :args))
+               (text (getf event :text)))
+           (cond ((and (hash-table-p args) (stringp (gethash "code" args)))
+                  (write-line (gethash "code" args) out))
+                 (args (write-line (json-encode args) out)))
+           (when text (write-line text out))))))))
 
 (defun send-user-message (text)
   "Queue TEXT as a message from the user."
@@ -483,6 +502,7 @@ function updates the tool."
     (case type
       (:assistant (format t "~&~%~A~%" text))
       (:thinking (format t "~&~C[2m~A~C[0m~%" #\Esc text #\Esc))
+      (:reasoning nil)                  ; long; it is in state/trace.log
       (:tool-call
        (let ((args (getf event :args)))
          (format t "~&~%[~A]~%~A~%" (getf event :name)
@@ -502,6 +522,7 @@ function updates the tool."
 (defun emit (type &rest fields)
   "Send an event to *EMIT*. Falls back to plain terminal output if *EMIT* fails."
   (let ((event (list* :type type fields)))
+    (trace-event event)
     (handler-case (funcall *emit* event)
       (serious-condition (c)
         (fallback-emit event)
@@ -509,6 +530,8 @@ function updates the tool."
 
 (defun add-message (message)
   (setf *messages* (append *messages* (list message)))
+  (when (equal (gethash "role" message) "user")
+    (trace-event (list :type :user :text (gethash "content" message))))
   (when *session-log*
     (with-open-file (out *session-log* :direction :output :if-exists :append
                                        :if-does-not-exist :create :external-format :utf-8)
@@ -527,7 +550,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *system-prompt*: this text. A string, or a function returning one. You may rewrite it.
 - *messages*: the conversation history sent to the model (a list of objs). You may trim or summarize it to manage your context.
 - *before-request*: functions called with each request body before it is sent; each returns the body to use.
-- *emit*: function receiving every event as a plist (:type :assistant/:thinking/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
+- *emit*: function receiving every event as a plist (:type :assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events by wrapping *emit* (keep calling terminal-emit too, so the terminal still works).
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
@@ -544,6 +567,7 @@ Rules:
 - The core (package LISPING-CORE) is locked. Use setf for its variables; don't redefine its functions.
 - eval calls time out after *eval-timeout* seconds. Run servers and other long-lived work in threads (sb-thread:make-thread).
 - Build in small steps and check each one. When something breaks, read the error and fix it.
+- Everything you do (your reasoning, tool calls and results) is written to state/trace.log for the user to read. The core writes it; it is not yours to change.
 - Never print, save or send the API key.
 - Talk to the user briefly. They are curious to watch you grow; tell them what you built and how to use it.")
 
@@ -608,6 +632,9 @@ Rules:
            (text (gethash "content" message))
            (calls (gethash "tool_calls" message)))
       (add-message message)
+      (let ((reasoning (or (gethash "reasoning_content" message) (gethash "reasoning" message))))
+        (when (and (stringp reasoning) (string/= "" reasoning))
+          (emit :reasoning :text reasoning)))
       (when (and (stringp text) (string/= "" (string-trim '(#\Space #\Newline) text)))
         (emit :assistant :text text))
       (if (and (vectorp calls) (plusp (length calls)))
@@ -642,9 +669,11 @@ Rules:
   (let ((stamp (multiple-value-bind (s m h d mo y) (get-decoded-time)
                  (format nil "~D~2,'0D~2,'0D-~2,'0D~2,'0D~2,'0D" y mo d h m s))))
     (setf *session-log* (merge-pathnames (format nil "state/sessions/~A.jsonl" stamp) *root*))
-    (ensure-directories-exist *session-log*))
+    (ensure-directories-exist *session-log*)
+    (setf *trace-file* (merge-pathnames (format nil "state/sessions/~A.trace.log" stamp) *root*))
+    (shell (format nil "ln -sfn sessions/~A.trace.log state/trace.log" stamp)))
   (sb-ext:lock-package :lisping-core)
-  (emit :info :text (format nil "lisping-ai on ~A, ~D tool~:P, ~D boot error~:P. Type a message and press Enter; replies can take a minute. Ctrl-D quits."
+  (emit :info :text (format nil "lisping-ai on ~A, ~D tool~:P, ~D boot error~:P. Type a message and press Enter; replies can take a minute. Ctrl-D quits.~%Watch what it does: tail -f state/trace.log"
                             *model* (hash-table-count *tools*) (length *boot-errors*)))
   (dolist (e *boot-errors*) (emit :error :text e))
   (let ((agent (sb-thread:make-thread #'agent-loop :name "agent"))
