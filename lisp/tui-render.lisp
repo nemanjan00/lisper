@@ -264,13 +264,13 @@ embedded newlines must never reach the grid."
                 *tui-clock-minute* (nth-value 1 (decode-universal-time
                                                  (get-universal-time)))))))))
 
-(defun tui-draw-chat (g x y w h title buf scroll)
+(defun tui-draw-chat (g x y w h title ui buf scroll)
   "Chat pane: a top border carrying the TITLE, no side or bottom
 borders — content runs the full width below it."
   (dotimes (i w) (ui-grid-put g (+ x i) y #\─ 8))
   (ui-grid-write g (+ x 1) y (format nil " ~A " title)
                  (ui-attr 7 :bright t :bg 4) (+ x w))
-  (let ((lines (tui-visible-lines buf w (1- h) scroll)))
+  (let ((lines (tui-visible-lines ui buf w (1- h) scroll)))
     (loop for line in lines
           for i from 0
           do (ui-grid-write-chunks g x (+ y 1 i) line (+ x w)))))
