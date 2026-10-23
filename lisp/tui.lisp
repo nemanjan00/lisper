@@ -133,9 +133,11 @@ read-char on their own /dev/tty stream and would steal keystrokes."
       (lambda (sig code scp)
         (declare (ignore sig code scp))
         ;; Plain INCF, not ATOMIC-INCF: this SBCL's ATOMIC-INCF rejects
-        ;; symbol places. A fixnum store is atomic in practice on x86-64,
-        ;; and the 2s poll in TUI-MAYBE-UPDATE-SIZE is the safety net.
-        (incf *tui-winch-count*)))))
+        ;; symbol places. A fixnum store is atomic in practice on x86-64.
+        ;; Also wake the redraw loop: without this a resize sits
+        ;; unnoticed until some unrelated event dirties the TUI.
+        (incf *tui-winch-count*)
+        (ignore-errors (tui-dirty))))))
 
 (defun tui-maybe-update-size (ui)
   "Probe the terminal size at most every 2 seconds, or right away after
