@@ -34,7 +34,13 @@
 (defvar *panes* (make-hash-table :test 'equal)
   "Registry of name -> pane.")
 
-(defvar *layout* '(:hsplit 0.78 (leaf "chat") (leaf "todo"))
+(defun default-layout ()
+  "A FRESH default layout tree. Dragging mutates ratio cells in place,
+so *LAYOUT* must never be assigned a quoted literal: a drag after a
+reset would rewrite the constant the next reset returns to."
+  (list :hsplit 0.78 (list 'leaf "chat") (list 'leaf "todo")))
+
+(defvar *layout* (default-layout)
   "Tree of (:hsplit ratio a b) / (:vsplit ratio a b) / (leaf name).")
 
 (defvar *pane-focus* "chat" "Name of the focused pane; scrolling keys apply to it.")
@@ -586,10 +592,10 @@ itself here or vanishes on UI restart."
         *panes-canvas* nil)
   (pane-register "chat" :title "chat" :kind :chat)
   (pane-register "todo" :title "todo" :kind :todo)
-  (setf *layout* '(:hsplit 0.78 (leaf "chat") (leaf "todo")))
+  (setf *layout* (default-layout))
   (panes-load)
   (unless (layout-valid-p *layout*)
-    (setf *layout* '(:hsplit 0.78 (leaf "chat") (leaf "todo"))))
+    (setf *layout* (default-layout)))
   (unless (member "todo" (layout-names *layout*) :test #'equal)
     (setf *layout* `(:hsplit 0.78 ,*layout* (leaf "todo"))))
   (panes-mark-all-dirty)
@@ -651,7 +657,7 @@ must not depend on which package READ-FROM-STRING ran in."
                          (tui-drop-frame) (tui-dirty)
                          (format nil "layout set: ~S" *layout*))
                   "refused: layout has unknown panes (create them first)")))
-      (:reset (setf *layout* '(:hsplit 0.78 (leaf "chat") (leaf "todo")))
+      (:reset (setf *layout* (default-layout))
               (panes-save) (tui-drop-frame) (tui-dirty)
               (format nil "layout reset: ~S" *layout*)))))
 
