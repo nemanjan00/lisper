@@ -576,7 +576,8 @@ the request just answered) against the chars we counted for it."
             (let ((note (ctx-threshold-note percent)))
               (when note (push note notes))))
           (when *ctx-pending-note*
-            (push *ctx-pending-note* notes))
+            (push *ctx-pending-note* notes)
+            (setf *ctx-note-in-flight* t))
           (setf (gethash "messages" body)
                 (coerce (append (loop for m across messages
                                       collect (ctx-prefix-message m (ctx-entry-id m)))
