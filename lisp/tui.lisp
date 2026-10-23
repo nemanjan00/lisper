@@ -136,8 +136,19 @@ the original termios for TUI-RESTORE-MODE."
       (start-terminal-input)
       t)))
 
+(defun tui-log-crash (condition)
+  "Append the condition and a backtrace to state/tui-crash.log."
+  (ignore-errors
+    (with-open-file (s (merge-pathnames "state/tui-crash.log" *root*)
+                       :direction :output :if-exists :append
+                       :if-does-not-exist :create)
+      (format s "~&--- TUI crash ~A ---~%" (get-universal-time))
+      (format s "~A~%" condition)
+      (sb-debug:print-backtrace :count 20 :stream s))))
+
 (defun tui-crash (condition)
   "The UI broke: restore the terminal, keep the agent alive."
+  (tui-log-crash condition)
   (let ((ui *tui*))
     (setf *tui* nil)
     (when ui
