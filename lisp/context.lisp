@@ -187,6 +187,10 @@ that owns them; a trailing assistant carries its tool results along."
               (est (reduce #'+ (mapcar (lambda (m) (ctx-est-tokens (or (gethash "content" m) "")))
                                        stretch)))
               (marker (obj :role "user" :content (ctx-marker-text stretch from-id to-id summary est))))
+         ;; Provenance: the core strips x-kind before the request and
+         ;; counts x-kind'd messages as system-written, so this marker
+         ;; can never become "the current task" and block later rewinds.
+         (setf (gethash "x-kind" marker) "collapse")
          (dolist (m stretch)
            (setf (gethash (ctx-entry-id m) *ctx-originals*) (cons :message m)))
          (push (list from-id to-id (ctx-short summary) marker (length stretch) est)
