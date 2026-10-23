@@ -160,15 +160,14 @@ embedded newlines must never reach the grid."
         (tui-draw-input g (- h 2) w)
         (tui-draw-status g (1- h) w)
         (uifix-boxes g)
-        (let ((s (ui-grid-render g)))
-          (tty-write
-           (format nil "~C[?25l~C[H~A~C[H~D;~DH~C[?25h"
-                   #\Esc #\Esc
-                   (subseq s 0 (1- (length s)))
-                   #\Esc
-                   (1- h)
-                   (min w (1+ (length (tui-state-input *tui*))))
-                   #\Esc)))))))
+        (tty-write
+         (format nil "~C[?25l~A~C[~D;~DH~C[?25h"
+                 #\Esc
+                 (ui-grid-render g)
+                 #\Esc
+                 (1- h)
+                 (min w (1+ (length (tui-state-input *tui*))))
+                 #\Esc))))))
 
 (defun tui-draw-pane (g x y w h title buf activep scroll)
   (ui-draw-box g x y w h
