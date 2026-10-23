@@ -37,33 +37,34 @@
 
 (defvar *tui-saved-termios* nil)
 
-(defun tui-raw-mode ()
+(defun tui-raw-mode (tty)
   "Put the terminal in raw-ish mode in-process (shell stty would hang:
 the image runs in a background process group and gets SIGTTOU). Always
 applies; saves the original termios for TUI-RESTORE-MODE, unless a saved
 one is already live. Returns true if the mode verified by reading back."
-  (when *tui*
-    (let* ((fd (sb-sys:fd-stream-fd (tui-state-tty *tui*)))
-           (cur (sb-posix:tcgetattr fd)))
-      ;; A saved termios is stale if the terminal is currently cooked
-      ;; (e.g. a crash restored it): saving it again would restore wrong.
-      (when (and *tui-saved-termios*
-                 (plusp (logand (sb-posix:termios-lflag cur) sb-posix:icanon)))
-        (setf *tui-saved-termios* nil))
-      (unless *tui-saved-termios*
-        (setf *tui-saved-termios* cur))
-      (setf (sb-posix:termios-lflag cur)
-            (logand (sb-posix:termios-lflag cur)
-                    (lognot (logior sb-posix:icanon sb-posix:echo sb-posix:isig
-                                    sb-posix:iexten)))
-            (sb-posix:termios-iflag cur)
-            (logand (sb-posix:termios-iflag cur)
-                    (lognot (logior sb-posix:icrnl sb-posix:inlcr sb-posix:igncr
-                                    sb-posix:ixon))))
-      (sb-posix:tcsetattr fd sb-posix:tcsanow cur)
-      (let ((back (sb-posix:tcgetattr fd)))
-        (zerop (logand (sb-posix:termios-lflag back)
-                      (logior sb-posix:icanon sb-posix:echo sb-posix:isig)))))))
+  (let* ((fd (sb-sys:fd-stream-fd tty))
+         (cur (sb-posix:tcgetattr fd)))
+    ;; A saved termios is stale if the terminal is currently cooked
+    ;; (e.g. a crash restored it): saving it again would restore wrong.
+    (when (and *tui-saved-termios*
+               (plusp (logand (sb-posix:termios-lflag cur) sb-posix:icanon)))
+      (setf *tui-saved-termios* nil))
+    (unless *tui-saved-termios*
+      ;; Save a FRESH copy: CUR is about to be mutated into raw mode,
+      ;; so saving it here would restore raw mode later.
+      (setf *tui-saved-termios* (sb-posix:tcgetattr fd)))
+    (setf (sb-posix:termios-lflag cur)
+          (logand (sb-posix:termios-lflag cur)
+                  (lognot (logior sb-posix:icanon sb-posix:echo sb-posix:isig
+                                  sb-posix:iexten)))
+          (sb-posix:termios-iflag cur)
+          (logand (sb-posix:termios-iflag cur)
+                  (lognot (logior sb-posix:icrnl sb-posix:inlcr sb-posix:igncr
+                                  sb-posix:ixon))))
+    (sb-posix:tcsetattr fd sb-posix:tcsanow cur)
+    (let ((back (sb-posix:tcgetattr fd)))
+      (zerop (logand (sb-posix:termios-lflag back)
+                    (logior sb-posix:icanon sb-posix:echo sb-posix:isig))))))
 
 (defun tui-restore-mode ()
   "Restore the terminal settings saved by TUI-RAW-MODE."
