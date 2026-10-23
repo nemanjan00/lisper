@@ -49,7 +49,10 @@
 
 (defvar *tui-saved-termios* nil)
 
-(defvar *tui-queued-text* nil "Text of the dimmed queued echo on screen.")
+(defvar *tui-queued-text* nil
+  "Texts of the dimmed queued echoes on screen, oldest first (a list:
+the core holds queued messages until the turn ends, so several can be
+on screen).")
 
 (defun tui-raw-mode (tty)
   "Put the terminal in raw-ish mode in-process (shell stty would hang:
