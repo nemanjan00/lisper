@@ -233,8 +233,8 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
     (tui-kill-threads)
     (when ui
       (ignore-errors
-        (write-string (format nil "~C[0m~C[?25h~C[?1049l~%TUI died: ~A~%"
-                              #\Esc #\Esc #\Esc condition)
+        (write-string (format nil "~C[?1000l~C[?1006l~C[0m~C[?25h~C[?1049l~%TUI died: ~A~%"
+                              #\Esc #\Esc #\Esc #\Esc #\Esc condition)
                       (tui-ui-tty ui))
         (finish-output (tui-ui-tty ui)))
       ;; Restore BEFORE clearing *TUI*: the restore needs the tty fd from
