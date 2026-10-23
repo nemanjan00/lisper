@@ -116,28 +116,17 @@ embedded newlines must never reach the grid."
 (defun tui-chat-result (name text)
   "Short form of a tool result: up to 2 lines, truncated, gray."
   (when (stringp text)
-    (tui-chat-flush (ui-parse-ansi (str-truncate text 300)) 2)
-    (when (> (length text) 300)
-      (tui-chat-add (list (cons (format nil "  … ~A: ~D chars" name (length text))
-                                8))))))
+    (let* ((lines (tui-chunk-lines (ui-parse-ansi (str-truncate text 2000))))
+           (shown (subseq lines 0 (min 2 (length lines)))))
+      (dolist (line shown)
+        (tui-chat-add (list (cons (chunks-text line) 8))))
+      (when (> (length text) 2000)
+        (tui-chat-add (list (cons (format nil "  ... ~A: ~D chars" name (length text))
+                                  8)))))))
 
-(defun tui-chat-flush (chunks max-lines)
-  "Write CHUNKS to the chat as at most MAX-LINES gray lines."
-  (let ((shown 0))
-    (loop for ck in chunks
-          while (< shown max-lines)
-          do (let* ((s (car ck))
-                    (p (position #\Newline s)))
-               (if p
-                   (progn
-                     (tui-chat-add (list (cons (subseq s 0 p) 8)))
-                     (incf shown)
-                     (when (and (< shown max-lines) (< (1+ p) (length s)))
-                       (tui-chat-add (list (cons (subseq s (1+ p)) 8)))
-                       (incf shown)))
-                   (progn
-                     (tui-chat-add (list (cons s 8)))
-                     (incf shown)))))))
+(defun chunks-text (chunks)
+  (with-output-to-string (out)
+    (dolist (ck chunks) (write-string (car ck) out))))
 
 ;;; ---------------------------------------------------------------
 ;;; Drawing. Only the redraw thread calls TUI-DRAW.
