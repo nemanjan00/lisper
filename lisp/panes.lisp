@@ -356,8 +356,7 @@ plus nothing else."
                                        (if (equal direction "v") :vsplit :hsplit)
                                        (or ratio 0.5) new-name))
   (panes-save)
-  (panes-mark-all-dirty)
-  (tui-dirty)
+  (tui-drop-frame)
   (format nil "split ~A ~A: added ~A (~A/~A)" name direction new-name
           (pane-kind (pane-get new-name))
           (or (pane-cmd (pane-get new-name)) "buffer")))
