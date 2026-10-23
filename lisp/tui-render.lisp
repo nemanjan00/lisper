@@ -53,7 +53,7 @@ that does not emit :user events)."
       (:thinking (tui-chat-add (list (cons (getf event :text) 8))))
       (:tool-call
        (tui-chat-add
-        (list (cons (format nil "⚙ ~A ~A"
+        (list (cons (format nil "* ~A ~A"
                             (getf event :name)
                             (tui-short-args (getf event :args)))
                     (ui-attr 4 :bright t)))))
