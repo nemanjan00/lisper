@@ -238,8 +238,7 @@ via an intermediate, so the overlapping shift is safe."
       (setf (tui-ui-input-cursor ui) (1- cur)))))
 (defun tui-clear-input (ui)
   (setf (fill-pointer (tui-ui-input ui)) 0
-        *tui-input-cursor* 0))
-
+        (tui-ui-input-cursor ui) 0))
 (defun tui-ctrl-d (ui)
   (if (zerop (length (tui-ui-input ui)))
       (setf *tui-quit* t)
