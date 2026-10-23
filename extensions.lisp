@@ -162,3 +162,5 @@
       (FLUSH))
     (OR (NREVERSE CHUNKS) (LIST (CONS "" 7))))) (progn (load (merge-pathnames "state/ui.lisp" *root*)))
 
+(require :sb-posix)
+
