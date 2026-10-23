@@ -160,3 +160,94 @@ write-and-load check."
                     "new_source" (lisping-core::obj "type" "string"))
       "required" #("path" "name" "new_source"))
  'replace-form-tool)
+
+;;; ---------------------------------------------------------------
+;;; edit_files: several surgical edits as ONE change. Every file's final
+;;; content is computed in memory first, so a mismatched old anywhere
+;;; errors before a single byte is written. Post-restart the core's
+;;; write-files-and-load writes all files with one fresh-boot check,
+;;; all or nothing; before that, a single file goes through
+;;; write-file-and-load and cross-file edits are refused.
+
+(defun ef-group-edits (edits)
+  "Group (path old new) triples by path, preserving first-seen order.
+Returns a list of (path (old . new) ...)."
+  (let ((order '()) (table (make-hash-table :test #'equal)))
+    (dolist (e edits)
+      (destructuring-bind (path old new) e
+        (unless (gethash path table) (push path order))
+        (push (cons old new) (gethash path table))))
+    (mapcar (lambda (p) (cons p (nreverse (gethash p table))))
+            (nreverse order))))
+
+(defun ef-apply-to-text (path text edits)
+  "Apply (old . new) EDITS to TEXT in order; each OLD must occur exactly
+once in the evolving text. Returns the final text; pure, errors only."
+  (dolist (e edits text)
+    (let ((old (car e))
+          (new (cdr e)))
+      (let ((pos (search old text)))
+        (unless pos
+          (error "edit_files: text not found in ~A: ~S" path
+                 (subseq old 0 (min 40 (length old)))))
+        (when (search old text :start2 (1+ pos))
+          (error "edit_files: text occurs more than once in ~A: ~S" path
+                 (subseq old 0 (min 40 (length old)))))
+        (setf text
+              (concatenate 'string (subseq text 0 pos) new
+                           (subseq text (+ pos (length old)))))))))
+
+(defun ef-write-files (pairs)
+  "Write PAIRS ((path . content) ...) as one change. Uses the core's
+atomic write-files-and-load when the new core provides it; otherwise a
+single file goes through write-file-and-load and cross-file is refused.
+Looked up at call time so this file loads in both old and new cores."
+  (let ((wfl (find-symbol "WRITE-FILES-AND-LOAD" :lisping-core)))
+    (cond ((and wfl (fboundp wfl))
+           (funcall wfl pairs))
+          ((null (cdr pairs))
+           (lisping-core::write-file-and-load (caar pairs) (cdar pairs)))
+          (t "NOT SAVED: cross-file atomic edits need the new core (restart first)"))))
+
+(defun edit-files (edits)
+  "EDITS: a list of (path old new). Computes every file's final content
+first (any mismatch errors before anything is written), then writes all
+files as one boot-checked change. Returns a status string."
+  (let* ((grouped (ef-group-edits edits))
+         (pairs (mapcar (lambda (g)
+                          (cons (car g)
+                                (ef-apply-to-text (car g)
+                                                  (rf-read-file-string (car g))
+                                                  (cdr g))))
+                        grouped)))
+    (let ((result (ef-write-files pairs)))
+      (if (and (stringp result) (search "NOT SAVED" result))
+          result
+          (format nil "edited ~{~A~^, ~} (~D edit~:P; ~A)"
+                  (mapcar #'car pairs) (length edits)
+                  (if (stringp result) result "loaded and committed"))))))
+
+(defun edit-files-tool (args)
+  (edit-files
+   (mapcar (lambda (h)
+             (list (lisping-core::arg h "path")
+                   (lisping-core::arg h "old")
+                   (lisping-core::arg h "new")))
+           (coerce (lisping-core::arg args "edits") 'list))))
+
+(lisping-core::register-tool
+ "edit_files"
+ "Surgically edit several files (or one file in several places) as ONE boot-checked change: edits is a list of {path, old, new}, applied like edit_file (each old byte-for-byte, exactly one occurrence in its evolving file). All final contents are computed before anything is written, so one bad old refuses the whole batch; with the new core all files are written and committed together, all or nothing. Use it for cross-file renames. Pre-restart fallback: edits confined to ONE file still work. Example: {\"edits\":[{\"path\":\"lisp/a.lisp\",\"old\":\"*old-name*\",\"new\":\"*new-name*\"},{\"path\":\"lisp/b.lisp\",\"old\":\"*old-name*\",\"new\":\"*new-name*\"}]}."
+ (lisping-core::obj "type" "object"
+      "properties" (lisping-core::obj
+                    "edits" (lisping-core::obj
+                             "type" "array"
+                             "items" (lisping-core::obj
+                                      "type" "object"
+                                      "properties" (lisping-core::obj
+                                                    "path" (lisping-core::obj "type" "string")
+                                                    "old" (lisping-core::obj "type" "string")
+                                                    "new" (lisping-core::obj "type" "string"))
+                                      "required" #("path" "old" "new"))))
+      "required" #("edits"))
+ 'edit-files-tool)
