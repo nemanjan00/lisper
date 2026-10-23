@@ -51,11 +51,29 @@
            :timeout)))
 
 (defun tui-read-escape (tty)
-  (if (tui-fd-ready-p tty 0.03)
-      (let ((c (read-char tty)))
-        (cond ((char= c #\[) (tui-read-csi tty))
-              (t :escape)))
-      :escape))
+  "ESC arrived. The next byte may already sit in the stream's input
+buffer — one read pulls several sequences off the fd at once, so an
+fd-level wait would time out while LISTEN sees data. Read the buffered
+char first; only when the buffer is empty wait on the fd (~0.15 s) for
+bytes still in flight. A char that turns out not to start a sequence is
+put back: it is real input, not part of the escape."
+  (let ((c (or (read-char-no-hang tty)
+               (when (tui-fd-ready-p tty 0.15) (read-char tty)))))
+    (cond ((null c) :escape)
+          ((char= c #\[) (tui-read-csi tty))
+          ((char= c #\O) (tui-read-ss3 tty))
+          (t (unread-char c tty) :escape))))
+
+(defun tui-read-ss3 (tty)
+  "ESC O <final>: application-mode cursor keys (and F-keys we ignore)."
+  (case (read-char tty)
+    (#\A :up)
+    (#\B :down)
+    (#\C :right)
+    (#\D :left)
+    (#\H :home)
+    (#\F :end)
+    (t :escape)))
 
 (defun tui-read-csi (tty)
   (let ((params (make-string-output-stream)))
