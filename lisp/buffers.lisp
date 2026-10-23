@@ -166,6 +166,50 @@ scroll the rest of the screen."
         (write-string (ui-attr-string 7 prev) out)
         (setf prev 7)))))
 
+(defun ui-grid-diff-render (old new)
+  "Render only the cells of NEW that differ from OLD: cursor-positioned
+runs of changed cells, SGR emitted only where the attribute changes.
+OLD nil or of different dimensions renders everything. Like UI-GRID-RENDER,
+the output leaves the SGR state at attr 7, so the next diff frame may
+assume it as its starting state."
+  (with-output-to-string (out)
+    (if (or (null old)
+            (/= (uigrid-w old) (uigrid-w new))
+            (/= (uigrid-h old) (uigrid-h new)))
+        (write-string (ui-grid-render new) out)
+        (let ((w (uigrid-w new))
+              (h (uigrid-h new))
+              (oc (uigrid-chars old))
+              (nc (uigrid-chars new))
+              (oa (uigrid-attrs old))
+              (na (uigrid-attrs new))
+              (prev 7))
+          (dotimes (y h)
+            (let ((runs nil)
+                  (x 0))
+              (loop while (< x w)
+                    do (if (or (char/= (char oc (+ x (* y w)))
+                                       (char nc (+ x (* y w))))
+                               (/= (aref oa (+ x (* y w)))
+                                   (aref na (+ x (* y w)))))
+                           (let ((start x))
+                             (loop while (and (< x w)
+                                              (or (char/= (char oc (+ x (* y w)))
+                                                          (char nc (+ x (* y w))))
+                                                  (/= (aref oa (+ x (* y w)))
+                                                      (aref na (+ x (* y w))))))
+                                   do (incf x))
+                             (push (cons start x) runs))
+                           (incf x)))
+              (dolist (run (nreverse runs))
+                (format out "~C[~D;~DH" #\Esc (1+ y) (1+ (car run)))
+                (loop for i from (car run) below (cdr run)
+                      for idx = (+ i (* y w))
+                      do (write-string (ui-attr-string (aref na idx) prev) out)
+                         (setf prev (aref na idx))
+                         (write-char (char nc idx) out)))))
+          (write-string (ui-attr-string 7 prev) out)))))
+
 (defun ui-safe-char (ch)
   "Control characters never go into a cell: they would move the cursor
 mid-frame. Map them (and NUL) to a space."
