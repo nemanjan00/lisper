@@ -48,12 +48,17 @@
 
 (defun pane-register (name &key title kind cmd (interval 10))
   "Register (or replace) a pane. KIND is :chat :todo :buffer :cmd —
-normalized to a lowercase keyword, so a hand-edited or upcased
+normalized to an UPPERCASE-name keyword, so a hand-edited or upcased
 state/layout.lisp can't smuggle in :BUFFER (which silently disables
-the ticker and save/load round-trips)."
-  (let ((p (or (gethash name *panes*) (make-pane :name name))))
+the ticker and save/load round-trips).  Uppercase, not lowercase: the
+source literals (:chat :todo ...) and every EQ comparison elsewhere
+use uppercase keyword names, so a lowercase :todo never matches them
+— that mismatch sent every pane to pane-buf-render and left all
+pane content blank (2026-10-23)."
+  (let ((p (or (gethash name *panes*) (make-pane :name name)))
+        (k (or kind :buffer)))
     (setf (pane-title p) (or title name)
-          (pane-kind p) (intern (string-downcase (symbol-name (or kind :buffer)))
+          (pane-kind p) (intern (string-upcase (if (symbolp k) (symbol-name k) (string k)))
                                 :keyword)
           (pane-cmd p) cmd
           (pane-interval p) (max 1 (or interval 10))
