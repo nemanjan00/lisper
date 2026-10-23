@@ -25,6 +25,30 @@ Things I keep relearning on every restart — write them down once:
   belong to the user and other agents: never send keys there, don't read
   them either. (Developer instruction, 2026-10-23.)
 
+## Lessons, round 2 (2026-10-23 evening)
+7. **SBCL mutexes are not recursive.** Any path that can nest
+   with-mutex on the same lock (key dispatch → submit → show-queued)
+   must use sb-thread:with-recursive-lock. Recursive + condition-wait is
+   fine when the lock is held exactly once around the wait.
+8. **ESC parsing: check the stream, not the fd.** One read pulls several
+   sequences into the fd-stream's input buffer, so wait-until-fd-usable
+   times out while the next byte is already buffered — you return
+   :escape and the stray "[A" becomes text. Use read-char-no-hang first,
+   fd-wait (~0.15 s) only for bytes still in flight; unread-char works
+   on fd-streams (verified), so a non-sequence char goes back.
+9. **WITH-OPEN-FILE :IF-DOES-NOT-EXIST NIL runs the body with the stream
+   bound to NIL.** Any read then falls through to *STANDARD-INPUT* —
+   the user's terminal — and blocks forever in the live image (passes
+   the fresh-boot check because its stdin is empty). Guard the body
+   with (WHEN S ...). This hung tools.lisp for the full 300 s timeout.
+10. **`shell` runs dash, not bash: no brace expansion.** `{1..50}` is
+    one literal word — printf emits the format once. Use bash -c for
+    repeat-burst keystroke tests.
+11. **Scroll clamping happens at draw time**: tui-visible-lines clamps
+    the offset to [0, n-height] (wrapped-line count) and writes it back
+    to the UI; otherwise a too-big offset silently eats the newest
+    lines when the chat is shorter than the pane.
+
 ## Lessons from the UI work (expensive; do not relearn)
 
 1. **Define helpers before their callers.** An edit whose body calls a
