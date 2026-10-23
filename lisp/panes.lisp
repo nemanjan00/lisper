@@ -89,6 +89,29 @@
     (tui-dirty))
   *pane-focus*)
 
+(defun layout-pane-names (&optional (tree *layout*))
+  "Leaf names of the layout tree, in drawing order."
+  (cond ((atom tree) nil)
+        ((eq (car tree) 'leaf) (list (cadr tree)))
+        ((member (car tree) '(:hsplit :vsplit))
+         (append (layout-pane-names (third tree))
+                 (layout-pane-names (fourth tree))))
+        (t nil)))
+
+(defun pane-focus-nth (n)
+  "Focus the Nth pane (1-based) in layout order."
+  (let ((names (layout-pane-names)))
+    (when (<= 1 n (length names))
+      (pane-focus-pane (nth (1- n) names)))))
+
+(defun pane-focus-step (delta)
+  "Move focus DELTA panes forward (or back) in layout order, wrapping."
+  (let* ((names (layout-pane-names))
+         (n (length names))
+         (pos (position *pane-focus* names :test #'equal)))
+    (when (plusp n)
+      (pane-focus-pane (nth (mod (+ (or pos 0) delta) n) names)))))
+
 ;;; ---------------------------------------------------------------
 ;;; Render functions. Each returns top-first chunk-lists, at most
 ;;; HEIGHT lines, honoring and clamping the pane's scroll.
