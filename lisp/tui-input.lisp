@@ -174,14 +174,17 @@ modifier/motion bits we ignore."
   (pane-scroll-by *pane-focus* delta))
 
 (defun tui-mouse (ui key)
-  "Handle an SGR mouse event (:mouse b x y kind). Only the wheel scrolls,
-and only while the pointer is over the chat pane (not input or status)."
+  "Handle an SGR mouse event (:mouse b x y kind). The wheel scrolls the
+pane under the pointer; a click focuses that pane. The input and status
+rows belong to no pane and are ignored."
+  (declare (ignore ui))
   (destructuring-bind (_ b x y kind) key
-    (declare (ignore _ x))
-    (when (and (eq kind :press)
-               (<= 64 b 67)                    ; wheel up/down (h-wheel too)
-               (<= 1 y (- (tui-ui-height ui) 2))) ; not input/status, 1-based
-      (tui-scroll-chat-by ui (if (evenp b) 3 -3)))))
+    (declare (ignore _))
+    (let ((target (pane-at (1- x) (1- y))))  ; 0-based
+      (cond ((and (eq kind :press) target (<= 64 b 67))
+             (pane-scroll-by target (if (evenp b) 3 -3)))
+            ((and (eq kind :press) target (<= b 2))
+             (pane-focus-pane target))))))
 
 (defun tui-scroll-chat (ui key)
   (let* ((h (max 1 (- (tui-ui-height ui) 4)))
