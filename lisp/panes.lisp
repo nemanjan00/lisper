@@ -174,15 +174,17 @@ Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them)."
 
 (defun pane-todo-render (pane w h)
   (let* ((lines
-          (let ((cur nil))
-            (loop for (text . done) in *todos*
-                  collect (list (cons (str-truncate
-                                       (format nil "[~A] ~A" (if done "x" " ") text)
-                                       w)
-                                      (cond (done 8)
-                                            ((null cur) (setf cur t)
-                                             (ui-attr 7 :bright t :bg 4))
-                                            (t 7)))))))
+          (if (null *todos*)
+              (list (list (cons "(no open todos)" 8)))
+              (let ((cur nil))
+                (loop for (text . done) in *todos*
+                      collect (list (cons (str-truncate
+                                           (format nil "[~A] ~A" (if done "x" " ") text)
+                                           w)
+                                          (cond (done 8)
+                                                ((null cur) (setf cur t)
+                                                 (ui-attr 7 :bright t :bg 4))
+                                                (t 7))))))))
          (n (length lines))
          (s (max 0 (min (pane-scroll pane) (max 0 (- n h))))))
     (setf (pane-scroll pane) s)
@@ -519,11 +521,24 @@ pane-register forms) is accepted for migration."
          (when (consp tree) (setf *layout* tree)))
        (dolist (spec (getf form :panes))
          (when (and (consp spec) (stringp (getf spec :name)))
-           (pane-register (getf spec :name)
-                          :title (getf spec :title)
-                          :kind (getf spec :kind)
-                          :cmd (getf spec :cmd)
-                          :interval (or (getf spec :interval) 300)))))
+           ;; The file stores only :kind; re-registering must not clobber
+           ;; a custom PANE-RENDER an init hook installed (the context
+           ;; pane is :kind :buffer + PANE-CONTEXT-RENDER). Preserve the
+           ;; render fn when the pane exists and its kind is unchanged.
+           (let* ((name (getf spec :name))
+                  (existing (pane-get name))
+                  (render (when (and existing
+                                     (getf spec :kind)
+                                     (string-equal (string (pane-kind existing))
+                                                   (string (getf spec :kind))))
+                            (pane-render existing))))
+             (pane-register name
+                            :title (getf spec :title)
+                            :kind (getf spec :kind)
+                            :cmd (getf spec :cmd)
+                            :interval (or (getf spec :interval) 300))
+             (when render
+               (setf (pane-render (pane-get name)) render))))))
       ((eq (car form) 'setf)
        (when (and (eq (second form) '*layout*)
                   (consp (third form))
