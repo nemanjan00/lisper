@@ -1,8 +1,8 @@
 ;;;; core.lisp: the frozen kernel of lisping-ai.
 ;;;;
 ;;;; Everything here is deliberately small: an agent loop, one tool (eval),
-;;;; an API to register more tools, and persistence through an append-only
-;;;; extensions.lisp kept in git. The AI builds everything else itself.
+;;;; an API to register more tools, and Emacs-style persistence: files that
+;;;; init.lisp loads at boot, kept in git. The AI builds everything else itself.
 
 (require :sb-concurrency)
 
@@ -11,8 +11,8 @@
   (:export #:main
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg
-           ;; persistence
-           #:persist #:save-form #:commit #:restart-image #:*boot-errors* #:*previous-session*
+           ;; files
+           #:load-file #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
            #:send-user-message #:*before-request*
@@ -29,7 +29,7 @@
 (in-package :lisping-core)
 
 (defvar *root* (make-pathname :name nil :type nil :version nil :defaults *load-truename*)
-  "Project directory: core.lisp, extensions.lisp, state/, .git.")
+  "Project directory: core.lisp, init.lisp and the files it loads, state/, .git.")
 
 ;;; ------------------------------------------------------------------
 ;;; Settings
@@ -287,13 +287,29 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
       (ignore-errors (delete-file request)))))
 
 ;;; ------------------------------------------------------------------
-;;; Persistence: extensions.lisp is replayed on boot; git keeps history.
+;;; Files, the way Emacs does it: at boot the core loads init.lisp, which loads
+;;; the rest. Evaluating code changes the running image only; what lasts is
+;;; what is in the files. git keeps their history.
 
-(defvar *replaying* nil "True while extensions.lisp is replayed at boot.")
-(defvar *boot-errors* '() "Forms from extensions.lisp that failed during the last boot.")
+(defvar *booting* nil "True while init.lisp is loaded at boot.")
+(defvar *boot-errors* '() "Problems reported while loading init.lisp at the last boot.")
+(defvar *load-problems* nil "Problems collected by LOAD-FILE, including nested loads.")
 
-(defun extensions-path () (merge-pathnames "extensions.lisp" *root*))
+(defun init-path () (merge-pathnames "init.lisp" *root*))
 (defun resume-path () (merge-pathnames "state/resume.txt" *root*))
+
+(defun read-text (path)
+  "The contents of PATH as a string, or NIL if it doesn't exist."
+  (with-open-file (in path :if-does-not-exist nil :external-format :utf-8)
+    (when in
+      (let ((text (make-string (file-length in))))
+        (subseq text 0 (read-sequence text in))))))
+
+(defun write-text (path text)
+  (ensure-directories-exist path)
+  (with-open-file (out path :direction :output :if-exists :supersede
+                            :if-does-not-exist :create :external-format :utf-8)
+    (write-string text out)))
 
 (defun form-label (form)
   (if (and (consp form) (symbolp (car form)))
@@ -301,22 +317,6 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
               (and (consp (cdr form)) (atom (cadr form)) (cadr form)))
       (let ((text (prin1-to-string form)))
         (subseq text 0 (min 60 (length text))))))
-
-(defun save-form (form)
-  "Append FORM (a form, or its source text) to extensions.lisp. Does nothing during replay."
-  (unless *replaying*
-    (with-open-file (out (extensions-path) :direction :output :if-exists :append
-                                           :if-does-not-exist :create :external-format :utf-8)
-      (if (stringp form)
-          (format out "~&~A~%~%" form)
-          (let ((*package* (find-package :lisping))
-                (*print-case* :downcase)
-                (*print-pretty* t)
-                (*print-right-margin* 100)
-                (*print-length* nil)
-                (*print-level* nil))
-            (format out "~&~S~%~%" form))))
-    t))
 
 (defun shell-quote (string)
   (with-output-to-string (s)
@@ -326,16 +326,10 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
     (write-char #\' s)))
 
 (defun commit (message)
-  "Commit everything under the project directory. Does nothing during replay."
-  (unless *replaying*
+  "Commit everything under the project directory. Does nothing during boot."
+  (unless *booting*
     (shell "git add -A")
     (shell (format nil "git commit -q -m ~A" (shell-quote message)))))
-
-(defmacro persist (&body forms)
-  "Evaluate FORMS now, and on every future boot. Saved only if they succeed."
-  `(multiple-value-prog1 (progn ,@forms)
-     (save-form '(progn ,@forms))
-     (commit ,(format nil "persist ~A" (form-label (first forms))))))
 
 (defun skip-to-next-toplevel-form (in start)
   "Move IN past the form starting at START, to the next line that begins with (."
@@ -347,26 +341,6 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
       (when (or (null line) (and (plusp (length line)) (char= (char line 0) #\()))
         (file-position in here)
         (return line)))))
-
-(defun replay-extensions ()
-  (setf *boot-errors* '())
-  (let ((*replaying* t)
-        (*package* (find-package :lisping))
-        (*standard-output* (make-broadcast-stream))
-        (*error-output* (make-broadcast-stream)))
-    (with-open-file (in (extensions-path) :if-does-not-exist nil :external-format :utf-8)
-      (when in
-        (loop
-          (let* ((start (file-position in))
-                 (form (handler-case (read in nil in)
-                         (serious-condition (c)
-                           (push (format nil "read error, form skipped: ~A" c) *boot-errors*)
-                           (if (skip-to-next-toplevel-form in start) '(progn) in)))))
-            (when (eq form in) (return))
-            (handler-case (eval form)
-              (serious-condition (c)
-                (push (format nil "~A: ~A" (form-label form) c) *boot-errors*))))))))
-  (setf *boot-errors* (nreverse *boot-errors*)))
 
 (defun restart-image (&optional resume-message)
   "Exit so the supervisor restarts the image. RESUME-MESSAGE is sent to you after boot."
@@ -408,13 +382,6 @@ function updates the tool."
               (subseq text 0 *output-limit*) (- (length text) *output-limit*) (length text))
       text))
 
-(defun auto-persisted-p (form)
-  "Top-level def* forms, REQUIRE and REGISTER-TOOL calls sent to eval are saved automatically."
-  (and (consp form) (symbolp (car form))
-       (let ((name (symbol-name (car form))))
-         (or (and (> (length name) 3) (string= "DEF" name :end2 3))
-             (member name '("REQUIRE" "REGISTER-TOOL") :test #'string=)))))
-
 (defun user-backtrace ()
   "The current backtrace, cut off where the harness's own frames begin."
   (let* ((text (with-output-to-string (s)
@@ -422,21 +389,6 @@ function updates the tool."
          (cut (or (search "LISPING-CORE::EVAL-TOPLEVEL" text) (search "LISPING-CORE::EVAL-CODE" text)))
          (line (and cut (position #\Newline text :end cut :from-end t))))
     (if line (subseq text 0 (1+ line)) text)))
-
-(defun eval-toplevel (form source saved)
-  "Evaluate FORM as a top-level form: the subforms of a top-level PROGN are
-top-level forms too, evaluated one by one. Each definition is saved as soon as it
-succeeds, so what is saved matches what ran. SOURCE is FORM's text, if known.
-Labels of saved forms are pushed onto (car SAVED). Return FORM's values."
-  (if (and (consp form) (eq (car form) 'progn))
-      (let ((values '()))
-        (dolist (sub (cdr form) values)
-          (setf values (eval-toplevel sub nil saved))))
-      (let ((values (multiple-value-list (eval form))))
-        (when (auto-persisted-p form)
-          (save-form (or source form))
-          (push (form-label form) (car saved)))
-        values)))
 
 (defun similar-names (name candidates what &optional preferred)
   "Up to 8 CANDIDATES sharing parts of NAME; names in PREFERRED rank higher."
@@ -469,7 +421,11 @@ symbol, a function in another package), or NIL."
                                 (between "The symbol " " is not external in the ")))
             (home (or (between " not found in the " " package")
                       (between " is not external in the " " package"))))
-        (cond (missing-package
+        (cond ((typep condition 'end-of-file)
+               "a form is missing a closing paren: the reader reached the end while still inside it")
+              ((search "unmatched close parenthesis" text)
+               "there is one closing paren too many here")
+              (missing-package
                (if (probe-file (merge-pathnames (format nil "contrib/~(~A~).fasl" missing-package)
                                                 (sb-int:sbcl-homedir-pathname)))
                    (format nil "~A is an SBCL contrib that isn't loaded yet: (require :~(~A~))"
@@ -499,10 +455,58 @@ symbol, a function in another package), or NIL."
                      (when others
                        (format nil "A function with this name exists as: ~(~{~A~^, ~}~)" others)))))))))))
 
+(defun load-file (path)
+  "Load the Lisp file PATH (relative to *root*) form by form, like Emacs's load,
+but a form that fails to read or evaluate is reported and skipped instead of
+ending the load. Warnings other than style warnings count as problems too.
+Returns this file's problems as strings naming file, line and error; they are
+also added to *LOAD-PROBLEMS*, so nested loads are reported to the outer one."
+  (let* ((file (merge-pathnames path *root*))
+         (name (enough-namestring file *root*))
+         (text (read-text file))
+         (problems '())
+         (*package* (find-package :lisping)))
+    (flet ((problem (start what condition)
+             (let ((message (format nil "~A:~D: ~A: ~A~@[ (Hint: ~A)~]" name
+                                    (1+ (count #\Newline text :end (min start (length text))))
+                                    what condition (ignore-errors (error-hint condition)))))
+               (push message problems)
+               (push message *load-problems*))))
+      (if (null text)
+          (let ((message (format nil "~A: file not found" name)))
+            (push message problems)
+            (push message *load-problems*))
+          (with-input-from-string (in text)
+            (loop
+              (let* ((start (file-position in))
+                     (form (handler-case (read in nil in)
+                             (serious-condition (c)
+                               (problem start "read error, form skipped" c)
+                               (if (skip-to-next-toplevel-form in start) '(progn) in)))))
+                (when (eq form in) (return))
+                (handler-case
+                    (handler-bind ((warning (lambda (w)
+                                              (unless (typep w 'style-warning)
+                                                (problem start (form-label form) w)))))
+                      (eval form))
+                  (serious-condition (c)
+                    (problem start (form-label form) c))))))))
+    (nreverse problems)))
+
+(defun load-collecting (file out)
+  "Load FILE with its output going to OUT; return every problem, nested loads included."
+  (let ((*load-problems* '())
+        (*standard-output* out)
+        (*error-output* out))
+    (handler-case (sb-ext:with-timeout *eval-timeout* (load-file file))
+      (sb-ext:timeout ()
+        (push (format nil "~A: timed out after ~D seconds" file *eval-timeout*) *load-problems*)))
+    (reverse *load-problems*)))
+
 (defun eval-code (code)
-  "Read and evaluate every form in CODE. Return printed output, values and errors."
+  "Read and evaluate every form in CODE in the running image. Nothing is saved.
+Return printed output, values and errors."
   (let ((out (make-string-output-stream))
-        (saved (list '()))
         (backtrace nil))
     (handler-case
         (handler-bind ((serious-condition
@@ -516,13 +520,9 @@ symbol, a function in another package), or NIL."
                   (*trace-output* out))
               (with-input-from-string (in code)
                 (loop
-                  (let* ((start (file-position in))
-                         (form (read in nil in)))
+                  (let ((form (read in nil in)))
                     (when (eq form in) (return))
-                    (let ((values (eval-toplevel form
-                                                 (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                                              (subseq code start (file-position in)))
-                                                 saved))
+                    (let ((values (multiple-value-list (eval form)))
                           (*print-length* 100)
                           (*print-level* 8)
                           (*print-circle* t))
@@ -533,18 +533,55 @@ symbol, a function in another package), or NIL."
       (serious-condition (c)
         (format out "~&ERROR (~S): ~A~%~@[Hint: ~A~%~]~@[Backtrace:~%~A~]"
                 (type-of c) c (ignore-errors (error-hint c)) backtrace)))
-    (let ((labels (reverse (car saved))))
-      (when labels
-        (commit (format nil "~{~A~^, ~}" labels))
-        (format out "~&[persisted: ~{~A~^, ~}]~%" labels)))
     (limit-output (get-output-stream-string out))))
 
+(defparameter +core-files+ '("core.lisp" "boot.lisp" "run.sh"))
+
+(defun write-file-and-load (path code)
+  "Write CODE verbatim to PATH, relative to *root*. A .lisp file is then loaded,
+like saving a buffer and running eval-buffer in Emacs: if loading reports any
+problem, the previous version is put back (and loaded again), so the file only
+ever holds code that loaded cleanly. Commits what sticks."
+  (let* ((file (merge-pathnames path *root*))
+         (name (enough-namestring file *root*))
+         (old (read-text file)))
+    (cond
+      ((member name +core-files+ :test #'string=)
+       (format nil "~A is part of the core and can't be written from here." name))
+      ((not (equalp (pathname-type file) "lisp"))
+       (write-text file code)
+       (commit (format nil "~:[add~;update~] ~A" old name))
+       (format nil "Wrote ~A (~D characters)." name (length code)))
+      (t
+       (write-text file code)
+       (let* ((out (make-string-output-stream))
+              (problems (load-collecting file out))
+              (output (limit-output (get-output-stream-string out))))
+         (cond
+           ((null problems)
+            (commit (format nil "~:[add~;update~] ~A" old name))
+            (let ((init (read-text (init-path))))
+              (format nil "~@[~A~%~]Wrote and loaded ~A; committed.~:[~%Note: init.lisp doesn't mention ~A, so it won't be loaded at boot.~;~]"
+                      (and (string/= output "") output) name
+                      (or (string= name "init.lisp") (and init (search (pathname-name file) init)))
+                      name)))
+           (t
+            (if old (write-text file old) (delete-file file))
+            (when old (load-collecting file (make-broadcast-stream)))
+            (format nil "~@[~A~%~]NOT SAVED. Loading ~A reported:~%~{- ~A~%~}~:[The file was new, so it was removed.~;The previous version was put back and loaded again.~] Definitions made before the problem are still in the running image."
+                    (and (string/= output "") output) name problems old))))))))
+
 (register-tool "eval"
-               "Evaluate Common Lisp forms in your own running SBCL image, in package LISPING. Returns printed output, each form's values, or the error with a backtrace."
+               "Evaluate Common Lisp in your own running SBCL image (package LISPING), like M-: in Emacs: it changes the running image only. With `file`, the code is instead written verbatim to that file and, for a .lisp file, loaded, like saving a buffer and eval-buffer; it is kept and committed only if it loads without errors or warnings."
                (obj :type "object"
-                    :properties (obj :code (obj :type "string" :description "One or more Lisp forms."))
+                    :properties (obj :code (obj :type "string" :description "One or more Lisp forms; with file, the complete new contents of the file.")
+                                     :file (obj :type "string" :description "Optional. A path relative to the project directory, e.g. init.lisp or lisp/ui.lisp."))
                     :required #("code"))
-               (lambda (args) (eval-code (arg args "code" ""))))
+               (lambda (args)
+                 (let ((file (arg args "file")))
+                   (if (and (stringp file) (string/= file ""))
+                       (write-file-and-load file (arg args "code" ""))
+                       (eval-code (arg args "code" ""))))))
 
 ;;; ------------------------------------------------------------------
 ;;; Conversation and I/O
@@ -649,25 +686,26 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *complete*: the function that calls the model, given the request body; it returns the assistant message. Replace it to stream or call the model differently; chat-url and api-headers give you the endpoint and auth. If yours fails, the core falls back to default-complete.
 - *model*, *max-tokens*, *eval-timeout*, *output-limit*, *root* (the project directory).
 
-Persistence. Your image restarts sometimes, so keep what matters:
+Files and persistence, the way Emacs does it:
+- At boot the core loads init.lisp, like Emacs loads init.el. init.lisp is yours: from it, load the other files you write with (load-file \"lisp/ui.lisp\"). load-file reports a form that fails and goes on with the rest, like a forgiving load.
+- eval with only `code` is like M-: or *scratch*: it changes the running image and nothing else. Use it to explore and test.
+- eval with `file` is like saving a buffer and running eval-buffer: the code is written verbatim to the file and loaded. It is kept and committed only if it loads with no errors and no warnings; otherwise the old version is put back. So your files only ever contain code that loaded, and what loads at boot is what you ran. Non-.lisp files are just written, e.g. HTML or notes.
+- So, to keep something, put it in a file that init.lisp loads. The image and the files can drift apart while you work, as in Emacs; at boot, the files win.
+- Writing a whole file to change one function gets slow as files grow. Keep files small and focused, and consider building yourself what Emacs users have: buffers, editing part of a file, and re-evaluating just the form you changed (C-M-x). Tools you register get their arguments as plain JSON strings, so a file-editing tool avoids escaping code inside Lisp strings.
 - Your conversation does NOT survive a restart, and the user may restart you at any moment. Whatever you learn by exploring (facts about your environment, what works and what doesn't) is lost unless you write it down, e.g. in state/notes.md. *previous-session* is the transcript of the session before this boot (JSONL), if you want to look back.
-- Top-level def* forms (defun, defvar, defparameter, defmacro, defclass, defstruct, ...), require and register-tool calls you send to eval are saved automatically to extensions.lisp and committed to git, each as soon as it succeeds. As in Common Lisp, the forms inside a top-level progn are top-level forms too; a def* inside let or a function body is not, so wrap such things in (persist ...).
-- Anything else is temporary unless you wrap it in (persist ...), e.g. (persist (setf *emit* 'my-emit)). persist evaluates now and saves the form only if it succeeds.
-- On boot, the core replays extensions.lisp in order; the last definition wins. Forms that fail are skipped and reported to you.
-- Files you write under state/ are committed too (except state/tmp and state/sessions). Use it for notes, memory and data.
-- (restart-image \"message\") restarts the image; the message is sent to you after boot. Use it to check your extensions survive a restart.
-- A supervisor restarts the image if it crashes, and rolls extensions.lisp back to the last good boot if it crashes while booting.
-- extensions.lisp is append-only by default. When it gets long, you may compact it: rewrite it to the current definitions, test it with a restart, and commit.
+- Files under state/ are committed too (except state/tmp and state/sessions). Use it for notes, memory and data.
+- (restart-image \"message\") restarts the image; the message is sent to you after boot. Use it to check that what you built comes back.
+- A supervisor restarts the image if it crashes, and if it crashes while booting, rolls your files back to the last commit that booted.
 
 Why Lisp, and how to work in it:
-- You are a live image, like Emacs or a Smalltalk system. The running image is the program: there is no separate source tree that you build and restart. You grow it the way a Lisp programmer works at a REPL: evaluate one small definition, call it right away to test it, redefine it when it's wrong. extensions.lisp is the image's memory of those definitions, written for you; you don't need files of your own for Lisp code.
-- Prefer many small functions over big ones. A ten-line defun with a mistake is cheap to resend; a sixty-line one with an unbalanced paren is not. Define and test in the same eval.
-- Code is data. (read-from-string code) shows you how text will be read before you run it, which catches misplaced parens. You can hold a definition as a list, change it with list operations, and evaluate the result instead of patching text. Reading extensions.lisp with read gives you every saved definition as data.
+- You are a live image, like Emacs or a Smalltalk system. The running image is the program, and you change it while it runs: evaluate one small definition, call it right away to test it, redefine it when it's wrong. The files are how the image comes back after a restart.
+- Prefer many small functions over big ones. A ten-line defun with a mistake is cheap to fix; a sixty-line one with an unbalanced paren is not. Define and test in the same eval.
+- Code is data. (read-from-string code) shows you how text will be read before you run it, which catches misplaced parens. You can hold a definition as a list, change it with list operations, and evaluate the result instead of patching text. Reading a file with read gives you its definitions as data.
 - Ask the image instead of guessing: (apropos \"ALIEN\" :sb-alien), (describe 'x), (documentation 'f 'function), (function-lambda-expression #'f). Treat compiler warnings as errors: code that evaluated with warnings is usually not what you meant.
 - An error doesn't hurt the image. Read it, fix the one form, try again.
-- Files are for data and for things outside Lisp. If you do keep Lisp code in a file, persist the (load ...) that loads it, or it won't come back after a restart.
 
 Rules:
+- The core (package LISPING-CORE) is locked.Rules:
 - The core (package LISPING-CORE) is locked. Use setf for its variables; don't redefine its functions.
 - eval calls time out after *eval-timeout* seconds. Run servers and other long-lived work in threads (sb-thread:make-thread).
 - Build in small steps and check each one. When something breaks, read the error and fix it.
@@ -819,10 +857,14 @@ the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
 (defun main ()
   (setf *random-state* (make-random-state t))
   (configure)
-  ;; Terminal input starts before replay, so a saved UI can stop it and take over.
+  ;; Terminal input starts before init.lisp, so a UI loaded from it can stop it and take over.
   (unless (sb-ext:posix-getenv "LISPING_HEADLESS")
     (lisping::start-terminal-input))
-  (replay-extensions)
+  (setf *boot-errors*
+        (let ((*booting* t))
+          (if (probe-file (init-path))
+              (load-collecting (init-path) (make-broadcast-stream))
+              '())))
   (shell "git tag -f last-good HEAD")
   (let ((stamp (multiple-value-bind (s m h d mo y) (get-decoded-time)
                  (format nil "~D~2,'0D~2,'0D-~2,'0D~2,'0D~2,'0D" y mo d h m s))))
@@ -841,6 +883,6 @@ the model is called; if it fails, the core falls back to DEFAULT-COMPLETE.")
         (resume (take-resume-message)))
     (when (or resume *boot-errors*)
       (send-user-message
-       (format nil "[boot] ~@[~A~]~@[~%Forms that failed while replaying extensions.lisp:~%~{- ~A~%~}~]"
+       (format nil "[boot] ~@[~A~]~@[~%Problems while loading init.lisp:~%~{- ~A~%~}~]"
                resume *boot-errors*)))
     (sb-thread:join-thread agent :default nil)))

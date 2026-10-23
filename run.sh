@@ -2,8 +2,9 @@
 # Supervisor for lisping-ai.
 #
 # Exit 0 stops, exit 42 (restart-image) restarts. Any other exit is a crash:
-# the image is restarted, and if it crashed while booting, extensions.lisp is
-# first rolled back to the last commit that booted (tag last-good).
+# the image is restarted, and if it crashed while booting, the AI's files
+# (everything outside state/) are first rolled back to the last commit that
+# booted (tag last-good).
 set -u
 cd "$(dirname "$0")"
 
@@ -39,11 +40,11 @@ while true; do
     exit 1
   fi
   if git rev-parse -q --verify last-good >/dev/null &&
-     ! git diff --quiet last-good -- extensions.lisp; then
-    echo "[supervisor] crashed on boot (exit $code), rolling extensions.lisp back to last-good"
-    git checkout last-good -- extensions.lisp &&
-      git commit -q -m "supervisor: roll back extensions.lisp after boot crash (exit $code)"
-    resume "[supervisor] The image crashed while booting (exit $code), so extensions.lisp was rolled back to the last commit that booted. See git log for what was undone."
+     ! git diff --quiet last-good -- . ':(exclude)state'; then
+    echo "[supervisor] crashed on boot (exit $code), rolling files back to last-good"
+    git restore --source=last-good --staged --worktree -- . ':(exclude)state' &&
+      git commit -q -m "supervisor: roll back files after boot crash (exit $code)"
+    resume "[supervisor] The image crashed while booting (exit $code), so your files were rolled back to the last commit that booted. See git log for what was undone."
   else
     echo "[supervisor] crashed on boot (exit $code), retrying"
   fi
