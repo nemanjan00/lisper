@@ -1,3 +1,0 @@
-[ ] ask_user tool: question + numbered options in own pane, keys 1-9 / o / free text / mouse click, multi toggle+Enter, blocks on mailbox; typed/queued message while open = Other answer; returns {"choice"|"choices"|"other"}
-[ ] Background tasks: bg_start/bg_list/bg_output/bg_stop via sb-ext:run-program :wait nil, output to state/tmp, exit notice as x-kind "task" message, tasks pane, clean stop on tui-stop/restart
-[ ] monitor_start/monitor_stop on bg tasks: pattern filter (regex/substring), ~1s batching, max_rate limit, matching lines as x-kind "monitor" messages
