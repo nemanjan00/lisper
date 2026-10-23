@@ -293,12 +293,16 @@ entry as a quoted message, so it can never orphan a tool call)."
                    (if (null at)
                        "[ctx] ERROR: collapse marker no longer in the conversation."
                        (progn
-                         (setf *messages*
-                               (append (subseq *messages* 0 (1+ at))
-                                       (list (obj :role "user"
-                                                  :content (format nil "[restored entry e~D, was a ~A message]~%~A"
-                                                                   id role text)))
-                                       (subseq *messages* (1+ at))))
+                         (let ((quoted (obj :role "user"
+                                            :content (format nil "[restored entry e~D, was a ~A message]~%~A"
+                                                             id role text))))
+                           ;; x-kind: a restored entry is system-written;
+                           ;; it must not become "the current task".
+                           (setf (gethash "x-kind" quoted) "restored")
+                           (setf *messages*
+                                 (append (subseq *messages* 0 (1+ at))
+                                         (list quoted)
+                                         (subseq *messages* (1+ at)))))
                          (remhash id *ctx-originals*)
                          (pane-dirty "context")
                          (format nil "[ctx] re-inserted entry e~D as a quoted message after its collapse marker; takes effect from the next request."
