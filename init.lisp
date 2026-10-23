@@ -17,6 +17,13 @@
 ;; Self-serve agent tools (todo list et al.).
 (load-file "lisp/tools.lisp")
 
+;; Compactor-style context management (context_rewind/offload/restore/
+;; search, entry ids, nudges, context pane).
+(load-file "lisp/context.lisp")
+
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
 (tui-start)
+
+;; Install the compactor once the UI exists (registers the context pane).
+(context-start)
