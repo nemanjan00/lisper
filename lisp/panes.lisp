@@ -292,11 +292,30 @@ redraw thread."
     (setf (pane-needs-redraw p) 0)))
 
 (defun panes-draw (g)
-  "Render every dirty pane at its layout rect."
-  (dolist (rect (layout-leaves *layout* 0 0 (uigrid-w g) (uigrid-h g)))
-    (destructuring-bind (name x y w h) rect
-      (let ((p (pane-get name)))
-        (when p (pane-draw-into g p x y w h))))))
+  "Render every dirty pane at its layout rect, then repaint the gap
+columns between side-by-side panes with a dim vertical line (every
+hsplit reserves one uncovered column — see hsplit-left-width)."
+  (let ((rects (layout-leaves *layout* 0 0 (uigrid-w g) (uigrid-h g))))
+    (dolist (rect rects)
+      (destructuring-bind (name x y w h) rect
+        (let ((p (pane-get name)))
+          (when p (pane-draw-into g p x y w h)))))
+    (panes-draw-gap-columns g rects)))
+
+(defun panes-draw-gap-columns (g rects)
+  "Fill every column no pane rect covers with a dim │ — the 1-column
+gaps hsplit leaves between side-by-side panes, at any depth.  (With
+this geometry a column is either pane-covered or a gap for the whole
+height; vsplit reserves no gap rows.)"
+  (let ((w (uigrid-w g))
+        (h (uigrid-h g)))
+    (dotimes (x w)
+      (unless (some (lambda (r)
+                      (and (<= (second r) x)
+                           (< x (+ (second r) (fourth r)))))
+                    rects)
+        (dotimes (y h)
+          (ui-grid-put g x y #\│ 8))))))
 
 ;;; ---------------------------------------------------------------
 ;;; Operations (also exposed as tools)
