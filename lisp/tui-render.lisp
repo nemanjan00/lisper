@@ -209,19 +209,19 @@ embedded newlines must never reach the grid."
     (ui-grid-write g (length prompt) y
                    (coerce (tui-state-input ui) 'string) 7 w)))
 
-(defun tui-draw-status (g y w)
+(defun tui-draw-status (g ui y w)
   (let ((attr (ui-attr 7 :bright t :bg 4)))
     (dotimes (x w) (ui-grid-put g x y #\Space attr))
     (ui-grid-write g 1 y (format nil " lisping-ai ~A" *model*) attr (1- w))
-    (let* ((sel (tui-state-active *tui*))
+    (let* ((sel (tui-state-active ui))
            (panes (format nil " ~:[-~;*~]chat  ~:[-~;*~]weather "
                           (zerop sel) (= 1 sel))))
       (ui-grid-write g (max 1 (- (floor w 2) (floor (length panes) 2)))
                      y panes attr (1- w)))
     (let* ((now (multiple-value-list (decode-universal-time (get-universal-time))))
            (time (format nil "~2,'0d:~2,'0d " (nth 2 now) (nth 1 now)))
-           (hint (if (tui-state-prefix *tui*)
-                     "C-b cancel · q quit · 1/2 pane · PgUp/PgDn scroll"
+           (hint (if (tui-state-prefix ui)
+                     "C-b cancel | q quit | 1/2 pane | PgUp/PgDn scroll"
                      "C-b prefix")))
       (ui-grid-write g (max 1 (- w (length hint) (length time) 1)) y
                      (concatenate 'string hint " " time) attr w))))
