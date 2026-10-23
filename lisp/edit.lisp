@@ -36,7 +36,7 @@ Writes and loads the result via the core; returns a status string."
                      (lisping-core::arg args "new")))
 
 (lisping-core::register-tool
- "edit_file" "Surgically edit a file: replace the single occurrence of `old` with `new` in `path` (relative to the project root), then write and load it; a fresh-boot check runs first and the old version is restored on any error or warning. `old` must match the file byte-for-byte (indentation included) and occur exactly once — include enough surrounding lines to make it unique. Returns a status line. To replace a whole definition prefer replace_form; to add a new definition, anchor on an adjacent unique line (e.g. the next defun)."
+ "edit_file" "Surgically edit a file: replace the single occurrence of `old` with `new` in `path` (relative to the project root), then write and load it; a fresh-boot check runs first and the old version is restored on any error or warning. `old` must match the file byte-for-byte (indentation included) and occur exactly once — include enough surrounding lines to make it unique. Returns a status line. To replace a whole definition prefer replace_form; to add a new definition, anchor on an adjacent unique line (e.g. the next defun). Example: {\"path\":\"lisp/x.lisp\",\"old\":\"(foo x)\",\"new\":\"(foo x y)\"}."
  (lisping-core::obj "type" "object"
         "properties" (lisping-core::obj
                       "path" (lisping-core::obj "type" "string")
