@@ -1,5 +1,5 @@
 ;;;; lisp/tui-render.lisp -- turning agent events into chat lines and
-;;;; compositing panes, status bar and input line into the grid.
+;;;; compositing chat, status bar and input line into the grid.
 ;;;; Draws only from the redraw thread; takes *tui-lock* while reading.
 
 (in-package :lisping)
@@ -57,22 +57,44 @@ that does not emit :user events)."
             (when (and last (string= (gethash "role" last) "user")
                        (stringp (gethash "content" last)))
               (tui-show-user ui (gethash "content" last))))
-        (serious-condition (c) (when (eq *tui* ui) (tui-crash c))))))
-  body)
+        (serious-condition (c) (when (eq *tui* ui) (tui-crash c)))))
+  body))
 
 (defun tui-show-user (ui text)
-  "Log a user message unless it is already on screen."
+  "Log a user message unless it is already on screen. Upgrades the dimmed
+queued echo of the same text instead of duplicating it."
   (sb-thread:with-mutex (*tui-lock*)
     (when (and (eq *tui* ui)
-               (not (equal text (tui-state-shown-user ui))))
-      (setf (tui-state-shown-user ui) text
-            (tui-state-pending-user ui) nil
-            (tui-state-scroll ui) 0)
-      (uibuf-append (tui-state-chat ui)
+               (not (equal text (tui-ui-shown-user ui))))
+      (when (equal text *tui-queued-text*)
+        (uibuf-remove-matching
+         (tui-ui-chat ui)
+         (lambda (ln)
+           (string= (chunks-text (uline-chunks ln))
+                    (concatenate 'string "you (queued)> " text))))
+        (setf *tui-queued-text* nil))
+      (setf (tui-ui-shown-user ui) text
+            (tui-ui-pending-user ui) nil
+            (tui-ui-scroll ui) 0)
+      (uibuf-append (tui-ui-chat ui)
                     (list (cons "you> " (ui-attr 2 :bright t))
                           (cons text (ui-attr 2 :bright t)))
                     :fresh t)))
   (tui-dirty))
+
+(defun tui-show-queued (ui text)
+  "Echo a just-submitted message dimmed, ahead of the model picking it
+up; TUI-SHOW-USER replaces this line when the :user event arrives."
+  (when (and (eq *tui* ui) (stringp text) (plusp (length text))
+             (not (equal text *tui-queued-text*)))
+    (sb-thread:with-mutex (*tui-lock*)
+      (when (eq *tui* ui)
+        (setf *tui-queued-text* text)
+        (uibuf-append (tui-ui-chat ui)
+                      (list (cons "you (queued)> " 8)
+                            (cons text 8))
+                      :fresh t)))
+    (tui-dirty)))
 
 (defun tui-log-event (ui event)
   (let ((type (getf event :type)))
@@ -89,8 +111,9 @@ that does not emit :user events)."
       (:tool-result (tui-chat-result ui (getf event :name) (getf event :text)))
       (:error (tui-chat-add ui (ui-parse-ansi (getf event :text))))
       (:info (tui-chat-add ui (list (cons (getf event :text) 8))))
+      (:queued (tui-show-queued ui (getf event :text)))
       (:user (let ((text (getf event :text)))
-               (unless (equal text (tui-state-pending-user ui))
+               (unless (equal text (tui-ui-pending-user ui))
                  (tui-show-user ui text))))
       (t nil))))
 
@@ -101,7 +124,7 @@ embedded newlines must never reach the grid."
     (sb-thread:with-mutex (*tui-lock*)
       (when (eq *tui* ui)
         (dolist (line (tui-chunk-lines chunks))
-          (uibuf-append (tui-state-chat ui) line :fresh t))))
+          (uibuf-append (tui-ui-chat ui) line :fresh t))))
     (tui-dirty)))
 
 (defun tui-chunk-lines (chunks)
@@ -165,6 +188,10 @@ embedded newlines must never reach the grid."
   (/= (or *tui-clock-minute* -1)
       (nth-value 1 (decode-universal-time (get-universal-time)))))
 
+(defun tui-seconds-to-next-minute ()
+  "Sleep budget for the redraw wait: wake when the clock may tick over."
+  (- 60 (nth-value 0 (decode-universal-time (get-universal-time)))))
+
 (defun tui-redraw-loop (ui)
   (loop while (and *tui* (eq *tui* ui))
         do (handler-case
@@ -172,16 +199,18 @@ embedded newlines must never reach the grid."
                  (sb-thread:with-mutex (*tui-lock*)
                    (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
                          do (sb-thread:condition-wait *tui-cv* *tui-lock*
-                                                      :timeout 1.0)
-                            ;; Waking is not a reason to draw; only the
-                            ;; once-a-minute clock tick dirties an idle UI.
+                                                      :timeout (tui-seconds-to-next-minute))
+                            ;; A timeout is only the once-a-minute clock
+                            ;; tick; TUI-DIRTY wakes the wait otherwise.
+                            ;; Note: CONDITION-WAIT returns T even on
+                            ;; timeout here, so test the clock, not it.
                             (when (and (zerop *tui-dirty*)
                                        (tui-minute-changed-p))
                               (incf *tui-dirty*)))
-                   ;; Consume the dirty flag BEFORE drawing: emitters only
-                   ;; append state and bump the counter, so this cannot
-                   ;; lose an update — the new state is drawn now, and a
-                   ;; bump during the draw schedules one more pass.
+                   ;; Consume the flag BEFORE drawing: emitters append
+                   ;; state first and bump the counter under the same
+                   ;; lock, so nothing can be lost; a bump during the
+                   ;; draw schedules exactly one more pass.
                    (when (and *tui* (eq *tui* ui))
                      (setf *tui-dirty* 0)))
                  (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
@@ -192,23 +221,18 @@ embedded newlines must never reach the grid."
   (tui-maybe-update-size ui)
   (sb-thread:with-mutex (*tui-lock*)
     (when (and *tui* (eq *tui* ui))
-      (let* ((w (tui-state-width ui))
-             (h (tui-state-height ui))
+      (let* ((w (tui-ui-width ui))
+             (h (tui-ui-height ui))
              (body-h (max 3 (- h 2)))
-             (chat-w (max 20 (min (- w 20) (round (* w 0.62)))))
              (g (ui-grid-make w h)))
-        (tui-draw-pane g 0 0 chat-w body-h "chat"
-                       (tui-state-chat ui) (zerop (tui-state-active ui))
-                       (tui-state-scroll ui))
-        (tui-draw-pane g chat-w 0 (- w chat-w) body-h "weather"
-                       (tui-state-weather ui) (= 1 (tui-state-active ui))
-                       0)
+        (tui-draw-pane g 0 0 w body-h "chat"
+                       (tui-ui-chat ui) t (tui-ui-scroll ui))
         (tui-draw-input g ui (- h 2) w)
         (tui-draw-status g ui (1- h) w)
         (uifix-boxes g)
-        (let* ((prompt-len (length (if (tui-state-prefix ui) "*> " "> ")))
+        (let* ((prompt-len (length (if (tui-ui-prefix ui) "*> " "> ")))
                (row (1- h))
-               (col (min w (+ prompt-len (length (tui-state-input ui)) 1)))
+               (col (min w (+ prompt-len (length (tui-ui-input ui)) 1)))
                (full (or (null *tui-prev-grid*)
                          (/= (uigrid-w *tui-prev-grid*) w)
                          (/= (uigrid-h *tui-prev-grid*) h)))
@@ -232,55 +256,3 @@ embedded newlines must never reach the grid."
                 *tui-prev-cursor* (cons row col)
                 *tui-clock-minute* (nth-value 1 (decode-universal-time
                                                  (get-universal-time)))))))))
-
-(defun tui-draw-pane (g x y w h title buf activep scroll)
-  (ui-draw-box g x y w h
-               (if activep (ui-attr 7 :bright t :bg 4) 8)
-               (format nil " ~A " title))
-  (let ((inner-w (- w 2))
-        (inner-h (- h 2)))
-    (when (and (plusp inner-w) (plusp inner-h))
-      (let ((lines (tui-visible-lines buf inner-w inner-h scroll)))
-        (loop for line in lines
-              for i from 0
-              do (ui-grid-write-chunks g (1+ x) (+ y 1 i) line
-                                       (+ x 1 inner-w)))))))
-
-(defun tui-visible-lines (buf width height scroll)
-  "Top-first chunk-lists fitting HEIGHT rows, scrolled up SCROLL lines."
-  (let* ((src (uibuf-lines buf))
-         (n0 (length src))
-         (recent (loop for i from (max 0 (- n0 400)) below n0
-                       collect (aref src i)))
-         (all (loop for ln in recent
-                    append (or (ui-wrap-chunks (uline-chunks ln) width)
-                               (list nil))))
-         (n (length all))
-         (end (max 0 (- n scroll)))
-         (start (max 0 (- end height))))
-    (subseq all start end)))
-
-(defun tui-draw-input (g ui y w)
-  (let* ((prefix (tui-state-prefix ui))
-         (pattr (if prefix (ui-attr 3 :bright t) (ui-attr 2 :bright t)))
-         (prompt (if prefix "*> " "> ")))
-    (ui-grid-write g 0 y prompt pattr w)
-    (ui-grid-write g (length prompt) y
-                   (coerce (tui-state-input ui) 'string) 7 w)))
-
-(defun tui-draw-status (g ui y w)
-  (let ((attr (ui-attr 7 :bright t :bg 4)))
-    (dotimes (x w) (ui-grid-put g x y #\Space attr))
-    (ui-grid-write g 1 y (format nil " lisping-ai ~A" *model*) attr (1- w))
-    (let* ((sel (tui-state-active ui))
-           (panes (format nil " ~:[-~;*~]chat  ~:[-~;*~]weather "
-                          (zerop sel) (= 1 sel))))
-      (ui-grid-write g (max 1 (- (floor w 2) (floor (length panes) 2)))
-                     y panes attr (1- w)))
-    (let* ((now (multiple-value-list (decode-universal-time (get-universal-time))))
-           (time (format nil "~2,'0d:~2,'0d " (nth 2 now) (nth 1 now)))
-           (hint (if (tui-state-prefix ui)
-                     "C-b cancel | q quit | 1/2 pane | PgUp/PgDn scroll"
-                     "C-b prefix")))
-      (ui-grid-write g (max 1 (- w (length hint) (length time) 1)) y
-                     (concatenate 'string hint " " time) attr w))))
