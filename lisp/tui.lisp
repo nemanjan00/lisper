@@ -157,6 +157,9 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
       (setf (tui-ui-height ui) rows
             (tui-ui-width ui) cols
             *tui-prev-grid* nil)         ; size changed: next frame is full
+      ;; Panes moved: every one must re-render at its new rect, or the
+      ;; old contents linger in the canvas at the wrong size.
+      (panes-mark-all-dirty)
       (tty-write (format nil "~C[2J" #\Esc)))))
 
 (defun tui-open-tty ()
