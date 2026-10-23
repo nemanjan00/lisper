@@ -160,6 +160,11 @@ embedded newlines must never reach the grid."
 ;;; ---------------------------------------------------------------
 ;;; Drawing. Only the redraw thread calls TUI-DRAW.
 
+(defun tui-minute-changed-p ()
+  "True when the wall-clock minute differs from the one on screen."
+  (/= (or *tui-clock-minute* -1)
+      (nth-value 1 (decode-universal-time (get-universal-time)))))
+
 (defun tui-redraw-loop (ui)
   (loop while (and *tui* (eq *tui* ui))
         do (handler-case
@@ -167,7 +172,12 @@ embedded newlines must never reach the grid."
                  (sb-thread:with-mutex (*tui-lock*)
                    (loop while (and *tui* (eq *tui* ui) (zerop *tui-dirty*))
                          do (sb-thread:condition-wait *tui-cv* *tui-lock*
-                                                      :timeout 1.0)))
+                                                      :timeout 1.0)
+                            ;; Waking is not a reason to draw; only the
+                            ;; once-a-minute clock tick dirties an idle UI.
+                            (when (and (zerop *tui-dirty*)
+                                       (tui-minute-changed-p))
+                              (incf *tui-dirty*))))
                  (when (and *tui* (eq *tui* ui)) (tui-draw ui)))
              (serious-condition (c)
                (when (eq *tui* ui) (tui-crash c))))))
