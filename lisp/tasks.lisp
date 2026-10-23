@@ -1,7 +1,7 @@
 ;;;; lisp/tasks.lisp -- background tasks and monitors.
 ;;;;
 ;;;; bg_start runs a shell command detached (no stdin; stdout+stderr go to
-;;;; state/tmp/task-NAME.log) and returns immediately; a watcher thread
+;;;; the session's tmp/task-NAME.log) and returns immediately; a watcher thread
 ;;;; reports the exit as a synthetic x-kind "task" message, which the held
 ;;;; queue delivers when the current turn ends.  monitor_start is a bg task
 ;;;; plus a reader thread that tails the log and forwards matching lines as
@@ -32,12 +32,11 @@
         #'< :key #'task-start))
 
 (defun task-file-for (name)
-  (merge-pathnames
-   (format nil "state/tmp/task-~A.log"
+  (lisping-core:session-path
+   (format nil "tmp/task-~A.log"
            (with-output-to-string (s)
              (loop for c across name
-                   do (write-char (if (or (alphanumericp c) (find c "-_")) c #\-) s))))
-   lisping-core:*root*))
+                   do (write-char (if (or (alphanumericp c) (find c "-_")) c #\-) s))))))
 
 (defun task-line-count (task)
   (or (ignore-errors
@@ -62,15 +61,14 @@ accept a string too."
 
 (defun bg-start (name cmd &key monitor pattern max-rate)
   "Start CMD as background task NAME and return a status string.
-Output (stdout+stderr) goes to state/tmp/task-NAME.log.  With MONITOR,
-also start a reader forwarding matching lines to the agent."
+Output (stdout+stderr) goes to the session's tmp/task-NAME.log.  With
+MONITOR, also start a reader forwarding matching lines to the agent."
   (cond ((zerop (length (string-trim " " name))) "bg_start: name is empty")
         ((zerop (length (string-trim " " cmd))) "bg_start: cmd is empty")
         ((let ((old (gethash name *tasks*)))
            (and old (eq (task-status old) :running)))
          (format nil "task ~S is already running (bg_stop it first)" name))
         (t
-         (ensure-directories-exist (merge-pathnames "state/tmp/" lisping-core:*root*))
          (let* ((file (task-file-for name))
                 (stream (open file :direction :output :if-exists :supersede
                               :if-does-not-exist :create))
@@ -287,7 +285,7 @@ Idempotent."
   (setf *tui-stop-hooks* (append *tui-stop-hooks* (list 'tasks-stop-all)))
   (tasks-init-panes)
   (lisping-core::register-tool
-   "bg_start" "Start a background task running shell CMD named NAME (detached; no stdin; stdout+stderr to state/tmp/task-NAME.log) and return immediately. When it exits, a '[task NAME] exited CODE, N lines' message arrives. Returns e.g. \"task \\\"build\\\" started (pid 1234), output: state/tmp/task-build.log\". Example: {\"name\":\"build\",\"cmd\":\"make -j4\"}. See also bg_list, bg_output, bg_stop."
+   "bg_start" "Start a background task running shell CMD named NAME (detached; no stdin; stdout+stderr to the session's tmp/task-NAME.log) and return immediately. When it exits, a '[task NAME] exited CODE, N lines' message arrives. Returns e.g. \"task \\\"build\\\" started (pid 1234), output: .../sessions/main/tmp/task-build.log\". Example: {\"name\":\"build\",\"cmd\":\"make -j4\"}. See also bg_list, bg_output, bg_stop."
    (lisping-core::obj "type" "object"
         "properties" (lisping-core::obj "name" (lisping-core::obj "type" "string")
                                        "cmd" (lisping-core::obj "type" "string"))

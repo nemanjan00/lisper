@@ -97,7 +97,7 @@ terminal stuck in raw mode after a crash."
 
 (defun tui-log-crash-at-signal (condition)
   "HANDLER-BIND hook: log the backtrace at the point of the error, before
-the stack unwinds, so state/tui-crash.log names the exact failing frame.
+the stack unwinds, so the session's tui-crash.log names the exact failing frame.
 A HANDLER-CASE around the same body then does the cleanup."
   (ignore-errors (tui-log-crash condition)))
 
@@ -270,9 +270,9 @@ background processes must not outlive a restart).")
     (not (null ui))))
 
 (defun tui-log-crash (condition)
-  "Append the condition and a backtrace to state/tui-crash.log."
+  "Append the condition and a backtrace to the session's tui-crash.log."
   (ignore-errors
-    (with-open-file (s (merge-pathnames "state/tui-crash.log" *root*)
+    (with-open-file (s (lisping-core:session-path "tui-crash.log")
                        :direction :output :if-exists :append
                        :if-does-not-exist :create)
       (format s "~&--- TUI crash ~A ---~%" (get-universal-time))

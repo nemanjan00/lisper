@@ -33,7 +33,7 @@ function takes effect without re-setting the variable.")
 
 (defun tui-log-key (key)
   (ignore-errors
-    (with-open-file (s (merge-pathnames "state/tmp/keys.log" *root*)
+    (with-open-file (s (lisping-core:session-path "tmp/keys.log")
                        :direction :output :if-exists :append
                        :if-does-not-exist :create)
       (format s "~S~%" key))))

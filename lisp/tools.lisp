@@ -7,10 +7,17 @@
   "List of todo items, each (text . donep), oldest first, newest last:
 indices stay stable as items are added.")
 
-(defvar *todos-file* (merge-pathnames "state/todos.txt" lisping-core:*root*))
+;;; Paths resolve lazily: *HOME* is NIL in test-boot's fresh process (only
+;;; BOOT sets it), so SESSION-PATH can't run in a load-time defvar.
+(defvar *todos-file* nil "This session's todos.txt (see TODOS-FILE).")
+(defvar *todos-done-file* nil "This session's todos-done.txt (see TODOS-DONE-FILE).")
 
-(defvar *todos-done-file* (merge-pathnames "state/todos-done.txt" lisping-core:*root*)
-  "Finished todos are appended here, under a date header, by TODO-CLEAR.")
+(defun todos-file ()
+  (or *todos-file* (setf *todos-file* (lisping-core:session-path "todos.txt"))))
+
+(defun todos-done-file ()
+  "Finished todos are appended here, under a date header, by TODO-CLEAR."
+  (or *todos-done-file* (setf *todos-done-file* (lisping-core:session-path "todos-done.txt"))))
 
 (defun todo-load ()
   "Read *TODOS-FILE* into *TODOS*: lines \"[ ] text\" / \"[x] text\".
@@ -19,7 +26,7 @@ when the file is absent and STILL RUNS THE BODY — guard with WHEN S,
 or READ-Line would fall through to *STANDARD-INPUT* and block on the
 user's terminal forever."
   (setf *todos* nil)
-  (with-open-file (s *todos-file* :direction :input :if-does-not-exist nil)
+  (with-open-file (s (todos-file) :direction :input :if-does-not-exist nil)
     (when s
       (loop for line = (read-line s nil nil)
             while line
@@ -30,7 +37,7 @@ user's terminal forever."
   *todos*)
 
 (defun todo-save ()
-  (with-open-file (s *todos-file* :direction :output :if-exists :supersede
+  (with-open-file (s (todos-file) :direction :output :if-exists :supersede
                               :if-does-not-exist :create)
     (dolist (item *todos*)
       (format s "[~C] ~A~%" (if (cdr item) #\x #\Space) (car item)))))
@@ -71,7 +78,7 @@ indices shift, so LIST before marking anything else done."
           (multiple-value-bind (sec min hour day month year)
               (decode-universal-time (get-universal-time))
             (declare (ignore sec min hour))
-            (with-open-file (s *todos-done-file* :direction :output
+            (with-open-file (s (todos-done-file) :direction :output
                               :if-exists :append :if-does-not-exist :create)
               (format s "~&--- ~4,'0D-~2,'0D-~2,'0D ---~%" year month day)
               (dolist (item done)
@@ -79,7 +86,7 @@ indices shift, so LIST before marking anything else done."
           (setf *todos* open)
           (todo-save)
           (ignore-errors (pane-dirty "todo"))
-          (format nil "cleared ~D finished todo~:P to state/todos-done.txt; ~D open remain"
+          (format nil "cleared ~D finished todo~:P to todos-done.txt; ~D open remain"
                   (length done) (length open))))))
 
 (defun todo-tool (args)
@@ -92,10 +99,10 @@ indices shift, so LIST before marking anything else done."
       (:list (todo-list))
       (:clear (todo-clear)))))
 
-(todo-load)
+(unless lisping-core:*test-boot* (todo-load))
 
 (lisping-core::register-tool
- "todo" "Manage the persistent todo list in state/todos.txt (survives restarts). add: append an open item (needs text). done: mark an item done (needs index, 1-based as shown by list). list: numbered items, [ ] open / [x] done. clear: move finished items to state/todos-done.txt (appended, with the date) and keep only open ones. Returns a confirmation line; list returns the items. Example: {\"action\":\"done\",\"index\":3}."
+ "todo" "Manage the persistent todo list in the session's todos.txt (survives restarts). add: append an open item (needs text). done: mark an item done (needs index, 1-based as shown by list). list: numbered items, [ ] open / [x] done. clear: move finished items to todos-done.txt (appended, with the date) and keep only open ones. Returns a confirmation line; list returns the items. Example: {\"action\":\"done\",\"index\":3}."
  (lisping-core::obj "type" "object"
         "properties" (lisping-core::obj
                       "action" (lisping-core::obj "type" "string"
