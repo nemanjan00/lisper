@@ -503,18 +503,27 @@ stay clean."
                ;; starts truncating, prompt_tokens freezes and hides it.
                (basis (max (or pt 0) est))
                (percent (round (* 100 basis) *ctx-window*))
-               (grew (and pt
-                          (<= pt (or *ctx-last-prompt-tokens* 0))
-                          (> (length *messages*) (or *ctx-last-visible-count* 0)))))
+               (low-pt (and pt (plusp est) (< pt (* 7/10 est)))))
           ;; Ratchet reset: a collapse dropped us below the threshold —
           ;; let the nudges fire again.
           (when (< percent *ctx-note-at*)
             (setf *ctx-noted-percent* 0))
           (setf *ctx-last-prompt-tokens* pt
                 *ctx-last-visible-count* (length *messages*))
-          (when grew
-            (push (format nil "[context: TRUNCATION SUSPECTED] prompt_tokens ~D flat or falling while the conversation grew to ~D messages — the endpoint may be silently dropping the middle. Rewind the biggest finished stretch NOW: context_rewind {from, to, summary}."
-                          pt (length *messages*))
+          ;; Truncation check: the endpoint reports far fewer prompt_tokens
+          ;; than the local estimate of the SAME request, twice running, and
+          ;; not right after a collapse (which legitimately shrinks the
+          ;; request; *last-usage* lags one request, so the drop showed up
+          ;; when the count had grown again — the old "flat or falling while
+          ;; it grew" test fired on exactly that and was a false alarm).
+          (incf *ctx-requests-since-collapse*)
+          (if low-pt
+              (incf *ctx-low-pt-streak*)
+              (setf *ctx-low-pt-streak* 0))
+          (when (and (>= *ctx-low-pt-streak* 2)
+                     (>= *ctx-requests-since-collapse* 2))
+            (push (format nil "[context: TRUNCATION LIKELY] prompt_tokens ~D is under 70% of the local estimate ~:D two requests running — the endpoint may be silently dropping the middle. Rewind the biggest finished stretch NOW: context_rewind {from, to, summary}."
+                          pt est)
                   notes))
           (let ((note (ctx-threshold-note percent)))
             (when note (push note notes))))
