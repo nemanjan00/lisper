@@ -1087,7 +1087,10 @@ try again, so the session can't get stuck with a history that never fits."
                             (args (if (and (stringp raw) (plusp (length raw))) (json-decode raw) (obj))))
                        (emit :tool-call :name name :args args)
                        (if tool
-                           (let ((value (funcall (tool-fn tool) args)))
+                           ;; Tool functions run in the AI's package, as eval does, so a
+                           ;; READ inside a tool interns symbols where its own code lives.
+                           (let ((value (let ((*package* (find-package :lisping)))
+                                          (funcall (tool-fn tool) args))))
                              (limit-output (if (stringp value) value (prin1-to-string value))))
                            (format nil "Unknown tool ~S. Registered tools: ~{~A~^, ~}" name
                                    (loop for k being the hash-keys of *tools* collect k))))
