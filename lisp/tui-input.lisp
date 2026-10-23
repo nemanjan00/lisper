@@ -230,13 +230,12 @@ via an intermediate, so the overlapping shift is safe."
       (decf (fill-pointer in)))))
 (defun tui-input-backspace (ui)
   "Delete the character before the cursor."
-  (let ((in (tui-ui-input ui)))
-    (when (plusp *tui-input-cursor*)
-      (replace in in :start1 (1- *tui-input-cursor*)
-               :start2 *tui-input-cursor*)
+  (let ((in (tui-ui-input ui))
+        (cur (tui-ui-input-cursor ui)))
+    (when (plusp cur)
+      (replace in in :start1 (1- cur) :start2 cur)
       (decf (fill-pointer in))
-      (decf *tui-input-cursor*))))
-
+      (setf (tui-ui-input-cursor ui) (1- cur)))))
 (defun tui-clear-input (ui)
   (setf (fill-pointer (tui-ui-input ui)) 0
         *tui-input-cursor* 0))
