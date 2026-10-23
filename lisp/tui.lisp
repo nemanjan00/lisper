@@ -242,8 +242,13 @@ the auto-restart (the renderer is broken, a human must look).")
 restarts the UI if the token is unchanged, so a manual stop is not
 undone by a stale timer.")
 
+(defvar *tui-stop-hooks* nil
+  "Functions run by TUI-STOP before the UI goes down (e.g. TASKS-STOP-ALL:
+background processes must not outlive a restart).")
+
 (defun tui-stop ()
   "Stop the UI and give the terminal back in a sane state."
+  (dolist (hook *tui-stop-hooks*) (ignore-errors (funcall hook)))
   (let ((ui *tui*))
     (when ui
       (setf *emit* 'terminal-emit)

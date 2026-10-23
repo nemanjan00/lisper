@@ -94,6 +94,8 @@ pane content blank (2026-10-23)."
           (case (pane-kind p)
             (:chat 'pane-chat-render)
             (:todo 'pane-todo-render)
+            (:tasks 'pane-tasks-render)
+            (:ask 'pane-ask-render)
             (t 'pane-buf-render)))
     (setf (gethash name *panes*) p)
     name))
