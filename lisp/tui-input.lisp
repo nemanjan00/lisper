@@ -1,13 +1,11 @@
-;;;; lisp/tui-input.lisp -- keyboard handling and the weather pane's
-;;;; refresh loop. Runs in its own threads; state changes go through
-;;;; *tui-lock* and end with TUI-DIRTY.
+;;;; lisp/tui-input.lisp -- keyboard handling. Runs in its own thread;
+;;;; state changes go through *tui-lock* and end with TUI-DIRTY.
 
 (in-package :lisping)
 
 (declaim (ftype function tui-read-key tui-read-escape tui-read-csi tui-csi-key
                 tui-prefix-key tui-normal-key tui-submit-input tui-input-backspace
-                tui-clear-input tui-ctrl-d tui-scroll-chat tui-cycle-pane
-                tui-weather-refresh))
+                tui-clear-input tui-ctrl-d tui-scroll-chat))
 
 (defvar *tui-quit* nil "Set by prefix q / C-d: the key loop then stops the UI.")
 
@@ -30,7 +28,7 @@
                  (tui-log-key key)
                  (sb-thread:with-mutex (*tui-lock*)
                    (when (and *tui* (eq *tui* ui))
-                     (if (tui-state-prefix ui)
+                     (if (tui-ui-prefix ui)
                          (tui-prefix-key ui key)
                          (tui-normal-key ui key))))
                  (tui-dirty)
@@ -42,7 +40,7 @@
     (tui-stop)))
 
 (defun tui-read-key (ui)
-  (let ((tty (tui-state-tty ui)))
+  (let ((tty (tui-ui-tty ui)))
     (let ((c (read-char tty)))
       (if (char= c #\Esc) (tui-read-escape tty) c))))
 
@@ -80,19 +78,15 @@
 ;;; Key dispatch. C-b (#\Stx) is the prefix, like tmux.
 
 (defun tui-prefix-key (ui key)
-  (setf (tui-state-prefix ui) nil)
+  (setf (tui-ui-prefix ui) nil)
   (cond ((and (characterp key) (char-equal key #\q)) (setf *tui-quit* t))
         ((and (characterp key) (char-equal key #\r)) (tui-force-redraw))
-        ((and (characterp key) (char= key #\1)) (setf (tui-state-active ui) 0))
-        ((and (characterp key) (char= key #\2)) (setf (tui-state-active ui) 1))
-        ((member key '(:left :right)) (tui-cycle-pane ui key))
         (t nil)))
 
 (defun tui-normal-key (ui key)
-  (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-state-prefix ui) t))
+  (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-ui-prefix ui) t))
         ((eq key :pgup) (tui-scroll-chat ui :pgup))
         ((eq key :pgdn) (tui-scroll-chat ui :pgdn))
-        ((member key '(:left :right)) (tui-cycle-pane ui key))
         ((and (characterp key)
               (member key '(#\Return #\Newline)))
          (tui-submit-input ui))
@@ -102,78 +96,38 @@
         ((and (characterp key) (char= key #\Etx)) (tui-clear-input ui)) ; C-c
         ((and (characterp key) (char= key #\Eot)) (tui-ctrl-d ui))       ; C-d
         ((and (characterp key) (graphic-char-p key))
-         (vector-push-extend key (tui-state-input ui)))
+         (vector-push-extend key (tui-ui-input ui)))
         (t nil)))
 
 (defun tui-submit-input (ui)
-  (let* ((in (tui-state-input ui))
+  (let* ((in (tui-ui-input ui))
          ;; COPY-SEQ: IN is already a string, so COERSE returns the same
          ;; object and STRING-TRIM may too — TEXT must not alias IN, or
          ;; resetting IN's fill-pointer below would blank the message
          ;; before SEND-USER-MESSAGE reads it.
          (text (string-trim " " (copy-seq in))))
     (when (plusp (length text))
-      (setf (tui-state-pending-user ui) text
-            (fill-pointer in) 0)
+      (setf (fill-pointer in) 0)
+      ;; Echo it dimmed right away; the core's :queued/:user events and
+      ;; TUI-SHOW-USER dedupe and upgrade this line.
+      (tui-show-queued ui text)
       (send-user-message text))))
 
 (defun tui-input-backspace (ui)
-  (let ((in (tui-state-input ui)))
+  (let ((in (tui-ui-input ui)))
     (when (plusp (length in)) (decf (fill-pointer in)))))
 
 (defun tui-clear-input (ui)
-  (setf (fill-pointer (tui-state-input ui)) 0))
+  (setf (fill-pointer (tui-ui-input ui)) 0))
 
 (defun tui-ctrl-d (ui)
-  (if (zerop (length (tui-state-input ui)))
+  (if (zerop (length (tui-ui-input ui)))
       (setf *tui-quit* t)
       (tui-input-backspace ui)))
 
 (defun tui-scroll-chat (ui key)
-  (let* ((h (max 1 (- (tui-state-height ui) 4)))
+  (let* ((h (max 1 (- (tui-ui-height ui) 4)))
          (delta (max 1 (floor h 2)))
-         (s (tui-state-scroll ui)))
-    (setf (tui-state-scroll ui)
+         (s (tui-ui-scroll ui)))
+    (setf (tui-ui-scroll ui)
           (max 0 (if (eq key :pgup) (+ s delta) (- s delta))))))
-
-(defun tui-cycle-pane (ui key)
-  (setf (tui-state-active ui)
-        (mod (+ (tui-state-active ui) (if (eq key :left) -1 1)) 2)))
-
-;;; ---------------------------------------------------------------
-;;; Weather pane: wttr.in/Belgrade, refreshed every few minutes.
-
-(defun tui-weather-loop (ui)
-  (loop while (and *tui* (eq *tui* ui))
-        do (handler-case
-               (progn
-                 (tui-weather-refresh ui)
-                 (dotimes (k 300)
-                   (unless (and *tui* (eq *tui* ui)) (return))
-                   (sleep 1)))
-             (serious-condition (c)
-               (when (eq *tui* ui) (tui-crash c))))))
-
-(defun tui-narrow-line (line)
-  "Replace characters that are wide or ambiguous on a terminal with a
-space: anything above Latin-1 except the box-drawing range."
-  (map 'string (lambda (ch)
-                 (let ((code (char-code ch)))
-                   (if (or (< code 256)
-                           (<= #x2500 code #x257f))
-                       ch #\Space)))
-       line))
-
-(defun tui-weather-refresh (ui)
-  (multiple-value-bind (out code) (shell "curl -s --max-time 20 'wttr.in/Belgrade?n'")
-    (declare (ignore code))
-    (when (and (stringp out) (plusp (length out)))
-      (let ((buf (make-uibuf :align :top)))
-        (dolist (line (ui-split-lines out))
-          (unless (or (search "Follow" line) (search "igor_chubin" line))
-            (uibuf-append buf (ui-parse-ansi (tui-narrow-line line)) :fresh t)))
-        (sb-thread:with-mutex (*tui-lock*)
-          (when (eq *tui* ui)
-            (setf (tui-state-weather ui) buf
-                  (tui-state-weather-at ui) (get-universal-time))))
-        (tui-dirty)))))
