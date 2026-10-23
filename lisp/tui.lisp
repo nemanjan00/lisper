@@ -198,7 +198,6 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
 (defun tui-stop ()
   "Stop the UI and give the terminal back in a sane state."
   (let ((ui *tui*))
-    (setf *tui* nil)
     (when ui
       (setf *emit* 'terminal-emit)
       (tui-kill-threads)
@@ -206,11 +205,15 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
         (write-string (format nil "~C[0m~C[?25h~C[?1049l" #\Esc #\Esc #\Esc)
                       (tui-ui-tty ui))
         (finish-output (tui-ui-tty ui)))
+      ;; Restore the terminal BEFORE dropping *TUI*: the saved termios
+      ;; needs a tty fd, and with *TUI* already NIL the restore silently
+      ;; did nothing, leaving the user in raw mode.
+      (tui-restore-mode ui)
       (ignore-errors (close (tui-ui-tty ui)))
-      (tui-restore-mode)
       (setf (tui-ui-threads ui) nil)
-      (start-terminal-input)
-      t)))
+      (start-terminal-input))
+    (setf *tui* nil)
+    (not (null ui))))
 
 (defun tui-log-crash (condition)
   "Append the condition and a backtrace to state/tui-crash.log."
