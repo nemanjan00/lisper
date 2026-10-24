@@ -357,6 +357,10 @@ other control characters dropped."
          (tui-input-insert ui key))
         (t nil)))
 
+(defvar *tui-pastes* nil
+  "Alist (PLACEHOLDER . FULL-TEXT) of big pastes shown in the input line
+as a short placeholder such as [pasted 29 lines].")
+
 (defun tui-submit-input (ui)
   (let* ((in (tui-ui-input ui))
          ;; COPY-SEQ: IN is already a string, so COERCE returns the same
@@ -389,7 +393,8 @@ other control characters dropped."
                 (r (return-from tui-submit-input t))))))
     (when (plusp (length text))
       (setf (fill-pointer in) 0
-            (tui-ui-input-cursor ui) 0)
+            (tui-ui-input-cursor ui) 0
+            *tui-pastes* nil)
       ;; Enter always jumps the chat to the bottom and clears the
       ;; "N new" marker.
       (let ((p (pane-of-kind :chat)))
@@ -401,10 +406,6 @@ other control characters dropped."
       ;; TUI-SHOW-USER dedupe and upgrade this line.
       (tui-show-queued ui text)
       (send-user-message text))))
-
-(defvar *tui-pastes* nil
-  "Alist (PLACEHOLDER . FULL-TEXT) of big pastes shown in the input line
-as a short placeholder such as [pasted 29 lines].")
 
 (defvar *tui-paste-min-lines* 3 "Pastes of at least this many lines are compacted.")
 (defvar *tui-paste-min-chars* 200 "... or at least this many characters.")
@@ -504,7 +505,8 @@ via an intermediate, so the overlapping shift is safe."
 
 (defun tui-clear-input (ui)
   (setf (fill-pointer (tui-ui-input ui)) 0
-        (tui-ui-input-cursor ui) 0))
+        (tui-ui-input-cursor ui) 0
+        *tui-pastes* nil))
 
 (defun tui-ctrl-d (ui)
   (if (zerop (length (tui-ui-input ui)))
