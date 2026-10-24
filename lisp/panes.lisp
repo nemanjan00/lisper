@@ -250,30 +250,52 @@ one ends in an ellipsis when text is left over)."
     out))
 
 (defun pane-todo-render (pane w h)
-  (let* ((lines
-          (if (null *todos*)
-              (list (list (cons "(no open todos)" 8)))
-              ;; The item set with the todo "start" action is the one
-              ;; being worked on; only when none is set (or it is
-              ;; gone/done) does the first open item stand in.
-              (let* ((set (and (boundp '*todo-current*)
-                               (let ((c (symbol-value '*todo-current*)))
-                                 (and c (member c *todos* :test #'eq) (not (cdr c)) c))))
-                     (cur (or set (find-if-not #'cdr *todos*))))
-                (loop for item in *todos*
-                      for (text . done) = item
-                      collect (list (cons (str-truncate
-                                           (format nil "[~A] ~A" (cond (done "x") ((eq item cur) ">") (t " ")) text)
-                                           w)
-                                          (cond (done 8)
-                                                ((eq item cur) (tui-select-attr))
-                                                (t 7))))))))
-         (n (length lines))
-         (s (max 0 (min (pane-scroll pane) (max 0 (- n h))))))
-    (setf (pane-scroll pane) s)
-    (let* ((end (max 0 (- n s)))
-           (start (max 0 (- end h))))
-      (subseq lines start end))))
+  "Readable todo list: the working-on item first (▶, highlighted, a
+spinner while the agent is busy), then open items (○), then done items
+(✓, dimmed) — collapsed to one \"✓ N done\" line when they don't fit."
+  (let* ((cur (and *todos* (todo-current)))
+         (open (remove-if (lambda (i) (or (cdr i) (eq i cur))) *todos*))
+         (done (remove-if-not #'cdr *todos*))
+         (busy (and (fboundp 'activity-kind) (boundp '*activity*)
+                    (not (eq (funcall 'activity-kind (symbol-value '*activity*)) :idle))))
+         (tw (max 4 (- w 2)))
+         (lines nil))
+    (setf *todo-done-row* nil)
+    (flet ((emit (text attr) (push (list (cons text attr)) lines)))
+      (if (null *todos*)
+          (emit "(no todos)" 8)
+          (progn
+            (when cur
+              (loop for piece in (todo-wrap-text (car cur) tw 3) for k from 0
+                    do (let* ((mark (if (zerop k)
+                                        (if busy (string (funcall 'activity-spinner)) "▶")
+                                        " "))
+                              (text (format nil "~A ~A" mark piece)))
+                         (emit (format nil "~A~VA" text (max 0 (- w (length text))) "")
+                               (if busy (ui-attr 7 :bright t :bg 4) (tui-select-attr))))))
+            (dolist (i open)
+              (loop for piece in (todo-wrap-text (car i) tw 2) for k from 0
+                    do (emit (format nil "~A~A" (if (zerop k) "○ " "  ") piece) 7)))
+            (when done
+              (let ((room (- h 1 (length lines))))
+                (if (or *todo-done-expanded* (<= (length done) room))
+                    (progn
+                      (when (and *todo-done-expanded* (> (length done) room))
+                        (setf *todo-done-row* (length lines))
+                        (emit (format nil "▾ ✓ ~D done (click to fold)" (length done)) 8))
+                      (dolist (i (reverse done))
+                        (emit (str-truncate (format nil "✓ ~A" (car i)) w) 8)))
+                    (progn
+                      (setf *todo-done-row* (length lines))
+                      (emit (format nil "▸ ✓ ~D done (click)" (length done)) 8)))))))
+      (let* ((lines (nreverse lines))
+             (n (length lines))
+             (s (max 0 (min (pane-scroll pane) (max 0 (- n h))))))
+        (setf (pane-scroll pane) s)
+        (let* ((end (max 0 (- n s)))
+               (start (max 0 (- end h))))
+          (when *todo-done-row* (setf *todo-done-row* (- *todo-done-row* start)))
+          (subseq lines start end))))))
 
 ;;; ---------------------------------------------------------------
 ;;; Layout tree
