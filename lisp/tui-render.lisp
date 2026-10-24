@@ -502,8 +502,9 @@ where the queue/input rows start (the panes end just above it).")
 
 (defun tui-queue-rows (ui)
   "Rows the queue display takes above the input line (0 when the queue
-is empty): one per waiting message, at most 4."
-  (min 4 (length (lisping-core:queued-messages))))
+is empty): a titled header row plus one per waiting message, at most 4."
+  (let ((n (length (lisping-core:queued-messages))))
+    (if (plusp n) (1+ (min 4 n)) 0)))
 
 (defun tui-draw-queue (g ui y w)
   "Draw the waiting user messages stuck above the input line, oldest
@@ -513,13 +514,19 @@ the panes end there."
   (let* ((queued (lisping-core:queued-messages))
          (n (length queued)))
     (when (plusp n)
-      (let* ((rows (tui-queue-rows ui))
+      (let* ((rows (1- (tui-queue-rows ui))) ; minus the header row
              ;; The newest messages sit closest to the input line.
              (shown (last queued rows))
              (first-i (- n (length shown)))) ; 0-based index of SHOWN's first
+        ;; Header: a border line with a title segment, like a pane's.
+        (dotimes (x w) (ui-grid-put g x y #\─ 8))
+        (ui-grid-write-chunks
+         g 0 y
+         (tui-seg-chunks (format nil "queued ~D" n) 0 3)
+         w)
         (loop for text in shown for k from 0
               for i = (+ first-i k)
-              for row = (+ y k)
+              for row = (+ y 1 k)
               for sel = (eql (tui-ui-queue-sel ui) i)
               for editing = (and (tui-ui-queue-edit ui)
                                  (eq (tui-ui-queue-edit ui) text))
