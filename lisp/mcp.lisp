@@ -30,7 +30,8 @@
   (lock (sb-thread:make-mutex :name "mcp pending"))
   (wlock (sb-thread:make-mutex :name "mcp write"))
   (slock (sb-thread:make-mutex :name "mcp start"))
-  tool-names (hung 0) (ever-ready nil))
+  tool-names (hung 0) (ever-ready nil)
+  url headers session-id)   ; streamable HTTP transport (URL set, no COMMAND)
 
 (defstruct (mcp-pending (:conc-name mcpp-))
   (sem (sb-thread:make-semaphore)) result error)
@@ -61,9 +62,13 @@
 
 ;;; ------------------------------------------------------------ transport
 
+(defun mcp-http-p (srv) (and (mcps-url srv) t))
+
 (defun mcp-alive-p (srv)
-  (let ((p (mcps-process srv)))
-    (and p (sb-ext:process-alive-p p))))
+  (if (mcp-http-p srv)
+      (member (mcps-status srv) '(:starting :ready))   ; nothing to be dead: stateless
+      (let ((p (mcps-process srv)))
+        (and p (sb-ext:process-alive-p p)))))
 
 (defun mcp-send (srv obj)
   "Write OBJ as one JSON line to SRV's stdin."
@@ -135,8 +140,132 @@
       (unless (mcps-last-error srv) (setf (mcps-last-error srv) "server exited"))
       (mcp-fail-pending srv "server exited"))))
 
+;;; Streamable HTTP: every message is one curl POST.  The reply is JSON or
+;;; an SSE stream whose events carry the JSON-RPC response (found by id).
+
+(defun mcp-http-header-lines (path)
+  "Header lines (strings, CR stripped) of the LAST response in curl's -D file."
+  (let ((lines nil))
+    (ignore-errors
+      (with-open-file (in path :external-format :latin-1)
+        (loop for l = (read-line in nil nil) while l
+              do (let ((l (string-right-trim '(#\Return) l)))
+                   (if (and (>= (length l) 5) (string-equal "HTTP/" l :end2 5))
+                       (setf lines nil)
+                       (push l lines))))))
+    (nreverse lines)))
+
+(defun mcp-http-header (lines name)
+  (let ((prefix (format nil "~A:" name)))
+    (loop for l in lines
+          when (and (>= (length l) (length prefix))
+                    (string-equal prefix l :end2 (length prefix)))
+            return (string-trim " " (subseq l (length prefix))))))
+
+(defun mcp-sse-messages (text)
+  "JSON-decoded data of each event in the SSE TEXT."
+  (let ((msgs nil) (data nil))
+    (flet ((flush ()
+             (when data
+               (let ((m (ignore-errors
+                          (lisping-core:json-decode
+                           (format nil "~{~A~^~%~}" (reverse data))))))
+                 (when m (push m msgs)))
+               (setf data nil))))
+      (with-input-from-string (in text)
+        (loop for l = (read-line in nil nil) while l
+              do (let ((l (string-right-trim '(#\Return) l)))
+                   (cond ((zerop (length l)) (flush))
+                         ((and (>= (length l) 5) (string= "data:" l :end2 5))
+                          (push (string-left-trim " " (subseq l 5)) data))))))
+      (flush))
+    (nreverse msgs)))
+
+(defun mcp-http-post (srv obj timeout &optional (method "POST"))
+  "curl OBJ (or nothing, for DELETE) to SRV's URL.  Returns (values
+status-code body-text header-lines error-string); ERROR-STRING is set when
+curl itself fails (timeout, connection)."
+  (let* ((tag (format nil "mcp-http-~A-~D" (mcps-name srv)
+                      (sb-thread:with-mutex ((mcps-lock srv)) (incf (mcps-next-id srv)))))
+         (req (lisping-core:session-path (format nil "tmp/~A.req" tag)))
+         (hdr (lisping-core:session-path (format nil "tmp/~A.hdr" tag)))
+         (out (lisping-core:session-path (format nil "tmp/~A.out" tag))))
+    (ensure-directories-exist req)
+    (unwind-protect
+         (progn
+           (when obj
+             (with-open-file (o req :direction :output :if-exists :supersede
+                                    :external-format :utf-8)
+               (write-string (lisping-core:json-encode obj) o)))
+           (let* ((args (append (list "-sS" "--max-time" (princ-to-string timeout)
+                                      "-X" method (mcps-url srv)
+                                      "-D" (namestring hdr) "-o" (namestring out)
+                                      "-w" "%{http_code}"
+                                      "-H" "Accept: application/json, text/event-stream"
+                                      "-H" (format nil "MCP-Protocol-Version: ~A" *mcp-protocol-version*))
+                                (when obj
+                                  (list "-H" "Content-Type: application/json"
+                                        "--data-binary" (format nil "@~A" (namestring req))))
+                                (when (mcps-session-id srv)
+                                  (list "-H" (format nil "Mcp-Session-Id: ~A" (mcps-session-id srv))))
+                                (loop for (k . v) in (mcps-headers srv)
+                                      append (list "-H" (format nil "~A: ~A" k v)))))
+                  (errs (make-string-output-stream))
+                  (code (with-output-to-string (s)
+                          (let ((p (sb-ext:run-program "curl" args :search t :wait t
+                                                                  :input nil :output s :error errs)))
+                            (unless (eql (sb-ext:process-exit-code p) 0)
+                              (return-from mcp-http-post
+                                (values nil nil nil
+                                        (if (eql (sb-ext:process-exit-code p) 28)
+                                            (format nil "timeout after ~Ds" timeout)
+                                            (string-trim '(#\Newline #\Space)
+                                                         (get-output-stream-string errs))))))))))
+             (values (ignore-errors (parse-integer code))
+                     (or (ignore-errors (lisping-core:read-file out)) "")
+                     (mcp-http-header-lines hdr)
+                     nil)))
+      (dolist (f (list req hdr out)) (ignore-errors (when (probe-file f) (delete-file f)))))))
+
+(defun mcp-http-request (srv method params timeout)
+  (let* ((id (sb-thread:with-mutex ((mcps-lock srv)) (incf (mcps-next-id srv))))
+         (msg (lisping-core::obj "jsonrpc" "2.0" "id" id "method" method
+                                 "params" (or params (lisping-core::obj)))))
+    (multiple-value-bind (code body lines err) (mcp-http-post srv msg timeout)
+      (cond (err (values nil err))
+            ((or (null code) (>= code 400))
+             (when (eql code 404)    ; session expired: re-initialize next use
+               (setf (mcps-status srv) :dead (mcps-session-id srv) nil))
+             (values nil (format nil "HTTP ~A~@[: ~A~]" code
+                                 (and (plusp (length body))
+                                      (subseq body 0 (min 200 (length body)))))))
+            (t
+             (let ((sid (mcp-http-header lines "Mcp-Session-Id")))
+               (when sid (setf (mcps-session-id srv) sid)))
+             (let* ((type (or (mcp-http-header lines "Content-Type") ""))
+                    (msgs (if (search "text/event-stream" type)
+                              (mcp-sse-messages body)
+                              (let ((m (ignore-errors (lisping-core:json-decode body))))
+                                (cond ((hash-table-p m) (list m))
+                                      ((vectorp m) (coerce m 'list))))))
+                    (reply (find-if (lambda (m)
+                                      (and (hash-table-p m) (eql (gethash "id" m) id)
+                                           (not (gethash "method" m))))
+                                    msgs)))
+               (cond ((null reply) (values nil "no response in reply"))
+                     ((mcp-get reply "error")
+                      (let ((e (mcp-get reply "error")))
+                        (values nil (format nil "~A: ~A" (or (mcp-get e "code") "error")
+                                            (or (mcp-get e "message") "(no message)")))))
+                     (t (values (gethash "result" reply) nil)))))))))
+
 (defun mcp-request (srv method params &optional (timeout 30))
   "Send a request and wait.  Returns (values result error-string)."
+  (if (mcp-http-p srv)
+      (mcp-http-request srv method params timeout)
+      (mcp-request-stdio srv method params timeout)))
+
+(defun mcp-request-stdio (srv method params timeout)
   (let* ((p (make-mcp-pending))
          (id (sb-thread:with-mutex ((mcps-lock srv))
                (let ((id (incf (mcps-next-id srv))))
@@ -147,7 +276,7 @@
                                          "params" (or params (lisping-core::obj))))
       (error (e)
         (sb-thread:with-mutex ((mcps-lock srv)) (remhash id (mcps-pending srv)))
-        (return-from mcp-request (values nil (format nil "send failed: ~A" e)))))
+        (return-from mcp-request-stdio (values nil (format nil "send failed: ~A" e)))))
     (cond ((sb-thread:wait-on-semaphore (mcpp-sem p) :timeout timeout)
            (values (mcpp-result p) (mcpp-error p)))
           (t (sb-thread:with-mutex ((mcps-lock srv)) (remhash id (mcps-pending srv)))
@@ -160,12 +289,18 @@
 
 (defun mcp-notify (srv method)
   (ignore-errors
-    (mcp-send srv (lisping-core::obj "jsonrpc" "2.0" "method" method))))
+    (let ((msg (lisping-core::obj "jsonrpc" "2.0" "method" method)))
+      (if (mcp-http-p srv)
+          (mcp-http-post srv msg 15)
+          (mcp-send srv msg)))))
 
 ;;; ------------------------------------------------------- process control
 
 (defun mcp-kill (srv)
   "Stop SRV's process group: close stdin, SIGTERM, SIGKILL after ~2s."
+  (when (and (mcp-http-p srv) (mcps-session-id srv))
+    (ignore-errors (mcp-http-post srv nil 3 "DELETE")))   ; end the session
+  (setf (mcps-session-id srv) nil)
   (let ((p (mcps-process srv)))
     (when p
       (let ((pid (sb-ext:process-pid p)))
@@ -181,7 +316,12 @@
     (mcp-fail-pending srv "server stopped")))
 
 (defun mcp-spawn (srv)
-  "Start the process; returns NIL or an error string."
+  "Start the process (nothing to start for HTTP); returns NIL or an error string."
+  (when (mcp-http-p srv)
+    (clrhash (mcps-pending srv))
+    (setf (mcps-status srv) :starting (mcps-last-error srv) nil
+          (mcps-session-id srv) nil)
+    (return-from mcp-spawn nil))
   (handler-case
       (let* ((env (append (loop for (k . v) in (mcps-env srv) collect (format nil "~A=~A" k v))
                           (sb-ext:posix-environ)))
@@ -355,13 +495,19 @@ NOTE says that it was restarted, or why it failed."
                    table))))
     (remove-if (lambda (e) (or (not (hash-table-p (cdr e)))
                                (mcp-get (cdr e) "disabled")
-                               (not (stringp (mcp-get (cdr e) "command")))))
+                               (not (or (stringp (mcp-get (cdr e) "command"))
+                                        (stringp (mcp-get (cdr e) "url"))))))
                (reverse merged))))
 
 (defun mcp-make-server (name entry)
   (make-mcp-server
    :name name
    :command (mcp-get entry "command")
+   :url (mcp-get entry "url")
+   :headers (let ((h (mcp-get entry "headers")) (r nil))
+              (when (hash-table-p h)
+                (maphash (lambda (k v) (push (cons k (princ-to-string v)) r)) h))
+              (nreverse r))
    :args (mapcar #'princ-to-string (mcp-vec-list (mcp-get entry "args")))
    :env (let ((e (mcp-get entry "env")) (r nil))
           (when (hash-table-p e)
