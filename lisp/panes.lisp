@@ -456,6 +456,10 @@ columns between side-by-side panes with a dim vertical line (every
 hsplit reserves one uncovered column — see hsplit-left-width)."
   (let ((rects (layout-leaves (panes-layout-now (uigrid-w g) (uigrid-h g))
                               0 0 (uigrid-w g) (uigrid-h g))))
+    ;; Focus on a pane the collapsed layout hides would send scroll keys
+    ;; nowhere visible: move it to chat (the layout itself is untouched).
+    (unless (member *pane-focus* rects :key #'first :test #'equal)
+      (setf *pane-focus* "chat"))
     (dolist (rect rects)
       (destructuring-bind (name x y w h) rect
         (let ((p (pane-get name)))
