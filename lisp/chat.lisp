@@ -21,7 +21,7 @@
 
 (declaim (ftype function tui-tool-summary tui-chunk-lines tui-chat-note-new
                 chunks-text first-line str-truncate layout-leaves panes-layout-now
-                pane-dirty tui-dirty))
+                pane-dirty tui-dirty chat-close-run chat-run-rows))
 
 (declaim (special *panes-canvas* *tui-chat-pane-width*))
 

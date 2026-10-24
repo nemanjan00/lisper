@@ -17,6 +17,7 @@
 (load-file "lisp/tui-render.lisp")
 (load-file "lisp/tui-input.lisp")
 (load-file "lisp/markdown.lisp")
+(load-file "lisp/chat.lisp")
 
 ;; Self-serve agent tools (todo list et al.).
 (load-file "lisp/tools.lisp")

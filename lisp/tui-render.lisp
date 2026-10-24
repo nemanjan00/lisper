@@ -8,7 +8,9 @@
                 tui-tool-call-line tui-tool-summary tui-chat-result
                 tui-replay-history panes-ensure-canvas panes-draw))
 
-(declaim (special *todos* *panes-canvas*))
+(declaim (special *todos* *panes-canvas* *chat-run* *chat-pending* *chat-selected* *chat-row-owners*))
+
+(declaim (ftype function chat-add-user chat-add-assistant chat-add-call chat-add-result chat-rows))
 
 ;;; ---------------------------------------------------------------
 ;;; Frame state and perf counters. Only the redraw thread touches these.
@@ -111,10 +113,7 @@ queued echo of the same text instead of duplicating it."
       (setf (tui-ui-shown-user ui) text
             (tui-ui-pending-user ui) nil
             (tui-ui-scroll ui) 0)
-      (uibuf-append (tui-ui-chat ui)
-                    (append (tui-seg-chunks "you" 0 2)
-                            (list (cons (format nil " ~A" (tui-flat text)) (ui-attr 7 :bright t))))
-                    :fresh t)))
+      (chat-add-user ui text)))
   (tui-dirty))
 
 (defun tui-show-system (ui kind text)
@@ -147,12 +146,11 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
 (defun tui-log-event (ui event)
   (let ((type (getf event :type)))
     (case type
-      (:assistant (tui-chat-add ui (ui-parse-ansi (getf event :text))))
-      (:thinking (tui-chat-add ui (list (cons (getf event :text) 8))))
-      (:tool-call
-       (tui-chat-add ui (tui-tool-call-line (getf event :name)
-                                            (getf event :args))))
-      (:tool-result (tui-chat-result ui (getf event :name) (getf event :text)))
+      (:assistant (chat-add-assistant ui (getf event :text)))
+      ;; :thinking marks a model call; the status bar shows it, the chat does not.
+      (:thinking nil)
+      (:tool-call (chat-add-call ui (getf event :name) (getf event :args)))
+      (:tool-result (chat-add-result ui (getf event :name) (getf event :text)))
       (:error (tui-chat-add ui (list (cons (getf event :text) 1))))
       (:info (if (equal (getf event :text) "turn cancelled")
                  (tui-show-system ui "cancel" "the turn was stopped here")
@@ -371,6 +369,7 @@ assistant text becomes chat lines, tool_calls and tool results become
 the same dim indented lines the live events produce. System/developer
 and empty messages are skipped."
   (let ((names (make-hash-table :test 'equal)))
+    (setf *chat-run* nil *chat-pending* nil *chat-selected* nil)
     ;; tool_call_id -> tool name, for naming result lines.
     (dolist (m lisping-core:*messages*)
       (let ((tcs (gethash "tool_calls" m)))
@@ -387,21 +386,20 @@ and empty messages are skipped."
                  (tui-show-user ui content)))
               ((string= role "assistant")
                (when (and (stringp content) (plusp (length content)))
-                 (tui-chat-add ui (ui-parse-ansi content)))
+                 (chat-add-assistant ui content))
                (let ((tcs (gethash "tool_calls" m)))
                  (when tcs
                    (dotimes (i (length tcs))
                      (let ((tc (aref tcs i)))
-                       (tui-chat-add ui (tui-tool-call-line
-                                         (tui-tool-name tc)
-                                         (when (hash-table-p (gethash "function" tc))
-                                           (ignore-errors
-                                             (json-decode (or (gethash "arguments"
-                                                                       (gethash "function" tc))
-                                                              "{}")))))))))))
+                       (chat-add-call ui (tui-tool-name tc)
+                                      (when (hash-table-p (gethash "function" tc))
+                                        (ignore-errors
+                                          (json-decode (or (gethash "arguments"
+                                                                    (gethash "function" tc))
+                                                           "{}"))))))))))
               ((string= role "tool")
                (when (stringp content)
-                 (tui-chat-result ui (gethash (gethash "tool_call_id" m) names)
+                 (chat-add-result ui (gethash (gethash "tool_call_id" m) names)
                                   content))))))
     ;; The replay ends at the newest message; a queued echo would be stale.
     (setf *tui-queued-text* nil)))
@@ -587,14 +585,18 @@ the top."
          (n0 (length src))
          (recent (loop for i from (max 0 (- n0 400)) below n0
                        collect (aref src i)))
-         (all (loop for ln in recent
-                    append (or (ui-wrap-chunks (uline-chunks ln) width)
-                               (list nil))))
+         (owners nil)
+         (all (multiple-value-bind (rows own) (chat-rows recent width)
+                (setf owners own)
+                rows))
          (n (length all))
          (s (max 0 (min (pane-scroll pane) (max 0 (- n height))))))
     (setf (pane-scroll pane) s)
     (let* ((end (max 0 (- n s)))
            (start (max 0 (- end height))))
+      ;; Which tool run/call each drawn row belongs to (click hit-test).
+      (when (eq (pane-kind pane) :chat)
+        (setf *chat-row-owners* (coerce (subseq owners start end) 'vector)))
       (subseq all start end))))
 
 (defun tui-input-window (len cursor avail hscroll)

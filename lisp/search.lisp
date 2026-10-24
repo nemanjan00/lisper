@@ -18,9 +18,8 @@
   "Wrapped rows (chunk lists, top first) of the window the chat pane draws."
   (let* ((src (uibuf-lines (tui-ui-chat *tui*)))
          (n0 (length src)))
-    (loop for i from (max 0 (- n0 400)) below n0
-          append (or (ui-wrap-chunks (uline-chunks (aref src i)) width)
-                     (list nil)))))
+    (values (chat-rows (loop for i from (max 0 (- n0 400)) below n0 collect (aref src i))
+                       width))))
 
 (defun find-ranges (text term)
   "Start positions of the case-insensitive occurrences of TERM in TEXT."
