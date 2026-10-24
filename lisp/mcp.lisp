@@ -213,8 +213,11 @@ curl itself fails (timeout, connection)."
                                       append (list "-H" (format nil "~A: ~A" k v)))))
                   (errs (make-string-output-stream))
                   (code (with-output-to-string (s)
-                          (let ((p (sb-ext:run-program "curl" args :search t :wait t
-                                                                  :input nil :output s :error errs)))
+                          ;; :wait nil + the core's WAIT-OR-KILL: a cancelled turn
+                          ;; kills curl's process group instead of leaving it.
+                          (let ((p (lisping-core::wait-or-kill
+                                    (sb-ext:run-program "curl" args :search t :wait nil
+                                                                    :input nil :output s :error errs))))
                             (unless (eql (sb-ext:process-exit-code p) 0)
                               (return-from mcp-http-post
                                 (values nil nil nil
