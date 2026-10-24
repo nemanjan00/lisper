@@ -289,7 +289,7 @@ row moves the cursor there.  T = consumed."
         (when (and (eq kind :press) (<= (logand b 3) 2) (zerop (logand b 64)))
           (let ((x0 (1- x)) (y0 (1- y)))
             (when (equal (pane-at x0 y0) "ask")
-              (let* ((rect (find "ask" (layout-leaves *layout* 0 0
+              (let* ((rect (find "ask" (layout-leaves (panes-layout-now) 0 0
                                                       (uigrid-w *panes-canvas*)
                                                       (uigrid-h *panes-canvas*))
                                  :key #'first :test #'equal))

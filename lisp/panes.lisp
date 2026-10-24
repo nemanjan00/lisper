@@ -151,6 +151,40 @@ Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them)."
   *pane-focus*)
 
 
+(defvar *panes-narrow-cols* 100
+  "Canvas narrower than this many columns collapses the layout.")
+(defvar *panes-narrow-rows* 16
+  "Canvas shorter than this many rows collapses the layout.")
+(defvar *panes-context-rows* 30
+  "A collapsed layout stacks the context pane under chat from this many rows up.")
+
+(defun panes-narrow-p (w h)
+  "True when a W x H pane canvas is too small for the full layout."
+  (or (< w *panes-narrow-cols*) (< h *panes-narrow-rows*)))
+
+(defun panes-layout-now (&optional w h)
+  "The layout to draw and hit-test at W x H (default: the canvas size).
+Normally *LAYOUT*.  On a narrow or short canvas (a phone) it is a fresh
+collapsed tree: chat alone, with the ask pane below it while a question
+is open, else the context pane below it when there are rows for it.
+*LAYOUT* itself is never touched, so the saved layout and any dragged
+ratios come back exactly when the terminal is wide again."
+  (let ((w (or w (and *panes-canvas* (uigrid-w *panes-canvas*))))
+        (h (or h (and *panes-canvas* (uigrid-h *panes-canvas*)))))
+    (if (and w h (panes-narrow-p w h))
+        (let ((names (layout-pane-names *layout*)))
+          (cond ((member "ask" names :test #'equal)
+                 (list :vsplit 0.5 (list 'leaf "chat") (list 'leaf "ask")))
+                ((and (member "context" names :test #'equal)
+                      (>= h *panes-context-rows*))
+                 (list :vsplit 0.72 (list 'leaf "chat") (list 'leaf "context")))
+                (t (list 'leaf "chat"))))
+        *layout*)))
+
+(defun panes-collapsed-p ()
+  "True while the drawn layout is the collapsed one."
+  (not (eq (panes-layout-now) *layout*)))
+
 (defun layout-pane-names (&optional (tree *layout*))
   "Leaf names of the layout tree, in drawing order."
   (cond ((atom tree) nil)
@@ -159,6 +193,10 @@ Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them)."
          (append (layout-pane-names (third tree))
                  (layout-pane-names (fourth tree))))
         (t nil)))
+
+(defun panes-visible-names ()
+  "Names of the panes on screen (the collapsed layout's when narrow)."
+  (layout-pane-names (panes-layout-now)))
 
 (defun pane-focus-nth (n)
   "Focus the Nth pane (1-based) in layout order."
@@ -278,7 +316,7 @@ PANES-DRAW-SEPARATOR)."
 (defun pane-at (x0 y0)
   "Name of the pane whose rect contains the 0-based point, or NIL."
   (when *panes-canvas*
-    (dolist (rect (layout-leaves *layout* 0 0 (uigrid-w *panes-canvas*)
+    (dolist (rect (layout-leaves (panes-layout-now) 0 0 (uigrid-w *panes-canvas*)
                                  (uigrid-h *panes-canvas*)))
       (destructuring-bind (name rx ry rw rh) rect
         (when (and (<= rx x0) (< x0 (+ rx rw))
@@ -324,7 +362,9 @@ separator."
                                (list tree x y w h :vsplit)
                                (or (walk a x y w ha)
                                    (walk b x (+ y ha) w (- h ha)))))))))))
-      (walk *layout* 0 0 (uigrid-w *panes-canvas*) (uigrid-h *panes-canvas*)))))
+      ;; No dragging while collapsed: the drawn split is not *layout*'s.
+      (unless (panes-collapsed-p)
+        (walk *layout* 0 0 (uigrid-w *panes-canvas*) (uigrid-h *panes-canvas*))))))
 
 (defun pane-drag-to (x0 y0)
   "Move the dragged split's separator to the 0-based point: an :hsplit
@@ -414,7 +454,8 @@ redraw thread."
   "Render every dirty pane at its layout rect, then repaint the gap
 columns between side-by-side panes with a dim vertical line (every
 hsplit reserves one uncovered column — see hsplit-left-width)."
-  (let ((rects (layout-leaves *layout* 0 0 (uigrid-w g) (uigrid-h g))))
+  (let ((rects (layout-leaves (panes-layout-now (uigrid-w g) (uigrid-h g))
+                              0 0 (uigrid-w g) (uigrid-h g))))
     (dolist (rect rects)
       (destructuring-bind (name x y w h) rect
         (let ((p (pane-get name)))
