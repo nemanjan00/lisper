@@ -306,9 +306,13 @@ Slash commands live here.")
                   (list :type :info
                         :text "That message was already sent; your edit is still in the input line — Enter sends it again as a new message.")))))
       (return-from tui-submit-input t))
-    (when (and (plusp (length text))
-               (some (lambda (f) (funcall f ui text)) *tui-submit-hooks*))
-      (return-from tui-submit-input t))
+    ;; A hook returns T (consumed), a string (send that instead of the
+    ;; typed text), or NIL (not mine).
+    (when (plusp (length text))
+      (dolist (f *tui-submit-hooks*)
+        (let ((r (funcall f ui text)))
+          (cond ((stringp r) (setf text r) (return))
+                (r (return-from tui-submit-input t))))))
     (when (plusp (length text))
       (setf (fill-pointer in) 0
             (tui-ui-input-cursor ui) 0)

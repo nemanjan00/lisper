@@ -43,8 +43,10 @@ parsing, so names with [ * ? are fine). NIL when unreadable."
                       (unless (member name '("." "..") :test #'string=)
                         (push (cons name
                                     (ignore-errors
+                                     ;; T: follow symlinks, so a link to a
+                                     ;; directory completes with a /.
                                      (eq (sb-impl::native-file-kind
-                                          (concatenate 'string abs-dir name))
+                                          (concatenate 'string abs-dir name) t)
                                          :directory)))
                               out))))
         (sb-posix:closedir dir)))

@@ -50,11 +50,13 @@ not: an unknown command is reported, never sent to the model)."
   (multiple-value-bind (name args) (slash-parse text)
     (when name
       (let ((cmd (slash-find name)))
-        (if cmd
-            (handler-case (funcall (second cmd) ui args)
-              (error (c) (slash-say (format nil "/~A failed: ~A" name c))))
-            (slash-say (format nil "Unknown command /~A — try /help." name))))
-      (tui-clear-input ui)
+        (cond (cmd
+               (handler-case (funcall (second cmd) ui args)
+                 (error (c) (slash-say (format nil "/~A failed: ~A" name c))))
+               (tui-clear-input ui))
+              ;; Unknown: report it but keep the text, so the user can
+              ;; fix it (or turn it into a plain message with //).
+              (t (slash-say (format nil "Unknown command /~A — try /help; start with // to send a message that begins with a slash." name)))))
       t)))
 
 ;;; ---------------------------------------------------------------
@@ -63,6 +65,7 @@ not: an unknown command is reported, never sent to the model)."
 (defstruct completion
   items        ; list of (insert-string . display-string)
   (sel 0)      ; selected index
+  (moved nil)  ; true once the user moved the highlight with Up/Down
   start        ; input index where the replaced word starts
   end)         ; input index where it ends
 
@@ -127,11 +130,7 @@ answer (keeping the selection when still in range), else close it."
             (return
               (setf *completion*
                     (make-completion
-                     :items items :start start :end end
-                     :sel (if (and *completion*
-                                   (< (completion-sel *completion*) (length items)))
-                              (completion-sel *completion*)
-                              0))))))))))
+                     :items items :start start :end end)))))))))
 
 (defun completion-accept (ui)
   "Replace the word under the popup with the selected item."
@@ -158,10 +157,12 @@ Tab with no popup asks the Tab sources (path completion)."
   (cond
     ((tui-queue-mode ui) (completion-close) nil)
     ((and *completion* (eq key :up))
+     (setf (completion-moved *completion*) t)
      (setf (completion-sel *completion*)
            (mod (1- (completion-sel *completion*)) (length (completion-items *completion*))))
      t)
     ((and *completion* (eq key :down))
+     (setf (completion-moved *completion*) t)
      (setf (completion-sel *completion*)
            (mod (1+ (completion-sel *completion*)) (length (completion-items *completion*))))
      t)
@@ -181,22 +182,23 @@ Tab with no popup asks the Tab sources (path completion)."
     (t nil)))
 
 (defun slash-submit (ui text)
-  "Submit hook. With the popup open, Enter first takes the selected
-item when it differs from what was typed (so \"/he\" + Enter runs
-/help), then TEXT runs if it is a slash command."
-  (when *completion*
-    (let* ((item (nth (completion-sel *completion*) (completion-items *completion*)))
-           (typed (subseq text (min (length text) (completion-start *completion*)))))
-      (when (and item (string/= (string-right-trim " " (car item)) typed)
-                 (zerop (completion-start *completion*)))
-        (setf text (string-right-trim " " (car item))))
-      (when (and item (plusp (completion-start *completion*))
-                 (string/= (car item) typed))
-        (setf text (concatenate 'string
-                                (subseq text 0 (completion-start *completion*))
-                                (car item))))))
+  "Submit hook. Enter submits what was typed; the highlighted popup
+item replaces it only when the user moved the highlight with Up/Down
+(Tab is what accepts a suggestion). A text starting with // is a plain
+message without one slash: returning a string makes TUI-SUBMIT-INPUT
+send that instead of TEXT."
+  (when (and *completion* (completion-moved *completion*))
+    (let* ((start (completion-start *completion*))
+           (item (nth (completion-sel *completion*) (completion-items *completion*)))
+           (typed (subseq text (min (length text) start))))
+      (when (and item (string/= (string-right-trim " " (car item)) typed))
+        (setf text (string-trim " " (concatenate 'string (subseq text 0 start)
+                                                 (car item)))))))
   (completion-close)
-  (slash-run ui text))
+  (slash-cache-reset)
+  (cond ((and (> (length text) 1) (string= "//" text :end2 2))
+         (subseq text 1))
+        (t (slash-run ui text))))
 
 ;;; ---------------------------------------------------------------
 ;;; popup drawing (also the draw-time refresh)
@@ -207,6 +209,10 @@ it in the rows ending just above Y (where the queue/input rows start)."
   (let ((state (completion-input-state ui)))
     (unless (equal state *completion-seen*)
       (setf *completion-seen* state)
+      ;; Leaving "/command arg" typing drops the cached argument data.
+      (unless (and (plusp (length (car state))) (char= (char (car state) 0) #\/)
+                   (find #\Space (car state)))
+        (slash-cache-reset))
       (if (tui-queue-mode ui)
           (completion-close)
           (completion-open ui '(slash-source)))))
@@ -236,9 +242,21 @@ it in the rows ending just above Y (where the queue/input rows start)."
            (loop for (name nil doc) in *slash-commands*
                  collect name collect (or doc "")))))
 
+(defvar *slash-cache* nil
+  "(key . value): data a command's argument completion computed when
+its popup opened, reused while the user keeps typing that argument.")
+
+(defun slash-cache-reset () (setf *slash-cache* nil))
+
+(defun slash-cached (key thunk)
+  "THUNK's value, computed once per KEY until SLASH-CACHE-RESET."
+  (if (and *slash-cache* (equal (car *slash-cache*) key))
+      (cdr *slash-cache*)
+      (cdr (setf *slash-cache* (cons key (funcall thunk))))))
+
 (defun slash-session-names (ui partial)
   (declare (ignore ui))
-  (loop for s in (lisping-core:session-list)
+  (loop for s in (slash-cached :sessions #'lisping-core:session-list)
         for n = (getf s :session)
         when (and (not (getf s :current))
                   (<= (length partial) (length n))
