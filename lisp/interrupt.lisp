@@ -29,12 +29,7 @@
 (defun interrupt-turn ()
   "Stop the running turn.  T when a turn was running, NIL otherwise."
   (let ((f (interrupt-core-fn "CANCEL-TURN")))
-    (when (and f (let ((r (funcall f)))
-                   (ignore-errors
-                    (with-open-file (o "/tmp/interrupt-debug.log" :direction :output
-                                       :if-exists :append :if-does-not-exist :create)
-                      (format o "~A cancel-turn -> ~S~%" (get-universal-time) r)))
-                   r))
+    (when (and f (funcall f))
       (when (boundp '*nudge-paused*) (setf (symbol-value '*nudge-paused*) t))
       (when *tui* (tui-dirty))
       t)))
@@ -43,10 +38,6 @@
   "Esc while busy: the first press arms, a second within the window interrupts."
   (when (interrupt-busy-p)
     (let ((now (get-internal-real-time)))
-      (ignore-errors
-       (with-open-file (o "/tmp/interrupt-debug.log" :direction :output
-                          :if-exists :append :if-does-not-exist :create)
-         (format o "esc now=~D at=~D~%" now *interrupt-esc-at*)))
       (cond ((< (- now *interrupt-esc-at*)
                 (* *interrupt-esc-window* internal-time-units-per-second))
              (setf *interrupt-esc-at* 0)
