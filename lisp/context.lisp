@@ -806,7 +806,7 @@ anything not an exact multiple keeps the full ~:D form."
 (defvar *ctx-compact-width* 70
   "Context panes narrower than this (a phone) use the dense view.")
 
-(defun ctx-compact-lines (w h)
+(defun ctx-compact-lines (pane w h)
   "Dense context view for a narrow pane: a gauge bar of the budget, one
 status line, then one truncated line per rewind (newest first as kept in
 *ctx-stretches*).  Chunk lists, at most H of them, none wider than W."
@@ -839,16 +839,16 @@ status line, then one truncated line per rewind (newest first as kept in
       (let ((u (and (fboundp 'usage-compact-line) (funcall 'usage-compact-line))))
         (when u (add (cons (fit u w) 8)))))
     (let ((out (mapcar (lambda (l) (ui-truncate-chunks l w)) (nreverse lines))))
-      (subseq out 0 (min h (length out))))))
+      (pane-window pane out h :top))))
 
 (defun pane-context-render (pane w h)
   "Context size and what the compactor has collapsed, for the pane.
 Returns chunk LISTS (a chunk is (text . attr)).  Main number is the
 REAL prompt_tokens of the last request; the local estimate is only
-shown as what has grown since.  Narrow panes get the dense view."
-  (declare (ignore pane))
+shown as what has grown since.  Narrow panes get the dense view.  The
+wheel scrolls it when there are more lines than rows."
   (when (< w *ctx-compact-width*)
-    (return-from pane-context-render (ctx-compact-lines w h)))
+    (return-from pane-context-render (ctx-compact-lines pane w h)))
   (labels ((wrap (text width)
              ;; Word-wrap TEXT to WIDTH columns; continuation lines get a
              ;; two-space hanging indent.  Over-long words are split.
@@ -918,7 +918,7 @@ shown as what has grown since.  Narrow panes get the dense view."
       (let ((u (and (fboundp 'usage-summary-line) (funcall 'usage-summary-line))))
         (when u (setf extra (append (reverse (line u 8)) extra))))
       (setf lines (append lines (nreverse extra)))
-      (subseq lines 0 (min h (length lines))))));;; --------------------------------------------------------------- start
+      (pane-window pane lines h :top))));;; --------------------------------------------------------------- start
 
 (defun ctx-init-panes ()
   "Re-register the context pane after every PANES-INIT (the init wipes

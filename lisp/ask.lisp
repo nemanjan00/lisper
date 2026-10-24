@@ -52,10 +52,15 @@
 ;;; pane
 
 (defun pane-ask-render (pane w h)
-  (declare (ignore pane h))
   (let ((a *ask-active*))
     (if (null a)
         (list (list (cons "(no pending question)" 8)))
+        (pane-window pane (ask-render-lines a w) h :top))))
+
+(defun ask-render-lines (a w)
+  "All lines of the question pane for the active ask A, at width W."
+  (progn
+    (progn
         (let* ((q (ask-current-q a))
                (n (askq-noptions q))
                (multi (askq-multi q))

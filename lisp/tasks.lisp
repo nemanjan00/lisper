@@ -392,7 +392,6 @@ over MAX-RATE messages in the last 60s — then drop them and count."
 ;;; pane + lifecycle
 
 (defun pane-tasks-render (pane w h)
-  (declare (ignore pane))
   (let ((lines
          (let ((tasks (task-list)))
            (if (null tasks)
@@ -407,7 +406,8 @@ over MAX-RATE messages in the last 60s — then drop them and count."
                                                   (task-pattern task))
                                           w)
                                          (if (eq (task-status task) :running) 7 8))))))))
-    (subseq lines (max 0 (- (length lines) h)))))
+    ;; Newest at the bottom; the wheel scrolls back up the list.
+    (pane-window pane lines h :bottom)))
 
 (defun tasks-init-panes ()
   "Register the tasks pane and put it right of the context pane.

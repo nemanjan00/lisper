@@ -128,10 +128,30 @@ pane content blank (2026-10-23)."
         for p = (pane-get name)
         when (and p (eq (pane-kind p) kind)) return p))
 
+(defvar *pane-top-anchored* '("context" "ask")
+  "Panes whose content starts at the top (pane-scroll counts lines scrolled
+down from there), unlike the chat, whose scroll counts lines up from the
+bottom.  Wheel up / PgUp always mean 'towards the start', so the delta is
+flipped for these.")
+
+(defun pane-window (pane lines h &optional (anchor :bottom))
+  "The H lines of LINES that the pane's scroll shows, clamping the scroll.
+ANCHOR :top shows from the start (scroll = lines scrolled down), :bottom
+from the end (scroll = lines scrolled up).  For renderers that build all
+their lines and used to cut them to the height."
+  (let* ((n (length lines))
+         (most (max 0 (- n h)))
+         (s (max 0 (min (pane-scroll pane) most)))
+         (start (if (eq anchor :top) s (- most s))))
+    (setf (pane-scroll pane) s)
+    (subseq lines start (min n (+ start h)))))
+
 (defun pane-scroll-by (name delta)
   (sb-thread:with-recursive-lock (*tui-lock*)
     (let ((p (pane-get name)))
       (when p
+        (when (member name *pane-top-anchored* :test #'equal)
+          (setf delta (- delta)))
         (setf (pane-scroll p) (max 0 (+ (pane-scroll p) delta)))
         ;; Reaching the bottom clears the 'N new' marker.
         (when (and (eq (pane-kind p) :chat) (zerop (pane-scroll p)))
