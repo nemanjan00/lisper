@@ -209,18 +209,28 @@ keys fall through to normal input editing."
                     (and (characterp key) (char-equal key #\e)))
                 (let ((text (nth sel (lisping-core:queued-messages))))
                   (when text
-                    (let ((in (tui-ui-input ui)))
-                      (setf (fill-pointer in) 0)
-                      (loop for c across text do (vector-push-extend c in))
-                      (setf (tui-ui-input-cursor ui) (length in)
-                            (tui-ui-input-hscroll ui) 0
-                            (tui-ui-queue-edit ui) (1+ sel) ; EDIT-QUEUED is 1-based
-                            (tui-ui-queue-sel ui) nil))))
+                    ;; PIN-QUEUED with the very string QUEUED-MESSAGES gave:
+                    ;; it can't be delivered while edited, and we keep the
+                    ;; string (not an index, which shifts) as the handle.
+                    (if (lisping-core:pin-queued text)
+                        (let ((in (tui-ui-input ui)))
+                          (setf (fill-pointer in) 0)
+                          (loop for c across text do (vector-push-extend c in))
+                          (setf (tui-ui-input-cursor ui) (length in)
+                                (tui-ui-input-hscroll ui) 0
+                                (tui-ui-queue-edit ui) text
+                                (tui-ui-queue-sel ui) nil))
+                        (progn
+                          (setf (tui-ui-queue-sel ui) nil)
+                          (terminal-emit
+                           (list :type :info
+                                 :text "That message was already delivered."))))))
                 t)
                (t nil))))
       (:edit
        (cond ((or (eq key :escape)
                   (and (characterp key) (char= key #\Esc)))
+              (lisping-core:release-queued (tui-ui-queue-edit ui))
               (setf (tui-ui-queue-edit ui) nil)
               (tui-clear-input ui)
               t)
@@ -275,13 +285,20 @@ keys fall through to normal input editing."
          ;; before SEND-USER-MESSAGE reads it.
          (text (string-trim " " (copy-seq in))))
     ;; Editing a queued message: Enter saves it back (empty deletes),
-    ;; it is NOT sent as a new message.
+    ;; it is NOT sent as a new message.  QUEUE-EDIT is the pinned
+    ;; string; EDIT-QUEUED returns NIL when it was delivered anyway
+    ;; (e.g. a urgent !) — then the text stays in the input line so
+    ;; the user can send it again as a new message.
     (when (tui-ui-queue-edit ui)
-      (lisping-core:edit-queued (tui-ui-queue-edit ui)
-                                (and (plusp (length text)) text))
-      (setf (tui-ui-queue-edit ui) nil
-            (fill-pointer in) 0
-            (tui-ui-input-cursor ui) 0)
+      (let ((handle (tui-ui-queue-edit ui)))
+        (setf (tui-ui-queue-edit ui) nil)
+        (cond ((lisping-core:edit-queued handle
+                                         (and (plusp (length text)) text))
+               (setf (fill-pointer in) 0
+                     (tui-ui-input-cursor ui) 0))
+              (t (terminal-emit
+                  (list :type :info
+                        :text "That message was already sent; your edit is still in the input line — Enter sends it again as a new message.")))))
       (return-from tui-submit-input t))
     (when (plusp (length text))
       (setf (fill-pointer in) 0

@@ -42,9 +42,10 @@
    (input-hscroll :initform 0 :accessor tui-ui-input-hscroll)
    ;; Queue editing (todo 8): QUEUE-SEL is the 0-based index of the
    ;; selected queued message (selection mode over the texts shown
-   ;; above the input line), QUEUE-EDIT the 1-based index of the
-   ;; queued message being edited in the input line (for
-   ;; lisping-core:edit-queued).  Both NIL when inactive.
+   ;; above the input line), QUEUE-EDIT the pinned queued-message STRING
+   ;; being edited in the input line (the handle for
+   ;; lisping-core:edit-queued / release-queued; an index would shift
+   ;; when an earlier message is delivered).  Both NIL when inactive.
    (queue-sel :initform nil :accessor tui-ui-queue-sel)
    (queue-edit :initform nil :accessor tui-ui-queue-edit)))
 
