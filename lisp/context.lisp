@@ -837,7 +837,13 @@ status line, then one truncated line per rewind (newest first as kept in
                  8))
       ;; Session cost, short form (lisp/usage.lisp).
       (let ((u (and (fboundp 'usage-compact-line) (funcall 'usage-compact-line))))
-        (when u (add (cons (fit u w) 8)))))
+        (when u (add (cons (fit u w) 8))))
+      ;; One line per rewind (the docstring's promise), newest first —
+      ;; the part a short pane scrolls through.
+      (dolist (st *ctx-stretches*)
+        (destructuring-bind (from to short &rest more) st
+          (declare (ignore more))
+          (add (cons (fit (format nil "e~D…e~D ~A" from to short) w) 8)))))
     (let ((out (mapcar (lambda (l) (ui-truncate-chunks l w)) (nreverse lines))))
       (pane-window pane out h :top))))
 
