@@ -152,9 +152,15 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
       (:tool-call (chat-add-call ui (getf event :name) (getf event :args)))
       (:tool-result (chat-add-result ui (getf event :name) (getf event :text)))
       (:error (tui-chat-add ui (list (cons (getf event :text) 1))))
-      (:info (if (equal (getf event :text) "turn cancelled")
-                 (tui-show-system ui "cancel" "the turn was stopped here")
-                 (tui-chat-add ui (list (cons (getf event :text) 8)))))
+      (:info (cond ((equal (getf event :text) "turn cancelled")
+                    (tui-show-system ui "cancel" "the turn was stopped here"))
+                   (t (tui-chat-add ui (list (cons (getf event :text) 8)))
+                      ;; The core loads the saved conversation AFTER init.lisp
+                      ;; started the UI, so the replay at start saw nothing:
+                      ;; replay when the core announces the resume.
+                      (when (let ((tx (getf event :text)))
+                              (and (stringp tx) (eql 0 (search "resumed session" tx))))
+                        (tui-replay-history ui)))))
       ;; :kind is NIL for what the user typed, a string for system messages.
       ;; Those aren't editable, so no queued echo; they show on delivery.
       (:queued (unless (getf event :kind)
