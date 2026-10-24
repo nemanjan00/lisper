@@ -127,19 +127,33 @@ A HANDLER-CASE around the same body then does the cleanup."
   "Size of the smallest tmux client attached to this session, as (values
 rows cols), or NIL outside tmux.  A tmux window can be pinned larger
 than the client viewing it (window-size manual), so the pty size alone
-over-reports what a phone actually shows."
+over-reports what a phone actually shows.  The rows are those left for
+the window: tmux's own status line(s) take some of the client's height,
+and a pinned window taller than that has its bottom rows (our status
+bar) cut off."
   (when (and (sb-ext:posix-getenv "TMUX_PANE") (not *test-boot*))
-    (let ((rows nil) (cols nil)
-          (out (or (ignore-errors
-                    (shell "tmux list-clients -t \"$(tmux display -p -t \"$TMUX_PANE\" '#{session_name}')\" -F '#{client_height} #{client_width}' 2>/dev/null"))
-                   "")))
+    (let* ((rows nil) (cols nil)
+           (sess "\"$(tmux display -p -t \"$TMUX_PANE\" '#{session_name}')\"")
+           (out (or (ignore-errors
+                     (shell (format nil "tmux list-clients -t ~A -F '#{client_height} #{client_width}' 2>/dev/null" sess)))
+                    ""))
+           (bar (let ((v (string-trim '(#\Space #\Newline)
+                                      (or (ignore-errors
+                                           (shell (format nil "tmux show -Av -t ~A status 2>/dev/null" sess)))
+                                          ""))))
+                  (cond ((string= v "off") 0)
+                        ((string= v "on") 1)
+                        ((and (plusp (length v)) (digit-char-p (char v 0)))
+                         (digit-char-p (char v 0)))
+                        (t 1)))))
       (loop with start = 0
             while (< start (length out))
             do (let* ((nl (or (position #\Newline out :start start) (length out))))
                  (multiple-value-bind (r c) (tty-parse-size (subseq out start nl))
                    (when (and r c (plusp r) (plusp c))
-                     (setf rows (if rows (min rows r) r)
-                           cols (if cols (min cols c) c))))
+                     (let ((r (max 1 (- r bar))))
+                       (setf rows (if rows (min rows r) r)
+                             cols (if cols (min cols c) c)))))
                  (setf start (1+ nl))))
       (when (and rows cols) (values rows cols)))))
 
