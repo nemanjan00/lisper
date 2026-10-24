@@ -43,6 +43,10 @@
   "Esc while busy: the first press arms, a second within the window interrupts."
   (when (interrupt-busy-p)
     (let ((now (get-internal-real-time)))
+      (ignore-errors
+       (with-open-file (o "/tmp/interrupt-debug.log" :direction :output
+                          :if-exists :append :if-does-not-exist :create)
+         (format o "esc now=~D at=~D~%" now *interrupt-esc-at*)))
       (cond ((< (- now *interrupt-esc-at*)
                 (* *interrupt-esc-window* internal-time-units-per-second))
              (setf *interrupt-esc-at* 0)
