@@ -839,7 +839,7 @@ status line, then one truncated line per rewind (newest first as kept in
                (cons (fit (substitute #\Space #\Newline (or (third st) ""))
                           (- w (length head)))
                      8)))))
-    (let ((out (nreverse lines)))
+    (let ((out (mapcar (lambda (l) (ui-truncate-chunks l w)) (nreverse lines))))
       (subseq out 0 (min h (length out))))))
 
 (defun pane-context-render (pane w h)
