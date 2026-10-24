@@ -88,6 +88,12 @@ escalates to TUI-CRASH, which stops and supervises a restart."
               (when (eq *tui* ui) (tui-display-error ui c))))))))
 
 
+(defun tui-flat (text)
+  "TEXT on one line: newlines shown as ' ↵ ' (echoes, queue rows)."
+  (with-output-to-string (s)
+    (loop for c across text
+          do (if (char= c #\Newline) (write-string " ↵ " s) (write-char c s)))))
+
 (defun tui-show-user (ui text)
   "Log a user message unless it is already on screen. Upgrades the dimmed
 queued echo of the same text instead of duplicating it."
@@ -107,7 +113,7 @@ queued echo of the same text instead of duplicating it."
             (tui-ui-scroll ui) 0)
       (uibuf-append (tui-ui-chat ui)
                     (append (tui-seg-chunks "you" 0 2)
-                            (list (cons (format nil " ~A" text) (ui-attr 7 :bright t))))
+                            (list (cons (format nil " ~A" (tui-flat text)) (ui-attr 7 :bright t))))
                     :fresh t)))
   (tui-dirty))
 
@@ -121,7 +127,7 @@ queued echo of the same text instead of duplicating it."
 (defun tui-queued-chunks (text)
   "Chunk list of the dimmed echo line of a queued message."
   (append (tui-seg-chunks "queued" 7 :grey)
-          (list (cons (format nil " ~A" text) 8))))
+          (list (cons (format nil " ~A" (tui-flat text)) 8))))
 
 (defun tui-show-queued (ui text)
   "Echo a just-submitted message dimmed, ahead of the model picking it
@@ -458,6 +464,16 @@ and empty messages are skipped."
                (serious-condition (c)
                  (when (eq *tui* ui) (tui-crash c)))))))
 
+(defvar *tui-input-top* 0
+  "Index of the first input line shown when the input has more lines
+than rows.")
+
+(defun tui-input-rows (ui)
+  "Rows the input takes: one per line of text, at most 6 (and never
+more than the terminal can spare)."
+  (let ((n (1+ (count #\Newline (tui-ui-input ui)))))
+    (max 1 (min 6 n (max 1 (- (or (tui-ui-height ui) 24) 8))))))
+
 (defvar *tui-overlay-drawers* nil
   "Symbols/functions (g ui y w) called at the end of each frame's
 drawing, before the diff: they paint popups over the grid. Y is the row
@@ -550,7 +566,7 @@ the panes end there."
               for tattr = (cond (sel (ui-attr 7 :bright t)) (editing (ui-attr 5)) (t 8))
               do (ui-grid-write-chunks
                   g 0 row
-                  (append tag (list (cons (concatenate 'string " " (str-truncate text (max 1 (- w tag-w 2))))
+                  (append tag (list (cons (concatenate 'string " " (str-truncate (tui-flat text) (max 1 (- w tag-w 2))))
                                           tattr)))
                   w))))))
 
