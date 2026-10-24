@@ -1532,15 +1532,15 @@ releases the lock when its holder dies, so a crash leaves nothing stale."
 (defun flock-held-p (path)
   "True if some process holds a flock on PATH, read from /proc/locks without
 taking the lock: a probe that took it, however briefly, could make a session
-booting at that moment find its lock taken and exit. :UNKNOWN when /proc/locks
-can't be read."
+booting at that moment find its lock taken and exit. Matches on the inode
+alone: on some filesystems (btrfs subvolumes) the device stat reports isn't
+the one /proc/locks lists. Another device's flock on the same inode number
+would only make the session look busy. :UNKNOWN when /proc/locks can't be read."
   (multiple-value-bind (ok dev ino) (sb-unix:unix-stat path)
+    (declare (ignore dev))
     (cond ((not ok) nil)
           ((not (probe-file "/proc/locks")) :unknown)
-          (t (let ((key (format nil " ~(~2,'0x:~2,'0x~):~D "
-                                (logior (ldb (byte 12 8) dev) (ash (ldb (byte 20 44) dev) 12))
-                                (logior (ldb (byte 8 0) dev) (ash (ldb (byte 12 20) dev) 8))
-                                ino)))
+          (t (let ((key (format nil ":~D " ino)))
                (with-open-file (in "/proc/locks")
                  (loop for line = (read-line in nil)
                        while line
