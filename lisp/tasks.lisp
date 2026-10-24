@@ -85,25 +85,34 @@ spaces or ')', so the fields are split after the LAST ')'."
                          while sp do (setf start (1+ sp)))))
       (parse-integer (third fields)))))
 
+(defun proc-comm (pid)
+  "The command name of PID from /proc/PID/comm, or NIL."
+  (ignore-errors
+    (with-open-file (in (format nil "/proc/~D/comm" pid))
+      (read-line in nil nil))))
+
+(defun proc-first-child (pid)
+  "The first child pid of PID from /proc, or NIL."
+  (ignore-errors
+    (with-open-file (in (format nil "/proc/~D/task/~D/children" pid pid))
+      (parse-integer (or (read-line in nil "") "") :junk-allowed t))))
+
 (defun task-discover-pgid (pid)
-  "The process group the task's process PID (the setsid or sh we started)
-leads or belongs to, read straight from /proc: right whether or not
-setsid forked, and no polling.  When setsid did fork, PID itself is
-still in the caller's group, so then the group we want is its child's
-(which setsid made a group leader); we tell the cases apart by whether
-PID leads its own group."
-  (let ((own (proc-pgrp pid)))
-    (cond ((null own) nil)
-          ((= own pid) own)             ; PID is a group leader: setsid exec'd in place
-          (t                            ; setsid forked: the leader is its child
-           (loop repeat 50
-                 for kids = (ignore-errors
-                              (with-open-file (in (format nil "/proc/~D/task/~D/children" pid pid))
-                                (read-line in nil "")))
-                 for kid = (and kids (parse-integer kids :junk-allowed t))
-                 for g = (and kid (proc-pgrp kid))
-                 when (and g (= g kid)) do (return g)
-                 do (sleep 0.02))))))
+  "The process group of the task started as PID (a setsid --wait), read
+from /proc rather than guessed.  SBCL's run-program already makes PID a
+group leader, so setsid FORKS: the group to signal is its child's, which
+leads its own group (pgrp == pid).  If setsid ever exec'd in place
+instead, PID's comm is no longer \"setsid\" and its own group is the
+one.  Polls briefly while the fork has not happened yet."
+  (loop repeat 100
+        for kid = (proc-first-child pid)
+        for g = (and kid (proc-pgrp kid))
+        do (cond ((and g (= g kid)) (return g))
+                 ((let ((c (proc-comm pid)))
+                    (and c (string/= c "setsid")))
+                  (return (proc-pgrp pid)))
+                 ((null (proc-comm pid)) (return nil)))
+           (sleep 0.01)))
 
 (defun bg-start (name cmd &key monitor pattern max-rate)
   "Start CMD as background task NAME and return a status string.
