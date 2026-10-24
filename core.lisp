@@ -968,6 +968,7 @@ it's kept as the message's x-kind and never sent to the model API."
       (:reasoning nil)                  ; long; it is in the session's trace.log
       (:user nil)                       ; the user typed it; no need to echo
       (:queued nil)
+      (:idle nil)
       (:tool-call
        (let ((args (getf event :args)))
          (format t "~&~%[~A]~%~A~%" (getf event :name)
@@ -1027,7 +1028,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *observers*: functions called with every event, before *emit*. The UI owns *emit*; anything else that needs to see events (your compactor, a logger) belongs in *observers*, so a UI restart can't drop it.
 - Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix. Any key starting with \"x-\" is stripped the same way, so you can keep your own bookkeeping on a message (an \"x-id\", say): it stays in *messages*, is saved with the session and survives restarts, but the model never sees it.
-- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages), pins one while the user edits it with (pin-queued text) so it isn't delivered mid-edit, then saves with (edit-queued text new-text), NIL deleting, or cancels with (release-queued text); any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away.
+- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages), pins one while the user edits it with (pin-queued text) so it isn't delivered mid-edit, then saves with (edit-queued text new-text), NIL deleting, or cancels with (release-queued text); any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away. Activity for a UI indicator: :user starts a turn, :thinking marks each model call, :tool-call/:tool-result bracket a tool run, a failed model call that will be retried is an :error with :retry-in seconds and :attempt, and :idle (with :held, the count of waiting messages) means the turn is over and the agent waits for the user.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
 - The queue: text appended to the session's queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
@@ -1190,7 +1191,8 @@ sent to the model."
                (let ((limited (and (typep c 'http-error) (eql (http-error-status c) 429))))
                  (when (or (client-error-p c) (and (not limited) (>= attempt 4))) (error c))
                  (let ((wait (if limited (min 300 (expt 2 (min attempt 9))) (* 2 attempt))))
-                   (emit :error :text (format nil "model call failed (attempt ~D, retrying in ~Ds): ~A" attempt wait c))
+                   (emit :error :text (format nil "model call failed (attempt ~D, retrying in ~Ds): ~A" attempt wait c)
+                                :retry-in wait :attempt attempt)
                    (sleep wait)))))))
 
 (defun client-error-p (condition)
@@ -1648,7 +1650,10 @@ number of messages restored."
           (emit :error :text (format nil "saving the session failed: ~A" c))))
       (let ((failure (ignore-errors (home-commit (format nil "~A: after a turn" *session*)))))
         (when failure
-          (emit :info :text (format nil "committing ~A failed: ~A" *home* failure)))))))
+          (emit :info :text (format nil "committing ~A failed: ~A" *home* failure))))
+      ;; The turn is over: a UI can show it's waiting for the user (unless a
+      ;; held message starts the next turn at once).
+      (emit :idle :held (length (sb-thread:with-recursive-lock (*held-lock*) *held*))))))
 
 ;;; ------------------------------------------------------------------
 ;;; Terminal input. Like terminal-emit, these live in the unlocked LISPING
