@@ -442,6 +442,11 @@ and empty messages are skipped."
                (serious-condition (c)
                  (when (eq *tui* ui) (tui-crash c)))))))
 
+(defvar *tui-overlay-drawers* nil
+  "Symbols/functions (g ui y w) called at the end of each frame's
+drawing, before the diff: they paint popups over the grid. Y is the row
+where the queue/input rows start (the panes end just above it).")
+
 (defun tui-draw (ui)
   (tui-maybe-update-size ui)
   (sb-thread:with-recursive-lock (*tui-lock*)
@@ -457,6 +462,9 @@ and empty messages are skipped."
         (replace (uigrid-chars g) (uigrid-chars *panes-canvas*))
         (replace (uigrid-attrs g) (uigrid-attrs *panes-canvas*))
         (tui-draw-queue g ui pane-h w)
+        (dolist (f *tui-overlay-drawers*)
+          (handler-case (funcall f g ui pane-h w)
+            (error (c) (declare (ignore c)) nil)))
         (tui-draw-status g ui (1- h) w)
         (let* ((input-row (- h 2))
                ;; TUI-DRAW-INPUT returns the cursor column: with

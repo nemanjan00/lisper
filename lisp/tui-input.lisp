@@ -237,6 +237,12 @@ keys fall through to normal input editing."
              (t nil)))
       (t nil))))
 
+(defvar *tui-submit-hooks* nil
+  "Symbols/functions (ui text) -> handled-p, walked by TUI-SUBMIT-INPUT
+with the trimmed input before it is sent to the model; the first to
+return T consumes it (and must clear the input itself if it wants to).
+Slash commands live here.")
+
 (defun tui-normal-key (ui key)
   (when (or (and *tui-key-interceptor* (funcall *tui-key-interceptor* ui key))
             (some (lambda (f) (funcall f ui key)) *tui-key-interceptors*))
@@ -299,6 +305,9 @@ keys fall through to normal input editing."
               (t (terminal-emit
                   (list :type :info
                         :text "That message was already sent; your edit is still in the input line — Enter sends it again as a new message.")))))
+      (return-from tui-submit-input t))
+    (when (and (plusp (length text))
+               (some (lambda (f) (funcall f ui text)) *tui-submit-hooks*))
       (return-from tui-submit-input t))
     (when (plusp (length text))
       (setf (fill-pointer in) 0
