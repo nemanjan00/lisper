@@ -861,6 +861,8 @@ itself here or vanishes on UI restart."
     (setf *layout* (default-layout)))
   (unless (member "todo" (layout-names *layout*) :test #'equal)
     (setf *layout* `(:hsplit 0.78 ,*layout* (leaf "todo"))))
+  (when (boundp '*tui-mouse-interceptors*)
+    (pushnew 'todo-mouse (symbol-value '*tui-mouse-interceptors*)))
   (panes-mark-all-dirty)
   (sb-thread:make-thread #'panes-ticker-loop :name "tui-panes")
   (dolist (hook *panes-init-hooks*) (funcall hook)))
