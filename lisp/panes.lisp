@@ -424,21 +424,35 @@ hsplit reserves one uncovered column — see hsplit-left-width)."
 (defun box-v-p (c) (and c (find c "│┬┴├┤┼")))  ; connects vertically
 (defun box-h-p (c) (and c (find c "─┬┴├┤┼")))  ; connects horizontally
 
-(defun panes-gap-junction-char (g x y)
-  "The box-drawing char for an uncovered (gap) cell, from the
-connectivity of its neighbours: where the vertical gap bar meets a
-pane's horizontal title line it becomes ┬/┴/├/┤/┼ instead of the line
-just stopping or crossing awkwardly."
-  (let ((u (box-v-p (panes-grid-char g x (1- y))))
-        (d (box-v-p (panes-grid-char g x (1+ y))))
-        (l (box-h-p (panes-grid-char g (1- x) y)))
-        (r (box-h-p (panes-grid-char g (1+ x) y))))
-    (cond ((and u d l r) #\┼)
-          ((and u d r)   #\├)
-          ((and u d l)   #\┤)
-          ((and d l r)   #\┬)
-          ((and u l r)   #\┴)
-          (t             #\│))))
+(defun panes-rect-cell-p (rects x y &optional title-row-only)
+  "True when (X, Y) lies in one of RECTS (name x y w h); with
+TITLE-ROW-ONLY, only on a rect's top (title) row."
+  (some (lambda (r)
+          (and (<= (second r) x) (< x (+ (second r) (fourth r)))
+               (if title-row-only
+                   (= y (third r))
+                   (and (<= (third r) y) (< y (+ (third r) (fifth r)))))))
+        rects))
+
+(defun panes-gap-junction-char (g x y rects)
+  "The box-drawing char for an uncovered (gap) cell at (X, Y).  Where the
+vertical gap bar meets a pane's title line it becomes ┬/┴/├/┤/┼.
+Connectivity comes from the layout RECTS, not from the drawn glyphs:
+a title row is horizontal whatever its first cells show (powerline
+title segments are not ─), and pane content (chat text may contain
+box-drawing chars) never connects."
+  (flet ((gap (cx cy) (and (< -1 cx (uigrid-w g)) (< -1 cy (uigrid-h g))
+                           (not (panes-rect-cell-p rects cx cy)))))
+    (let ((u (gap x (1- y)))
+          (d (gap x (1+ y)))
+          (l (panes-rect-cell-p rects (1- x) y t))
+          (r (panes-rect-cell-p rects (1+ x) y t)))
+      (cond ((and u d l r) #\┼)
+            ((and u d r)   #\├)
+            ((and u d l)   #\┤)
+            ((and d l r)   #\┬)
+            ((and u l r)   #\┴)
+            (t             #\│)))))
 
 (defun panes-draw-gap-columns (g rects)
   "Fill every cell no pane rect covers with a dim vertical bar — the
