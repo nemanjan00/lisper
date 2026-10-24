@@ -36,16 +36,7 @@ gives up (something happened meanwhile).")
   "True for a :user event the user wrote (not a nudge or other synthetic
 message).  The core tags system messages with x-kind; the text prefix is
 the fallback when the message isn't found."
-  (let* ((text (getf event :text))
-         (m (find-if (lambda (m)
-                       (and (hash-table-p m) (equal (gethash "role" m) "user")
-                            (equal (gethash "content" m) text)))
-                     lisping-core:*messages* :from-end t)))
-    (if m
-        (not (gethash "x-kind" m))
-        (not (and (stringp text) (plusp (length text)) (char= (char text 0) #\[)
-                  (some (lambda (p) (eql 0 (search p text)))
-                        '("[nudge]" "[task " "[monitor " "[boot]" "[core]")))))))
+  (null (getf event :kind)))
 
 (defun nudge-ready-p ()
   "All the conditions for sending a nudge, right now."

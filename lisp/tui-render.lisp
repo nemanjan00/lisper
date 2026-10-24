@@ -111,6 +111,13 @@ queued echo of the same text instead of duplicating it."
                     :fresh t)))
   (tui-dirty))
 
+(defun tui-show-system (ui kind text)
+  "Log a system-written message (task exit, nudge, boot...) dimmed behind a
+⚙ KIND label, never as the user's own."
+  (tui-chat-add ui (append (tui-seg-chunks (format nil "⚙ ~A" kind) 7 :grey)
+                           (list (cons (format nil " ~A" text) 8))))
+  (tui-dirty))
+
 (defun tui-queued-chunks (text)
   "Chunk list of the dimmed echo line of a queued message."
   (append (tui-seg-chunks "queued" 7 :grey)
@@ -142,10 +149,14 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
       (:tool-result (tui-chat-result ui (getf event :name) (getf event :text)))
       (:error (tui-chat-add ui (list (cons (getf event :text) 1))))
       (:info (tui-chat-add ui (list (cons (getf event :text) 8))))
-      (:queued (tui-show-queued ui (getf event :text)))
-      (:user (let ((text (getf event :text)))
-               (unless (equal text (tui-ui-pending-user ui))
-                 (tui-show-user ui text))))
+      ;; :kind is NIL for what the user typed, a string for system messages.
+      ;; Those aren't editable, so no queued echo; they show on delivery.
+      (:queued (unless (getf event :kind)
+                 (tui-show-queued ui (getf event :text))))
+      (:user (let ((text (getf event :text)) (kind (getf event :kind)))
+               (cond (kind (tui-show-system ui kind text))
+                     ((not (equal text (tui-ui-pending-user ui)))
+                      (tui-show-user ui text)))))
       (t nil))))
 
 (defun tui-chat-note-new (n)
