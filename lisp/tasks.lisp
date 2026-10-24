@@ -385,7 +385,7 @@ over MAX-RATE messages in the last 60s — then drop them and count."
                    for i from 1
                    collect (list (cons (format nil "~D: " i) 8)
                                  (cons (str-truncate text (max 1 (- w 4))) 5)))
-             (list (list (cons "(/queue to edit)" 8))))))
+             (list (list (cons "(queue_edit tool to edit)" 8))))))
          (lines (append task-lines queue-lines)))
     (subseq lines (max 0 (- (length lines) h)))))
 
