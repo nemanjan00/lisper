@@ -21,12 +21,25 @@ gives up (something happened meanwhile).")
 
 (defun nudge-open-todos () (remove-if #'cdr *todos*))
 
+(defun nudge-goal-p ()
+  "True while a /goal is active (lisp/goal.lisp): its re-prompt replaces
+the todo nudge and shares this loop guard."
+  (and (fboundp 'goal-active-p) (funcall 'goal-active-p)))
+
+(defun nudge-wanted-p ()
+  "Something to nudge about: open todos or an active goal."
+  (or (nudge-goal-p) (nudge-open-todos)))
+
 (defun nudge-signature ()
   "What counts as 'a todo changed': texts, done flags, the current item."
   (list (mapcar (lambda (i) (cons (car i) (and (cdr i) t))) *todos*)
-        (let ((c (todo-current))) (and c (car c)))))
+        (let ((c (todo-current))) (and c (car c)))
+        ;; With a goal, tool calls made since the last re-prompt are progress.
+        (and (nudge-goal-p) (fboundp 'goal-progress) (funcall 'goal-progress))))
 
 (defun nudge-message ()
+  (when (nudge-goal-p)
+    (return-from nudge-message (funcall 'goal-reprompt-message)))
   (let* ((open (nudge-open-todos))
          (cur (todo-current)))
     (format nil "[nudge] ~D todo~:P open; current: ~A. Continue, or ask_user if you need the user."
@@ -41,7 +54,7 @@ the fallback when the message isn't found."
 (defun nudge-ready-p ()
   "All the conditions for sending a nudge, right now."
   (and *nudge-enabled* (not *nudge-paused*)
-       (nudge-open-todos)
+       (nudge-wanted-p)
        (not (and (boundp '*ask-active*) (symbol-value '*ask-active*)))
        (zerop (length (lisping-core:queued-messages)))
        (eq (activity-kind *activity*) :idle)))
@@ -52,7 +65,8 @@ the fallback when the message isn't found."
     (let ((sig (nudge-signature)))
       (cond ((not (equal sig *nudge-sig*))
              (setf *nudge-count* 0 *nudge-sig* sig))
-            ((>= *nudge-count* +nudge-max+)
+            ((or (>= *nudge-count* (if (nudge-goal-p) 4 +nudge-max+))
+                 (and (nudge-goal-p) (fboundp 'goal-capped-p) (funcall 'goal-capped-p)))
              (setf *nudge-paused* t)
              (when *tui* (tui-dirty))
              (return-from nudge-fire nil)))
@@ -73,7 +87,7 @@ the fallback when the message isn't found."
    (case (getf event :type)
      (:idle
       (when (and *nudge-enabled* (not *nudge-paused*)
-                 (nudge-open-todos)
+                 (nudge-wanted-p)
                  (eql 0 (or (getf event :held) 0)))
         (nudge-schedule)))
      (:user

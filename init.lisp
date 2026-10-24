@@ -43,6 +43,7 @@
 (load-file "lisp/powerline.lisp")
 (load-file "lisp/interrupt.lisp")
 (load-file "lisp/compact.lisp")
+(load-file "lisp/goal.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).

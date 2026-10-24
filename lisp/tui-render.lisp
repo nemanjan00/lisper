@@ -716,6 +716,8 @@ drops out, then the right group, rather than overlapping the left."
                   (list (funcall 'activity-segment)))
                 (when (fboundp 'nudge-segment)
                   (let ((s (funcall 'nudge-segment))) (and s (list s))))
+                (when (fboundp 'goal-segments)
+                  (funcall 'goal-segments))
                 (when (fboundp 'find-segment)
                   (let ((s (funcall 'find-segment))) (and s (list s))))
                 (list model-seg todo-seg focus-seg)

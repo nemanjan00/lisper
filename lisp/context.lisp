@@ -1198,6 +1198,9 @@ wheel scrolls it when there are more lines than rows."
                             extra)))
       (when *ctx-pending-note*
         (setf extra (append (reverse (line "milestone note: pending" 3)) extra)))
+      (when (fboundp 'goal-context-lines)
+        (dolist (gl (funcall 'goal-context-lines))
+          (setf extra (append (reverse (line gl 5)) extra))))
       ;; Session tokens and rough cost (lisp/usage.lisp).
       (let ((u (and (fboundp 'usage-summary-line) (funcall 'usage-summary-line))))
         (when u (setf extra (append (reverse (line u 8)) extra))))
