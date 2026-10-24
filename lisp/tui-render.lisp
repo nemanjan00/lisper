@@ -456,6 +456,7 @@ and empty messages are skipped."
         (panes-draw *panes-canvas*)
         (replace (uigrid-chars g) (uigrid-chars *panes-canvas*))
         (replace (uigrid-attrs g) (uigrid-attrs *panes-canvas*))
+        (tui-draw-queue g ui pane-h w)
         (tui-draw-status g ui (1- h) w)
         (let* ((row (1- h))
                ;; TUI-DRAW-INPUT returns the cursor column: with
@@ -484,6 +485,39 @@ and empty messages are skipped."
                 *tui-prev-cursor* (cons row col)
                 *tui-clock-minute* (nth-value 1 (decode-universal-time
                                                  (get-universal-time)))))))))
+
+(defun tui-queue-rows (ui)
+  "Rows the queue display takes above the input line (0 when the queue
+is empty): one per waiting message, at most 4."
+  (min 4 (length (lisping-core:queued-messages))))
+
+(defun tui-draw-queue (g ui y w)
+  "Draw the waiting user messages stuck above the input line, oldest
+first, selected one highlighted (TUI-UI-QUEUE-SEL), the one loaded in
+the input line marked (TUI-UI-QUEUE-EDIT). Y is the first queue row —
+the panes end there."
+  (let* ((queued (lisping-core:queued-messages))
+         (n (length queued)))
+    (when (plusp n)
+      (let* ((rows (tui-queue-rows ui))
+             ;; The newest messages sit closest to the input line.
+             (shown (last queued rows))
+             (first-i (- n (length shown)))) ; 0-based index of SHOWN's first
+        (loop for text in shown for k from 0
+              for i = (+ first-i k)
+              for row = (+ y k)
+              for sel = (eql (tui-ui-queue-sel ui) i)
+              for editing = (eql (tui-ui-queue-edit ui) (1+ i))
+              for attr = (cond (sel (ui-attr 0 :bg 6))
+                               (editing (ui-attr 6))
+                               (t 8))
+              do (ui-grid-write g 0 row
+                                (str-truncate
+                                 (format nil "~A~D: ~A"
+                                         (cond (sel "→ ") (editing "✎ ") (t "  "))
+                                         (1+ i) text)
+                                 w)
+                                attr w))))))
 
 (defun tui-draw-separator (g y w)
   "Thin dim line between the chat pane and the input row."
