@@ -808,7 +808,7 @@ shown as what has grown since."
                     (gethash "prompt_tokens" usage)))
            (est *ctx-last-est*)
            (lines
-            (list
+            (append
              (line
               (if pt
                   (format nil "context: ~A tokens (~D% of ~A, ~D% of budget)"
@@ -824,15 +824,16 @@ shown as what has grown since."
               8)))
            (extra '()))
       (dolist (st *ctx-stretches*)
-        (push (line (format nil "rewind e~D…e~D: ~A (~A)"
-                            (first st) (second st) (third st)
-                            (ctx-fmt-k (sixth st)))
-                    8)
-              extra))
+        (setf extra (append (reverse (line (format nil "rewind e~D…e~D: ~A (~A)"
+                                                   (first st) (second st) (third st)
+                                                   (ctx-fmt-k (sixth st)))
+                                           8))
+                            extra)))
       (when (plusp *ctx-offloaded-count*)
-        (push (line (format nil "offloaded results: ~D" *ctx-offloaded-count*) 8) extra))
+        (setf extra (append (reverse (line (format nil "offloaded results: ~D" *ctx-offloaded-count*) 8))
+                            extra)))
       (when *ctx-pending-note*
-        (push (line "milestone note: pending" 3) extra))
+        (setf extra (append (reverse (line "milestone note: pending" 3)) extra)))
       (setf lines (append lines (nreverse extra)))
       (subseq lines 0 (min h (length lines))))));;; --------------------------------------------------------------- start
 
