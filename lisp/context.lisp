@@ -826,8 +826,10 @@ status line, then one truncated line per rewind (newest first as kept in
            (cons (make-string filled :initial-element #\█) colour)
            (cons (make-string (- bar-w filled) :initial-element #\░) 8)
            (cons (format nil " ~D%" pct) colour))
-      (add (cons (fit (format nil "~D msgs~A~A"
+      (add (cons (fit (format nil "~D msgs~A~A~A"
                               (length *messages*)
+                              (if *ctx-stretches*
+                                  (format nil " · ~D rewinds" (length *ctx-stretches*)) "")
                               (if (plusp *ctx-offloaded-count*)
                                   (format nil " · ~D off" *ctx-offloaded-count*) "")
                               (if *ctx-pending-note* " · note" ""))
