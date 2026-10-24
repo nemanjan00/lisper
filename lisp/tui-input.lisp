@@ -75,8 +75,11 @@ TUI-MOUSE until one returns T.")
       (if (char= c #\Esc) (tui-read-escape tty) c))))
 
 (defun tui-fd-ready-p (tty timeout)
-  (not (eq (sb-sys:wait-until-fd-usable (sb-sys:fd-stream-fd tty) :input timeout)
-           :timeout)))
+  ;; WAIT-UNTIL-FD-USABLE returns true when usable and NIL on timeout
+  ;; (not :TIMEOUT: testing for that made every wait look ready, so a bare
+  ;; Esc blocked in READ-CHAR until the next key arrived).
+  (and (sb-sys:wait-until-fd-usable (sb-sys:fd-stream-fd tty) :input timeout)
+       t))
 
 (defun tui-read-seq-char (tty timeout)
   "Next sequence byte: buffered char first, else wait on the fd for
