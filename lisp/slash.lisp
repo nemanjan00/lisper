@@ -240,7 +240,12 @@ send that instead of TEXT."
            (item (nth (completion-sel *completion*) (completion-items *completion*)))
            (typed (subseq text (min (length text) start))))
       (when (and item (string/= (string-right-trim " " (car item)) typed))
-        (setf text (string-trim " " (concatenate 'string (subseq text 0 start)
+        ;; TEXT arrives trimmed, so for "/model " (popup word at 7) it
+        ;; is shorter than START: pad the gap back with spaces.
+        (setf text (string-trim " " (concatenate 'string
+                                                 (subseq text 0 (min start (length text)))
+                                                 (make-string (max 0 (- start (length text)))
+                                                              :initial-element #\Space)
                                                  (car item)))))))
   (completion-close)
   (slash-cache-reset)
