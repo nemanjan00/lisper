@@ -599,8 +599,7 @@ budget), not of the whole window."
           (format s "[context: ~D% of the ~:D-token budget] The biggest finished parts:~%"
                   percent *ctx-budget*))
       (dolist (c (ctx-biggest-finished-results 3))
-        (format s "- e~D ≈ ~D est tokens: context_offload {\"entry\": \"e~D\"}~%"
-                (car c) (cdr c) (car c)))
+        (format s "- e~D ≈ ~D est tokens~%" (car c) (cdr c)))
       (format s "Collapse in one go with context_rewind {from, to, summary} only if it frees ~D%+ of the context; skip small edits (each re-caches everything after it). Summaries keep what later work needs verbatim (paths, ids, decisions).~%"
               *ctx-min-cut-percent*))))
 
@@ -651,6 +650,22 @@ PREVIOUS request recalibrates the ratio, so this tracks reality."
             (loop for m in *messages* sum (ctx-message-chars m)))
          *ctx-chars-per-token*))
 
+(defvar *ctx-args-trim-min* 18000
+  "Chars of stubbable old tool-call arguments that must pile up before
+CTX-TRIM-CALL-ARGS touches them (each trim re-caches the tail).")
+
+(defun ctx-trimmable-arg-chars (guard limit)
+  "Total chars of tool-call arguments over LIMIT before index GUARD."
+  (let ((sum 0))
+    (loop for m in *messages* for i from 0 while (< i guard)
+          do (dolist (tc (coerce (or (gethash "tool_calls" m) #()) 'list))
+               (let* ((f (gethash "function" tc))
+                      (args (and f (gethash "arguments" f))))
+                 (when (and args (> (length args) limit)
+                            (not (search "\"_trimmed\"" args :end2 (min 40 (length args)))))
+                   (incf sum (length args))))))
+    sum))
+
 (defun ctx-trim-call-args (&optional (limit 1500))
   "Stub out huge tool_call ARGUMENTS and old reasoning_content of
 assistant messages.  The calls are done, their results follow them,
@@ -662,11 +677,15 @@ user message).  reasoning_content is dropped anywhere except the live
 edge (the last 6 messages): old thinking is never needed again, and
 the guard does not move while only synthetic (task/note) messages
 arrive, so it would grow without bound in a long task."
-  (let ((guard (ctx-latest-user-index))
-        (edge (- (length *messages*) 6))
-        (trimmed 0))
+  (let* ((guard (ctx-latest-user-index))
+         (edge (- (length *messages*) 6))
+         (trimmed 0)
+         ;; Stubbing old tool args edits far back, which re-caches
+         ;; everything after it: wait until it frees enough chars
+         ;; (~*CTX-ARGS-TRIM-MIN* ≈ 5k tokens) to be worth one bust.
+         (args-ok (>= (ctx-trimmable-arg-chars guard limit) *ctx-args-trim-min*)))
     (loop for m in *messages* for i from 0
-          do (when (< i guard)
+          do (when (and args-ok (< i guard))
                (dolist (tc (coerce (or (gethash "tool_calls" m) #()) 'list))
                  (let* ((f (gethash "function" tc))
                         (args (and f (gethash "arguments" f))))
