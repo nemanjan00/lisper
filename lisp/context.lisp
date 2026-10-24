@@ -677,7 +677,7 @@ user message).  reasoning_content is dropped anywhere except the live
 edge (the last 6 messages): old thinking is never needed again, and
 the guard does not move while only synthetic (task/note) messages
 arrive, so it would grow without bound in a long task."
-  (let* ((guard (ctx-latest-user-index))
+  (let* ((guard (or (ctx-latest-user-index) 0)) ; no real user message (just after /compact): trim no args
          (edge (- (length *messages*) 6))
          (trimmed 0)
          ;; Stubbing old tool args edits far back, which re-caches
