@@ -29,6 +29,7 @@
 ;; Background tasks/monitors and the ask_user question pane.
 (load-file "lisp/tasks.lisp")
 (load-file "lisp/ask.lisp")
+(load-file "lisp/slash.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -41,3 +42,7 @@
 ;; key/mouse interceptors.
 (tasks-start)
 (ask-start)
+
+;; Slash commands + autocomplete popup (after ask-start: the ask pane
+;; must see keys first while a question is open).
+(slash-start)
