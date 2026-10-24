@@ -189,14 +189,20 @@ Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them)."
   (let* ((lines
           (if (null *todos*)
               (list (list (cons "(no open todos)" 8)))
-              (let ((cur nil))
-                (loop for (text . done) in *todos*
+              ;; The item set with the todo "start" action is the one
+              ;; being worked on; only when none is set (or it is
+              ;; gone/done) does the first open item stand in.
+              (let* ((set (and (boundp '*todo-current*)
+                               (let ((c (symbol-value '*todo-current*)))
+                                 (and c (member c *todos* :test #'eq) (not (cdr c)) c))))
+                     (cur (or set (find-if-not #'cdr *todos*))))
+                (loop for item in *todos*
+                      for (text . done) = item
                       collect (list (cons (str-truncate
-                                           (format nil "[~A] ~A" (if done "x" " ") text)
+                                           (format nil "[~A] ~A" (cond (done "x") ((eq item cur) ">") (t " ")) text)
                                            w)
                                           (cond (done 8)
-                                                ((null cur) (setf cur t)
-                                                 (ui-attr 7 :bright t :bg 4))
+                                                ((eq item cur) (ui-attr 7 :bright t :bg 4))
                                                 (t 7))))))))
          (n (length lines))
          (s (max 0 (min (pane-scroll pane) (max 0 (- n h))))))
