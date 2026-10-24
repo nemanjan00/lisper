@@ -31,7 +31,8 @@
   (wlock (sb-thread:make-mutex :name "mcp write"))
   (slock (sb-thread:make-mutex :name "mcp start"))
   tool-names (hung 0) (ever-ready nil)
-  url headers session-id)   ; streamable HTTP transport (URL set, no COMMAND)
+  url headers session-id    ; streamable HTTP transport (URL set, no COMMAND)
+  trusted)                  ; "trusted": true in mcp.json; default NIL = results are fenced
 
 (defstruct (mcp-pending (:conc-name mcpp-))
   (sem (sb-thread:make-semaphore)) result error)
@@ -315,6 +316,21 @@ curl itself fails (timeout, connection)."
           (mcps-status srv) :stopped)
     (mcp-fail-pending srv "server stopped")))
 
+(defparameter *mcp-env-passthrough*
+  '("PATH" "HOME" "USER" "LOGNAME" "LANG" "LC_ALL" "TERM" "SHELL" "TMPDIR")
+  "The only variables a server inherits: the user's shell exports secrets
+(tokens, passwords) that no MCP server should see unless mcp.json's \"env\"
+gives them explicitly.")
+
+(defun mcp-server-environment (srv)
+  "Environment list (NAME=value strings) for SRV: the server's own \"env\"
+first, then the passthrough variables that are set."
+  (append (loop for (k . v) in (mcps-env srv) collect (format nil "~A=~A" k v))
+          (loop for name in *mcp-env-passthrough*
+                for v = (sb-ext:posix-getenv name)
+                when (and v (not (assoc name (mcps-env srv) :test #'string=)))
+                  collect (format nil "~A=~A" name v))))
+
 (defun mcp-spawn (srv)
   "Start the process (nothing to start for HTTP); returns NIL or an error string."
   (when (mcp-http-p srv)
@@ -323,8 +339,7 @@ curl itself fails (timeout, connection)."
           (mcps-session-id srv) nil)
     (return-from mcp-spawn nil))
   (handler-case
-      (let* ((env (append (loop for (k . v) in (mcps-env srv) collect (format nil "~A=~A" k v))
-                          (sb-ext:posix-environ)))
+      (let* ((env (mcp-server-environment srv))
              (proc (sb-ext:run-program
                     (mcps-command srv) (mcps-args srv)
                     :search t :wait nil :input :stream :output :stream
@@ -346,11 +361,28 @@ curl itself fails (timeout, connection)."
 
 ;;; ------------------------------------------------------------- tools
 
+(defvar *mcp-owners* (make-hash-table :test 'equal)
+  "Registered tool name -> \"server<tab>tool\" that owns it, to spot collisions.")
+
+(defun mcp-name-hash (key)
+  (format nil "~(~8,'0x~)" (logand (sxhash key) #xffffffff)))
+
 (defun mcp-tool-name (srv tool)
-  (let ((raw (format nil "~A__~A" (mcps-name srv) tool)))
-    (subseq (substitute-if #\_ (lambda (c) (not (or (alphanumericp c) (char= c #\_) (char= c #\-))))
-                           raw)
-            0 (min 64 (length raw)))))
+  "Harness tool name for SRV's TOOL: SERVER__TOOL with odd characters
+turned into _, at most 64 chars. A name that had to be cut, or that is
+already owned by another server/tool (the cut or the character mapping
+made them equal), gets a short hash of the real pair appended."
+  (let* ((key (format nil "~A~C~A" (mcps-name srv) #\Tab tool))
+         (raw (format nil "~A__~A" (mcps-name srv) tool))
+         (base (substitute-if #\_ (lambda (c) (not (or (alphanumericp c) (char= c #\_) (char= c #\-))))
+                              raw))
+         (owner (gethash base *mcp-owners*))
+         (name (if (and (<= (length base) 64) (or (null owner) (string= owner key)))
+                   base
+                   (format nil "~A_~A" (subseq base 0 (min 55 (length base)))
+                           (mcp-name-hash key)))))
+    (setf (gethash name *mcp-owners*) key)
+    name))
 
 (defun mcp-block-text (b)
   (let ((type (mcp-get b "type")))
@@ -406,9 +438,12 @@ curl itself fails (timeout, connection)."
          (desc (format nil "~A~%(MCP server ~A, tool ~A)"
                        (or (mcp-get def "description") (mcp-get def "title") "")
                        (mcps-name srv) tool)))
+    ;; Untrusted unless the server is marked "trusted": the core fences the
+    ;; result as data and records the tool in *turn-untrusted*.
     (lisping-core::register-tool
      name desc schema
-     (lambda (args) (mcp-call-tool srv tool args)))
+     (lambda (args) (mcp-call-tool srv tool args))
+     :untrusted (not (mcps-trusted srv)))
     name))
 
 (defun mcp-list-tools (srv)
@@ -432,6 +467,7 @@ curl itself fails (timeout, connection)."
         (let ((names (loop for d in defs when (mcp-get d "name")
                            collect (mcp-register-tool srv d))))
           (dolist (old (set-difference (mcps-tool-names srv) names :test #'string=))
+            (remhash old *mcp-owners*)
             (ignore-errors (lisping-core::unregister-tool old)))
           (setf (mcps-tool-names srv) names)
           nil))))
@@ -514,6 +550,7 @@ NOTE says that it was restarted, or why it failed."
             (maphash (lambda (k v) (push (cons k (princ-to-string v)) r)) e))
           (nreverse r))
    :cwd (mcp-get entry "cwd")
+   :trusted (eq (mcp-get entry "trusted") t)
    :timeout (let ((tm (mcp-get entry "timeout"))) (if (realp tm) (max 1 (round tm)) 120))))
 
 (defun mcp-stop-all ()
@@ -523,6 +560,7 @@ NOTE says that it was restarted, or why it failed."
       (setf (mcps-tool-names s) nil))
     (mapc (lambda (s) (ignore-errors (mcp-kill s))) servers)
     (clrhash *mcp-servers*)
+    (clrhash *mcp-owners*)
     (length servers)))
 
 (defun mcp-start-server-async (srv)
@@ -596,6 +634,8 @@ NOTE says that it was restarted, or why it failed."
   "Called from init.lisp: tools, /mcp, stop hook, and the servers."
   (setf *tui-stop-hooks* (remove 'mcp-stop-all *tui-stop-hooks*))
   (setf *tui-stop-hooks* (append *tui-stop-hooks* (list 'mcp-stop-all)))
+  ;; Servers must die on every clean exit/restart, not only when the TUI stops.
+  (pushnew 'mcp-stop-all lisping-core:*before-exit*)
   (define-slash "mcp" 'slash-mcp "MCP servers: list, reload, restart NAME" 'slash-mcp-args)
   (lisping-core::register-tool
    "mcp" "Manage MCP servers: action list (default), reload (re-read ~/.lisper/mcp.json and restart all), restart (with name). Each server's tools appear as SERVER__TOOL."

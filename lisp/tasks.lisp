@@ -467,6 +467,7 @@ Idempotent."
   (setf *panes-init-hooks* (append *panes-init-hooks* (list 'tasks-init-panes)))
   (setf *tui-stop-hooks* (remove 'tasks-stop-all *tui-stop-hooks*))
   (setf *tui-stop-hooks* (append *tui-stop-hooks* (list 'tasks-stop-all)))
+  (pushnew 'tasks-stop-all lisping-core:*before-exit*)
   (tasks-init-panes)
   (unless lisping-core:*test-boot* (tasks-load))
   (lisping-core::register-tool
