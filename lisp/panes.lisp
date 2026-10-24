@@ -177,7 +177,11 @@ ratios come back exactly when the terminal is wide again."
                  (list :vsplit 0.5 (list 'leaf "chat") (list 'leaf "ask")))
                 ((and (member "context" names :test #'equal)
                       (>= h *panes-context-rows*))
-                 (list :vsplit 0.72 (list 'leaf "chat") (list 'leaf "context")))
+                 ;; The compact context view is a title row plus two
+                 ;; lines, so the pane only gets those rows (phones
+                 ;; can't drag the separator).
+                 (list :vsplit (max 0.5 (min 0.95 (/ (- h 3) h)))
+                       (list 'leaf "chat") (list 'leaf "context")))
                 (t (list 'leaf "chat"))))
         *layout*)))
 
