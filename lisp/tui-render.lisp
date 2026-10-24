@@ -449,8 +449,8 @@ and empty messages are skipped."
       (let* ((w (tui-ui-width ui))
              (h (tui-ui-height ui))
              ;; Panes own rows 0..pane-h-1 (each with its own top
-             ;; border); input at pane-h; status at pane-h+1.
-             (pane-h (max 3 (- h 2)))
+             ;; border); then the queue rows, input, status.
+             (pane-h (max 3 (- h 2 (tui-queue-rows ui))))
              (g (ui-grid-make w h)))
         (panes-ensure-canvas w pane-h)
         (panes-draw *panes-canvas*)
