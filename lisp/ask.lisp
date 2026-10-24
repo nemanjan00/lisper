@@ -82,7 +82,7 @@
                                               label desc)
                                       w)
                                      (if (= i (askq-cursor q))
-                                         (ui-attr 7 :bright t :bg 4)
+                                         (tui-select-attr)
                                          7))))
            (when (askq-other q)
              (list (list (cons (str-truncate
@@ -93,7 +93,7 @@
                                             (or (askq-other-text q) "…")))
                                 w)
                                (if (= (askq-cursor q) (1+ n))
-                                   (ui-attr 7 :bright t :bg 4)
+                                   (tui-select-attr)
                                    7)))))
            (list (list (cons (str-truncate
                               (concatenate 'string

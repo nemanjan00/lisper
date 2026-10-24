@@ -80,6 +80,11 @@ and the integer DEFAULT-BG."
          #x44475a #xff6e6e #x69ff94 #xffb86c #xd6acff #xff92df #xa4ffff #xffffff)
   :default-bg #x282a36)
 
+(defun tui-select-attr ()
+  "Attr of the selected row/option: dark ink on purple under a theme,
+bright white on blue otherwise."
+  (if *tui-theme* (ui-attr 0 :bg 4) (ui-attr 7 :bright t :bg 4)))
+
 (defun ui-attr-bg-slot (attr)
   "Background slot 0-15 of ATTR, or NIL for the default.  Bits 4-6 hold
 colour+1 and bit 7 the bright flag."

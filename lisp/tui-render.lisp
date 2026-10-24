@@ -140,7 +140,7 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
        (tui-chat-add ui (tui-tool-call-line (getf event :name)
                                             (getf event :args))))
       (:tool-result (tui-chat-result ui (getf event :name) (getf event :text)))
-      (:error (tui-chat-add ui (ui-parse-ansi (getf event :text))))
+      (:error (tui-chat-add ui (list (cons (getf event :text) 1))))
       (:info (tui-chat-add ui (list (cons (getf event :text) 8))))
       (:queued (tui-show-queued ui (getf event :text)))
       (:user (let ((text (getf event :text)))
@@ -226,11 +226,11 @@ captures of the UI itself) never reads as chat."
     (let* ((lines (tui-chunk-lines (ui-parse-ansi (str-truncate text 2000))))
            (n (length lines)))
       (cond ((> n 2)
-             (tui-chat-add ui (list (cons (format nil "  ◂ ~D lines" n) 8))))
+             (tui-chat-add ui (list (cons "  ◂" 2) (cons (format nil " ~D lines" n) 8))))
             (t
              (dolist (line lines)
-               (tui-chat-add ui (list (cons (concatenate 'string
-                                                         "  " (chunks-text line))
+               (tui-chat-add ui (list (cons "  ◂" 2)
+                                      (cons (concatenate 'string " " (chunks-text line))
                                             8)))))))))
 
 ;;; ---------------------------------------------------------------
@@ -325,7 +325,8 @@ path; eval -> what it defines or calls; otherwise the short args."
   "Chunk-list for a tool-call line: dim and indented, set apart from
 the conversation.  Summarizing must never kill the emit path: on any
 error fall back to the eval code's first line (or just the name)."
-  (list (cons (format nil "  ▸ ~A"
+  (list (cons "  ▸" 4)
+        (cons (format nil " ~A"
                       (handler-case (tui-tool-summary name args)
                         (serious-condition ()
                           (let ((code (and (hash-table-p args)

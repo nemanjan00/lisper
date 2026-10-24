@@ -202,7 +202,7 @@ Takes *TUI-LOCK* (marks every pane dirty; the redraw reads them)."
                                            (format nil "[~A] ~A" (cond (done "x") ((eq item cur) ">") (t " ")) text)
                                            w)
                                           (cond (done 8)
-                                                ((eq item cur) (ui-attr 7 :bright t :bg 4))
+                                                ((eq item cur) (tui-select-attr))
                                                 (t 7))))))))
          (n (length lines))
          (s (max 0 (min (pane-scroll pane) (max 0 (- n h))))))
