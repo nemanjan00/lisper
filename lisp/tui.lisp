@@ -114,14 +114,45 @@ A HANDLER-CASE around the same body then does the cleanup."
     (write-string string (tui-ui-tty *tui*))
     (finish-output (tui-ui-tty *tui*))))
 
-(defun tty-size ()
-  "Current terminal size as (values rows cols), or NIL."
+(defun tty-parse-size (out)
+  "Parse \"ROWS COLS\" (first line of OUT) into (values rows cols), or NIL."
   (ignore-errors
-    (let ((out (shell "stty -F /dev/tty size")))
-      (when (and (stringp out) (> (length out) 3))
-        (let ((sp (position #\Space out)))
-          (values (parse-integer out :end sp)
-                  (parse-integer out :start (1+ sp))))))))
+    (let* ((line (subseq out 0 (position #\Newline out)))
+           (sp (position #\Space line)))
+      (when sp
+        (values (parse-integer line :end sp)
+                (parse-integer line :start (1+ sp)))))))
+
+(defun tty-client-size ()
+  "Size of the smallest tmux client attached to this session, as (values
+rows cols), or NIL outside tmux.  A tmux window can be pinned larger
+than the client viewing it (window-size manual), so the pty size alone
+over-reports what a phone actually shows."
+  (when (and (sb-ext:posix-getenv "TMUX_PANE") (not *test-boot*))
+    (let ((rows nil) (cols nil)
+          (out (or (ignore-errors
+                    (shell "tmux list-clients -t \"$(tmux display -p -t \"$TMUX_PANE\" '#{session_name}')\" -F '#{client_height} #{client_width}' 2>/dev/null"))
+                   "")))
+      (loop with start = 0
+            while (< start (length out))
+            do (let* ((nl (or (position #\Newline out :start start) (length out))))
+                 (multiple-value-bind (r c) (tty-parse-size (subseq out start nl))
+                   (when (and r c (plusp r) (plusp c))
+                     (setf rows (if rows (min rows r) r)
+                           cols (if cols (min cols c) c))))
+                 (setf start (1+ nl))))
+      (when (and rows cols) (values rows cols)))))
+
+(defun tty-size ()
+  "Current terminal size as (values rows cols), or NIL: the pty size,
+clamped to the smallest attached tmux client."
+  (ignore-errors
+    (multiple-value-bind (rows cols) (tty-parse-size (shell "stty -F /dev/tty size"))
+      (when (and rows cols)
+        (multiple-value-bind (cr cc) (tty-client-size)
+          (when (and cr cc)
+            (setf rows (min rows cr) cols (min cols cc))))
+        (values rows cols)))))
 
 (defun tui-kill-threads ()
   "Terminate any stale tui-* worker threads. Old ones may be blocked in
