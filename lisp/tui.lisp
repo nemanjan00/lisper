@@ -39,7 +39,14 @@
    ;; cursor is drawn, and hscroll is the leftmost visible input char
    ;; once the text is wider than the input row (TUI-INPUT-WINDOW).
    (input-cursor :initform 0 :accessor tui-ui-input-cursor)
-   (input-hscroll :initform 0 :accessor tui-ui-input-hscroll)))
+   (input-hscroll :initform 0 :accessor tui-ui-input-hscroll)
+   ;; Queue editing (todo 8): QUEUE-SEL is the 0-based index of the
+   ;; selected queued message (selection mode over the texts shown
+   ;; above the input line), QUEUE-EDIT the 1-based index of the
+   ;; queued message being edited in the input line (for
+   ;; lisping-core:edit-queued).  Both NIL when inactive.
+   (queue-sel :initform nil :accessor tui-ui-queue-sel)
+   (queue-edit :initform nil :accessor tui-ui-queue-edit)))
 
 (defun tui-dirty ()
   "Ask the redraw thread to redraw."
