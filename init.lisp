@@ -1,9 +1,7 @@
 ;;;; init.lisp: loaded at boot, like Emacs's init.el.
 
-;; The user switched to Claude Sonnet 5.5 through the local cli-proxy-api
-;; (.env points OPENAI_BASE_URL there).  Back to Kimi: restore the kimi lines
-;; in .env and set this to "k3" (K3, 1M-token context).
-(setf lisping-core:*model* "claude-sonnet-5-5")
+;; The model and provider come from ~/.lisper/model.json (the core's
+;; use-model writes it; keys are in ~/.lisper/auth.json): nothing to set here.
 
 ;; Terminal/UI toolkit: ANSI attribute parsing, then line buffers and the
 ;; character-cell grid, then the terminal UI built on top of them.
@@ -35,7 +33,6 @@
 (load-file "lisp/mcp.lisp")
 (load-file "lisp/theme.lisp")
 (load-file "lisp/nudge.lisp")
-(load-file "lisp/security.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -63,6 +60,3 @@
 
 ;; Todo nudge after an idle turn with open todos (/nudge on|off).
 (nudge-start)
-
-;; Confirmation gate for risky tools after untrusted output.
-(security-start)
