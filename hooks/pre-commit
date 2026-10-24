@@ -9,8 +9,9 @@ tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 git checkout-index -a --prefix="$tmp/"
 [ -e .env ] && ln -s "$PWD/.env" "$tmp/.env"
-mkdir -p "$tmp/state"
-out=$(cd "$tmp" && LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout 120 \
+mkdir -p "$tmp/state" "$tmp/.home"
+# An empty home: the boot must not touch the live ~/.lisper, and a fresh install must boot.
+out=$(cd "$tmp" && LISPER_HOME="$tmp/.home/" LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout 120 \
       sbcl --noinform --non-interactive --load core.lisp \
       --eval '(lisping-core::print-boot-problems)' 2>&1 | grep '^BOOT-PROBLEMS:')
 case "$out" in

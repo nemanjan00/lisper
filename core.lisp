@@ -395,7 +395,7 @@ uncommitted files in the working tree are not in it."
             (t (remove-tree dir) nil)))))
 
 (defun remove-tree (dir)
-  (when (and dir (search "/tmp/tree-" dir))
+  (when (and dir (or (search "/tmp/tree-" dir) (search "/tmp/home-" dir)))
     (shell (format nil "rm -rf ~A" (shell-quote dir)))))
 
 (defun checked-test-boot (paths extra)
@@ -723,20 +723,33 @@ name, so a file init.lisp doesn't load yet is checked too), and print the proble
     (format t "~&BOOT-PROBLEMS:~S~%" problems)
     (finish-output)))
 
+(defun scratch-home ()
+  "A temporary *HOME* for a test boot, deleted after it: copies of the home's
+own files and of this session's data files (not its transcript, logs or lock).
+Paths resolve as they do in the live image, but a file that writes at load time
+writes the copies, never the live session."
+  (let ((dir (namestring (home-path (format nil "tmp/home-~D-~D/" (get-universal-time) (random 1000000))))))
+    (shell (format nil "D=~A; S=~A; mkdir -p \"$D/sessions/$S\" && cd ~A && for f in * .[!.]*; do case $f in tmp|sessions|.git|switch|*.log) ;; *) [ -e \"$f\" ] && cp -a \"$f\" \"$D/\" ;; esac; done; cd \"sessions/$S\" 2>/dev/null && for f in *; do case $f in lock|messages*|*.jsonl|*.log|queue.*|tmp) ;; *) [ -e \"$f\" ] && cp -a \"$f\" \"$D/sessions/$S/\" ;; esac; done; true"
+                   (shell-quote dir) (shell-quote *session*) (shell-quote (namestring *home*))))
+    dir))
+
 (defun test-boot (&key (timeout 120) extra (directory *root*))
   "Load init.lisp in a fresh SBCL process, as a boot would but with no UI, no
 agent and no commits, and return its problems as a list of strings (NIL when
 clean). The running image can pass a check only because of state left over
 from earlier; this shows whether the files work from scratch. DIRECTORY is the
-project to boot (the working tree by default)."
+project to boot (the working tree by default). It runs on a SCRATCH-HOME."
   (multiple-value-bind (out code)
-      (shell (format nil "cd ~A && LISPER_HOME=~A LISPER_SESSION=~A LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
-                     (shell-quote (namestring directory))
-                     (shell-quote (namestring *home*)) (shell-quote *session*)
-                     timeout
-                     (shell-quote (namestring sb-ext:*runtime-pathname*))
-                     (shell-quote (namestring sb-ext:*core-pathname*))
-                     (shell-quote (format nil "(lisping-core::print-boot-problems '~S)" extra))))
+      (let ((home (scratch-home)))
+        (unwind-protect
+             (shell (format nil "cd ~A && LISPER_HOME=~A LISPER_SESSION=~A LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
+                            (shell-quote (namestring directory))
+                            (shell-quote home) (shell-quote *session*)
+                            timeout
+                            (shell-quote (namestring sb-ext:*runtime-pathname*))
+                            (shell-quote (namestring sb-ext:*core-pathname*))
+                            (shell-quote (format nil "(lisping-core::print-boot-problems '~S)" extra))))
+          (remove-tree home)))
     (let ((mark (search "BOOT-PROBLEMS:" out)))
       (if mark
           (let ((*read-eval* nil))
@@ -1109,6 +1122,8 @@ and would keep rejecting every later request."
   "The request for the model. Blank user messages are left out and tool calls
 are paired with results, however *messages* got that way, since the API rejects
 both and would fail every later request."
+  ;; Only the agent thread may call this (a UI wanting a token estimate must
+  ;; not): a stub added while a tool runs would be followed by the real result.
   ;; The pairing repairs *messages* itself, once: a stub made fresh for every
   ;; request is a new object each time, so anything that marks messages (entry
   ;; ids) changes the request there, and the API's prompt cache stops matching.
@@ -1272,12 +1287,14 @@ try again, so the session can't get stuck with a history that never fits."
 (defun note-request (body)
   "Keep this request as tmp/request-last.json and the one before as
 tmp/request-prev.json in *HOME*. Where they first differ is where the API's
-prompt cache stopped matching: everything after it was paid for fresh."
-  (ignore-errors
+prompt cache stopped matching: everything after it was paid for fresh. Only
+with LISPER_DUMP_REQUESTS set: each write is the whole request, ~0.5 MB at 100k tokens."
+  (when (sb-ext:posix-getenv "LISPER_DUMP_REQUESTS")
+   (ignore-errors
     (let ((last (home-path "tmp/request-last.json")))
       (when (probe-file last) (rename-file last (home-path "tmp/request-prev.json")))
       (with-open-file (out last :direction :output :if-exists :supersede :external-format :utf-8)
-        (write-string (json-encode body) out)))))
+        (write-string (json-encode body) out))))))
 
 (defun complete-once ()
   (let ((body (request-body)))
@@ -1494,6 +1511,11 @@ releases the lock when its holder dies, so a crash leaves nothing stale."
          (fd (progn (ensure-directories-exist path)
                     (sb-unix:unix-open path (logior sb-unix:o_creat sb-unix:o_rdwr) #o644))))
     (when fd
+      ;; Close-on-exec: a child that inherited the fd and outlived the image
+      ;; would keep the session locked, and every later boot would exit 3.
+      (sb-alien:alien-funcall
+       (sb-alien:extern-alien "fcntl" (function sb-alien:int sb-alien:int sb-alien:int sb-alien:int))
+       fd 2 1)                          ; F_SETFD, FD_CLOEXEC
       (if (zerop (sb-alien:alien-funcall
                   (sb-alien:extern-alien "flock" (function sb-alien:int sb-alien:int sb-alien:int))
                   fd 6))                ; LOCK_EX | LOCK_NB
