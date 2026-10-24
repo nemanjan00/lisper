@@ -261,9 +261,9 @@ spinner while the agent is busy), then open items (○), then done items
          (tw (max 4 (- w 2)))
          (lines nil))
     (setf *todo-done-row* nil)
-    (flet ((emit (text attr) (push (list (cons text attr)) lines)))
+    (flet ((put-line (text attr) (push (list (cons text attr)) lines)))
       (if (null *todos*)
-          (emit "(no todos)" 8)
+          (put-line "(no todos)" 8)
           (progn
             (when cur
               (loop for piece in (todo-wrap-text (car cur) tw 3) for k from 0
@@ -271,23 +271,23 @@ spinner while the agent is busy), then open items (○), then done items
                                         (if busy (string (funcall 'activity-spinner)) "▶")
                                         " "))
                               (text (format nil "~A ~A" mark piece)))
-                         (emit (format nil "~A~VA" text (max 0 (- w (length text))) "")
-                               (if busy (ui-attr 7 :bright t :bg 4) (tui-select-attr))))))
+                         (put-line (format nil "~A~VA" text (max 0 (- w (length text))) "")
+                                   (if busy (ui-attr 7 :bright t :bg 4) (tui-select-attr))))))
             (dolist (i open)
               (loop for piece in (todo-wrap-text (car i) tw 2) for k from 0
-                    do (emit (format nil "~A~A" (if (zerop k) "○ " "  ") piece) 7)))
+                    do (put-line (format nil "~A~A" (if (zerop k) "○ " "  ") piece) 7)))
             (when done
               (let ((room (- h 1 (length lines))))
                 (if (or *todo-done-expanded* (<= (length done) room))
                     (progn
                       (when (and *todo-done-expanded* (> (length done) room))
                         (setf *todo-done-row* (length lines))
-                        (emit (format nil "▾ ✓ ~D done (click to fold)" (length done)) 8))
+                        (put-line (format nil "▾ ✓ ~D done (click to fold)" (length done)) 8))
                       (dolist (i (reverse done))
-                        (emit (str-truncate (format nil "✓ ~A" (car i)) w) 8)))
+                        (put-line (str-truncate (format nil "✓ ~A" (car i)) w) 8)))
                     (progn
                       (setf *todo-done-row* (length lines))
-                      (emit (format nil "▸ ✓ ~D done (click)" (length done)) 8)))))))
+                      (put-line (format nil "▸ ✓ ~D done (click)" (length done)) 8)))))))
       (let* ((lines (nreverse lines))
              (n (length lines))
              (s (max 0 (min (pane-scroll pane) (max 0 (- n h))))))
