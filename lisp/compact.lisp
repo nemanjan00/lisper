@@ -63,7 +63,6 @@ Reference entries as eN where the details can be read back. Plain text, no pream
                (compact-clip (compact-content-string m) (* 4000 scale))))
       ((equal role "assistant")
        (with-output-to-string (s)
-         (format nil "")
          (format s "[e~D ASSISTANT] ~A" id (compact-clip (compact-content-string m) (* 4000 scale)))
          (dolist (tc (compact-tool-calls m))
            (let ((f (gethash "function" tc)))
@@ -154,9 +153,7 @@ the new token estimate."
          (after (+ (compact-overhead-tokens) (compact-est-tokens new))))
     (ctx-entry-id marker)
     (dolist (m old) (setf (gethash (ctx-entry-id m) *ctx-originals*) (cons :message m)))
-    ;; Stretches whose marker is inside OLD are covered by the new one.
-    (let ((marker-ids (remove nil (mapcar (lambda (m) (and (compact-trigger-p m) nil)) old))))
-      (declare (ignore marker-ids)))
+    ;; Stretches whose collapse marker is inside OLD are covered by the new one.
     (setf *ctx-stretches*
           (remove-if (lambda (st) (member (fourth st) ids)) *ctx-stretches*))
     (push (list first-id last-id (format nil "/compact: ~A" (ctx-short summary))

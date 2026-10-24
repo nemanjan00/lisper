@@ -40,6 +40,7 @@
 (load-file "lisp/usage.lisp")
 (load-file "lisp/powerline.lisp")
 (load-file "lisp/interrupt.lisp")
+(load-file "lisp/compact.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -69,6 +70,9 @@
 
 ;; Todo nudge after an idle turn with open todos (/nudge on|off).
 (nudge-start)
+
+;; /compact [focus]: summarize the whole conversation in one model call.
+(compact-start)
 
 ;; Interrupt the running turn: Esc Esc, Ctrl-C on an empty input, /stop.
 (interrupt-start)
