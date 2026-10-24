@@ -177,14 +177,72 @@ modifier/motion bits we ignore."
          (pane-focus-nth (digit-char-p key)))
         (t nil)))
 
+(defun tui-queue-mode (ui)
+  "Queue interaction state: :edit when a queued message is loaded in
+the input line, :sel when one is selected in the queue list, else NIL."
+  (cond ((tui-ui-queue-edit ui) :edit)
+        ((tui-ui-queue-sel ui) :sel)))
+
+(defun tui-queue-key (ui key)
+  "Handle KEY while queue-selecting/editing. T when the key was
+consumed. Selection: Up/Down move, Enter/e loads into the input line,
+Esc cancels. Editing: Enter saves (empty deletes), Esc cancels, other
+keys fall through to normal input editing."
+  (let ((mode (tui-queue-mode ui)))
+    (case mode
+      (:sel
+       (let* ((n (length (lisping-core:queued-messages)))
+              (sel (tui-ui-queue-sel ui)))
+         (cond ((zerop n)
+                (setf (tui-ui-queue-sel ui) nil) t)   ; queue drained
+               ((eq key :up)
+                (setf (tui-ui-queue-sel ui) (max 0 (1- sel))) t)
+               ((eq key :down)
+                (if (< sel (1- n))
+                    (setf (tui-ui-queue-sel ui) (1+ sel))
+                    (setf (tui-ui-queue-sel ui) nil)) ; past newest: out
+                t)
+               ((or (eq key :escape)
+                    (and (characterp key) (char= key #\Esc)))
+                (setf (tui-ui-queue-sel ui) nil) t)
+               ((or (and (characterp key) (member key '(#\Return #\Newline)))
+                    (and (characterp key) (char-equal key #\e)))
+                (let ((text (nth sel (lisping-core:queued-messages))))
+                  (when text
+                    (let ((in (tui-ui-input ui)))
+                      (setf (fill-pointer in) 0)
+                      (loop for c across text do (vector-push-extend c in))
+                      (setf (tui-ui-input-cursor ui) (length in)
+                            (tui-ui-input-hscroll ui) 0
+                            (tui-ui-queue-edit ui) (1+ sel) ; EDIT-QUEUED is 1-based
+                            (tui-ui-queue-sel ui) nil))))
+                t)
+               (t nil))))
+      (:edit
+       (cond ((or (eq key :escape)
+                  (and (characterp key) (char= key #\Esc)))
+              (setf (tui-ui-queue-edit ui) nil)
+              (tui-clear-input ui)
+              t)
+             (t nil)))
+      (t nil))))
+
 (defun tui-normal-key (ui key)
   (when (or (and *tui-key-interceptor* (funcall *tui-key-interceptor* ui key))
             (some (lambda (f) (funcall f ui key)) *tui-key-interceptors*))
     (return-from tui-normal-key t))
+  (when (tui-queue-key ui key)
+    (return-from tui-normal-key t))
   (cond ((and (characterp key) (char= key #\Stx)) (setf (tui-ui-prefix ui) t))
         ;; The terminal wheel becomes Up/Down arrows when the host tmux
         ;; has mouse mode off — scroll a few lines per notch.
-        ((eq key :up) (tui-scroll-chat-by ui 3))
+        ((eq key :up)
+         (if (and (zerop (length (tui-ui-input ui)))
+                  (lisping-core:queued-messages))
+             ;; Empty input + Up: select the newest queued message.
+             (setf (tui-ui-queue-sel ui)
+                   (1- (length (lisping-core:queued-messages))))
+             (tui-scroll-chat-by ui 3)))
         ((eq key :down) (tui-scroll-chat-by ui -3))
         ((and (consp key) (eq (first key) :mouse)) (tui-mouse ui key))
         ((eq key :pgup) (tui-scroll-chat ui :pgup))
