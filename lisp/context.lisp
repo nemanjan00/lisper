@@ -607,7 +607,8 @@ nested inside a later rewind)."
                  from-id to-id (length stretch) (ctx-fmt-k est)))))))
 
 (defun ctx-tool-rewind (args)
-  "context_rewind {from, to?, summary}"
+  "context_rewind {from, to?, summary}: validates and QUEUES; the batch
+is applied by CTX-MAYBE-APPLY-BATCH once it is big enough."
   (let* ((from (ctx-parse-id (arg args "from")))
          (to (ctx-parse-id (arg args "to")))
          (summary (or (arg args "summary") ""))
@@ -616,37 +617,34 @@ nested inside a later rewind)."
     (cond
       ((null from-msg) "[ctx] ERROR: unknown from entry — see [entry N] prefixes in tool results.")
       ((null to-msg) "[ctx] ERROR: unknown to entry.")
-      (t (ctx-do-rewind from-msg to-msg summary)))))
+      (t
+       (multiple-value-bind (i j err) (ctx-rewind-plan from-msg to-msg)
+         (if err
+             err
+             (let* ((stretch (subseq *messages* i (1+ j)))
+                    (chars (reduce #'+ (mapcar #'ctx-message-chars stretch)))
+                    (saving (max 0 (round (- chars (* 1.3 (length summary)) 400)
+                                          *ctx-chars-per-token*)))
+                    (a (ctx-entry-id (first stretch)))
+                    (b (ctx-entry-id (car (last stretch))))
+                    (e (ctx-queue-add (list :kind :rewind :from a :to b
+                                            :summary summary :saving saving))))
+               (or e (ctx-queue-answer)))))))))
 
 (defun ctx-tool-offload (args)
   "context_offload {entry, text} — replace one message with the model's
 one-line pointer text."
   (let* ((id (ctx-parse-id (arg args "entry")))
-         (text (or (arg args "text") ""))
-         (msg (and id (ctx-find-message id))))
-    (cond
-      ((null msg) "[ctx] ERROR: unknown entry.")
-      ((null (position msg *messages* :test #'eq))
-       "[ctx] ERROR: entry is not in the visible conversation (already collapsed? use context_search).")
-      (t
-       (let ((content (gethash "content" msg)))
-         (cond
-           ((not (stringp content)) "[ctx] ERROR: entry has no text content to offload.")
-           ((ctx-head-p "[offloaded" content) "[ctx] ERROR: entry is already offloaded.")
-           ((and (equal (gethash "role" msg) "user")
-                 (eq msg (nth (ctx-latest-user-index) *messages*)))
-            "[ctx] ERROR: the latest user message (the current task) stays verbatim.")
-           (t
-            (setf (gethash id *ctx-originals*) (cons :content content))
-            (setf (gethash "content" msg)
-                  (format nil "~A — [offloaded ~D chars; context_restore {\"entry\": \"e~D\"} puts it back]"
-                          (ctx-short text) (length content) id))
-            (incf *ctx-offloaded-count*)
-            (setf *ctx-requests-since-collapse* 0)
-            (ctx-save-state)
-            (pane-dirty "context")
-            (format nil "[ctx] offloaded entry e~D (~D chars); takes effect from the next request."
-                    id (length content)))))))))
+         (text (or (arg args "text") "")))
+    (multiple-value-bind (msg err) (ctx-offload-check id)
+      (if err
+          err
+          (let* ((content (gethash "content" msg))
+                 (saving (max 0 (round (- (length content) (length text) 120)
+                                       *ctx-chars-per-token*)))
+                 (e (ctx-queue-add (list :kind :offload :from id :to id
+                                         :summary text :saving saving))))
+            (or e (ctx-queue-answer)))))))
 
 (defun ctx-piece (text id offset length)
   "Read [offset, offset+length) of TEXT, capped at *ctx-piece-max*."
@@ -975,6 +973,7 @@ milestone notes.  Only the request copy is prefixed; stored messages
 stay clean.  Also calibrates the token estimate: PT (reported usage of
 the request just answered) against the chars we counted for it."
   (ctx-trim-call-args)
+  (ctx-maybe-apply-batch body)
   (let ((messages (gethash "messages" body)))
     (when (vectorp messages)
       ;; Chars of THIS request: system prompt + tool specs + messages.
@@ -1034,7 +1033,10 @@ the request just answered) against the chars we counted for it."
                             pt est)
                     notes))
             (let ((note (ctx-threshold-note percent)))
-              (when note (push note notes))))
+              (when note (push note notes)))
+            (ctx-maybe-auto-compact percent))
+          (when *ctx-batch-report*
+            (push (shiftf *ctx-batch-report* nil) notes))
           (when *ctx-pending-note*
             (push *ctx-pending-note* notes)
             (setf *ctx-note-in-flight* t))
