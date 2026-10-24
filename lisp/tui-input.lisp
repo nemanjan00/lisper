@@ -267,7 +267,10 @@ Slash commands live here.")
         ;; typing and Backspace/Delete act at the cursor.
         ((eq key :left) (tui-cursor-move ui -1))
         ((eq key :right) (tui-cursor-move ui 1))
-        ((eq key :home) (setf (tui-ui-input-cursor ui) 0))
+        ((or (eq key :home) (and (characterp key) (char= key #\Soh))) ; C-a
+         (setf (tui-ui-input-cursor ui) 0))
+        ((and (characterp key) (char= key #\Enq)) ; C-e
+         (setf (tui-ui-input-cursor ui) (length (tui-ui-input ui))))
         ((eq key :end) (setf (tui-ui-input-cursor ui)
                              (length (tui-ui-input ui))))
         ((eq key :delete) (tui-input-delete ui))
