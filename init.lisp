@@ -76,6 +76,7 @@
 
 ;; /compact [focus]: summarize the whole conversation in one model call.
 (compact-start)
+(goal-start)
 
 ;; Interrupt the running turn: Esc Esc, Ctrl-C on an empty input, /stop.
 (interrupt-start)
