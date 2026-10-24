@@ -16,7 +16,7 @@
            #:load-file #:write-files-and-load #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
            ;; conversation and I/O
            #:*system-prompt* #:*messages* #:*inbox* #:*emit* #:emit
-           #:send-user-message #:*before-request* #:*held* #:*deliver-mid-turn* #:queued-messages #:edit-queued
+           #:send-user-message #:*before-request* #:*held* #:*deliver-mid-turn* #:queued-messages #:edit-queued #:pin-queued #:release-queued
            ;; the model call, replaceable (e.g. to stream)
            #:*complete* #:*last-usage* #:default-complete #:chat-url #:api-headers #:*terminal-thread* #:*queue-thread*
            ;; settings
@@ -1007,7 +1007,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *observers*: functions called with every event, before *emit*. The UI owns *emit*; anything else that needs to see events (your compactor, a logger) belongs in *observers*, so a UI restart can't drop it.
 - Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix. Any key starting with \"x-\" is stripped the same way, so you can keep your own bookkeeping on a message (an \"x-id\", say): it stays in *messages*, is saved with the session and survives restarts, but the model never sees it.
-- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages) and changes or removes one with (edit-queued index text), any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away.
+- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages), pins one while the user edits it with (pin-queued text) so it isn't delivered mid-edit, then saves with (edit-queued text new-text), NIL deleting, or cancels with (release-queued text); any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
 - The queue: text appended to the session's queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
@@ -1333,24 +1333,52 @@ in before the next model call. When true, every message goes in mid-turn.")
 
 (defun item-text (item) (if (consp item) (car item) item))
 
+(defvar *pinned* '()
+  "Waiting items a UI is editing (PIN-QUEUED): never delivered until EDIT-QUEUED or RELEASE-QUEUED.")
+
 (defun queued-messages ()
-  "The texts of the messages waiting to be delivered, oldest first (1-based in
-EDIT-QUEUED). A UI calls this at any time, mid-turn included, to show or edit them."
+  "The texts of the messages waiting to be delivered, oldest first. A UI calls
+this at any time, mid-turn included, to show or edit them; it names one to the
+functions below by its 1-based index or, safer, by the very string this returned
+(the index shifts when the oldest is delivered, the string doesn't)."
   (sb-thread:with-recursive-lock (*held-lock*)
     (drain-inbox)
     (mapcar #'item-text *held*)))
 
-(defun edit-queued (index text)
-  "Replace the text of waiting message INDEX (1-based, as QUEUED-MESSAGES lists
-them) with TEXT, or remove it when TEXT is NIL or blank. A leading ! still makes
-it urgent. Returns true when INDEX named a waiting message."
+(defun find-queued (which)
+  "The *HELD* item WHICH names (index or a string from QUEUED-MESSAGES). Call with *HELD-LOCK* held."
+  (if (integerp which)
+      (and (plusp which) (nth (1- which) *held*))
+      (find which *held* :key #'item-text :test #'eq)))
+
+(defun pin-queued (which)
+  "Hold back waiting message WHICH while a UI edits it, so it isn't delivered
+mid-edit. Returns its text, or NIL when it's gone (already delivered)."
   (sb-thread:with-recursive-lock (*held-lock*)
     (drain-inbox)
-    (let ((cell (and (integerp index) (plusp index) (nthcdr (1- index) *held*))))
+    (let ((item (find-queued which)))
+      (when item (pushnew item *pinned* :test #'eq) (item-text item)))))
+
+(defun release-queued (which)
+  "Let pinned message WHICH be delivered again, unchanged."
+  (sb-thread:with-recursive-lock (*held-lock*)
+    (let ((item (find-queued which)))
+      (setf *pinned* (remove item *pinned* :test #'eq))
+      (and item t))))
+
+(defun edit-queued (which text)
+  "Replace the text of waiting message WHICH (index or string, see QUEUED-MESSAGES)
+with TEXT, or remove it when TEXT is NIL or blank; a leading ! still makes it
+urgent. Unpins it. Returns true, or NIL when it's gone (already delivered)."
+  (sb-thread:with-recursive-lock (*held-lock*)
+    (drain-inbox)
+    (let* ((item (find-queued which))
+           (cell (and item (member item *held* :test #'eq))))
+      (setf *pinned* (remove item *pinned* :test #'eq))
       (when cell
         (if (or (null text) (string= "" (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
-            (setf *held* (remove (car cell) *held* :count 1 :test #'eq))
-            (setf (car cell) (if (consp (car cell)) (cons text (cdr (car cell))) text)))
+            (setf *held* (remove item *held* :count 1 :test #'eq))
+            (setf (car cell) (if (consp item) (cons text (cdr item)) text)))
         t))))
 
 (defun take-queued-messages ()
@@ -1358,7 +1386,9 @@ it urgent. Returns true when INDEX named a waiting message."
 *DELIVER-MID-TURN*, all of them) into the conversation; hold the rest."
   (let ((now (sb-thread:with-recursive-lock (*held-lock*)
                (drain-inbox)
-               (let ((go (remove-if-not (lambda (item) (or *deliver-mid-turn* (urgent-item-p item))) *held*)))
+               (let ((go (remove-if-not (lambda (item) (and (or *deliver-mid-turn* (urgent-item-p item))
+                                                             (not (member item *pinned* :test #'eq))))
+                                        *held*)))
                  (setf *held* (remove-if (lambda (item) (member item go :test #'eq)) *held*))
                  go))))
     (dolist (item now)
@@ -1369,7 +1399,9 @@ it urgent. Returns true when INDEX named a waiting message."
   (loop
     (let ((item (sb-thread:with-recursive-lock (*held-lock*)
                   (drain-inbox)
-                  (pop *held*))))
+                  (let ((item (find-if (lambda (item) (not (member item *pinned* :test #'eq))) *held*)))
+                    (when item (setf *held* (remove item *held* :count 1 :test #'eq)))
+                    item))))
       (when item (return item)))
     ;; With a timeout: a UI's QUEUED-MESSAGES may move an arrival onto *HELD*
     ;; while this waits on the mailbox.
