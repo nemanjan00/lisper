@@ -71,16 +71,39 @@ accept a string too."
 ;;; ---------------------------------------------------------------
 ;;; start / watch / stop / inspect
 
+(defun proc-pgrp (pid)
+  "Process group of PID from field 5 of /proc/PID/stat, or NIL when the
+process is gone.  Field 2 (comm) sits in parens and may itself contain
+spaces or ')', so the fields are split after the LAST ')'."
+  (ignore-errors
+    (let* ((s (with-open-file (in (format nil "/proc/~D/stat" pid)) (read-line in)))
+           (rp (position #\) s :from-end t))
+           ;; After \") \": state ppid pgrp session ...
+           (fields (loop with start = (+ rp 2)
+                         for sp = (position #\Space s :start start)
+                         collect (subseq s start sp)
+                         while sp do (setf start (1+ sp)))))
+      (parse-integer (third fields)))))
+
 (defun task-discover-pgid (pid)
-  "The process group of a setsid --wait child: the session leader is its
-direct child, so pgrep -P PID gives child pid == new pgid."
-  (loop repeat 50
-        for out = (shell (format nil "pgrep -P ~D" pid))
-        for nl = (position #\Newline out)
-        for line = (subseq out 0 (or nl (length out)))
-        when (plusp (length (string-trim " " line)))
-          do (return (parse-integer line :junk-allowed t))
-        do (sleep 0.02)))
+  "The process group the task's process PID (the setsid or sh we started)
+leads or belongs to, read straight from /proc: right whether or not
+setsid forked, and no polling.  When setsid did fork, PID itself is
+still in the caller's group, so then the group we want is its child's
+(which setsid made a group leader); we tell the cases apart by whether
+PID leads its own group."
+  (let ((own (proc-pgrp pid)))
+    (cond ((null own) nil)
+          ((= own pid) own)             ; PID is a group leader: setsid exec'd in place
+          (t                            ; setsid forked: the leader is its child
+           (loop repeat 50
+                 for kids = (ignore-errors
+                              (with-open-file (in (format nil "/proc/~D/task/~D/children" pid pid))
+                                (read-line in nil "")))
+                 for kid = (and kids (parse-integer kids :junk-allowed t))
+                 for g = (and kid (proc-pgrp kid))
+                 when (and g (= g kid)) do (return g)
+                 do (sleep 0.02))))))
 
 (defun bg-start (name cmd &key monitor pattern max-rate)
   "Start CMD as background task NAME and return a status string.
