@@ -333,8 +333,10 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
                    (lambda (c)
                      (when (typep c (dex "HTTP-REQUEST-FAILED"))
                        (let ((text (funcall (dex "RESPONSE-BODY") c)))
-                         (when (vectorp text)
-                           (setf text (sb-ext:octets-to-string text :external-format :utf-8)))
+                         (setf text (typecase text
+                                      (string text)
+                                      ((vector (unsigned-byte 8)) (sb-ext:octets-to-string text :external-format :utf-8))
+                                      (t (princ-to-string text))))
                          (error 'http-error :status (funcall (dex "RESPONSE-STATUS") c) :url url
                                             :body (subseq text 0 (min 2000 (length text)))))))))
     (multiple-value-bind (text status)
