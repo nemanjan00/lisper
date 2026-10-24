@@ -249,6 +249,7 @@ key is ours and nothing is echoed."
 
 (defun models-install ()
   (define-slash "model" 'slash-model "pick provider/model, or /model P/M" 'slash-model-args)
+  (pushnew "model" *slash-enter-picks* :test #'string=)
   (define-slash "login" 'slash-login "/login NAME URL — add a provider (key asked masked)")
   (define-slash "logout" 'slash-logout "/logout NAME — remove a provider" 'slash-logout-args)
   (setf *tui-key-interceptors*
