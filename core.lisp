@@ -1522,11 +1522,31 @@ releases the lock when its holder dies, so a crash leaves nothing stale."
           fd
           (progn (sb-unix:unix-close fd) nil)))))
 
+(defun flock-held-p (path)
+  "True if some process holds a flock on PATH, read from /proc/locks without
+taking the lock: a probe that took it, however briefly, could make a session
+booting at that moment find its lock taken and exit. :UNKNOWN when /proc/locks
+can't be read."
+  (multiple-value-bind (ok dev ino) (sb-unix:unix-stat path)
+    (cond ((not ok) nil)
+          ((not (probe-file "/proc/locks")) :unknown)
+          (t (let ((key (format nil " ~(~2,'0x:~2,'0x~):~D "
+                                (logior (ldb (byte 12 8) dev) (ash (ldb (byte 20 44) dev) 12))
+                                (logior (ldb (byte 8 0) dev) (ash (ldb (byte 12 20) dev) 8))
+                                ino)))
+               (with-open-file (in "/proc/locks")
+                 (loop for line = (read-line in nil)
+                       while line
+                       thereis (and (search "FLOCK" line) (search key line) t))))))))
+
 (defun session-running-p (name)
   "True if another process is running session NAME (it holds the session's lock)."
   (unless (equal name *session*)
-    (let ((fd (try-session-lock name)))
-      (if fd (progn (sb-unix:unix-close fd) nil) t))))
+    (let ((held (flock-held-p (namestring (merge-pathnames (format nil "sessions/~A/lock" name) *home*)))))
+      (if (eq held :unknown)
+          (let ((fd (try-session-lock name)))
+            (if fd (progn (sb-unix:unix-close fd) nil) t))
+          held))))
 
 (defun session-list ()
   "Every saved session, most recently saved first, as plists with :session :cwd
