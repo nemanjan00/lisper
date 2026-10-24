@@ -249,6 +249,24 @@ one ends in an ellipsis when text is left over)."
               (concatenate 'string (subseq l 0 (min (length l) (1- width))) "…"))))
     out))
 
+(defun todo-mouse (ui key)
+  "Mouse interceptor: a left click on the todo pane's \"✓ N done\" line
+folds/unfolds the finished items."
+  (declare (ignore ui))
+  (destructuring-bind (tag b x y kind) key
+    (when (and (eq tag :mouse) (eq kind :press) *todo-done-row* *panes-canvas*
+               (zerop (logand b 67)))
+      (let ((x0 (1- x)) (y0 (1- y)))
+        (dolist (rect (layout-leaves (panes-layout-now) 0 0 (uigrid-w *panes-canvas*)
+                                     (uigrid-h *panes-canvas*)))
+          (destructuring-bind (name rx ry rw rh) rect
+            (when (and (equal name "todo")
+                       (<= rx x0) (< x0 (+ rx rw)) (< ry y0 (+ ry rh))
+                       (= (- y0 ry 1) *todo-done-row*))
+              (setf *todo-done-expanded* (not *todo-done-expanded*))
+              (pane-dirty "todo")
+              (return-from todo-mouse t))))))))
+
 (defun pane-todo-render (pane w h)
   "Readable todo list: the working-on item first (▶, highlighted, a
 spinner while the agent is busy), then open items (○), then done items

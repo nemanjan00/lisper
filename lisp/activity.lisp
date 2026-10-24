@@ -104,11 +104,16 @@
 (defvar *activity-ticker* nil "The ticker thread.")
 
 (defun activity-ticker-loop (me)
-  (loop while (eq *activity-ticker* me)
-        do (sleep 0.12)
-           (when (and *tui* (activity-animated-p))
-             (handler-case (tui-tick-status *tui*)
-               (serious-condition () nil)))))
+  (let ((n 0))
+    (loop while (eq *activity-ticker* me)
+          do (sleep 0.12)
+             (when (and *tui* (activity-animated-p))
+               (handler-case
+                   (progn (tui-tick-status *tui*)
+                          ;; The todo pane's working-on spinner: ~3 repaints/s.
+                          (when (zerop (mod (incf n) 3))
+                            (pane-dirty "todo")))
+                 (serious-condition () nil))))))
 
 (defun activity-start ()
   "Install the observer and start the ticker. Idempotent."
