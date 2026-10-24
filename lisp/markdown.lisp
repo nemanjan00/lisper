@@ -9,6 +9,8 @@
 
 (in-package :lisping)
 
+(declaim (ftype function chunks-text))
+
 (defparameter *md-code-attr* (ui-attr 6))
 (defparameter *md-block-attr* (ui-attr 7 :bg 0 :bgbright t))
 (defparameter *md-link-attr* (logior (ui-attr 6) +attr-underline+))
