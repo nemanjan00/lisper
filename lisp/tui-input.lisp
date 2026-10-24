@@ -367,6 +367,9 @@ other control characters dropped."
                       (fboundp 'interrupt-turn)
                       (funcall 'interrupt-turn))
            (tui-clear-input ui)))
+        ;; C-y: copy the last reply to the clipboard.
+        ((and (characterp key) (char= key #\Em))
+         (when (fboundp 'copy-run) (slash-say (funcall 'copy-run ""))))
         ;; Esc twice while a turn runs: interrupt it.
         ((or (eq key :escape) (and (characterp key) (char= key #\Esc)))
          (when (fboundp 'interrupt-esc) (funcall 'interrupt-esc)))

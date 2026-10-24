@@ -35,6 +35,7 @@
 (load-file "lisp/nudge.lisp")
 (load-file "lisp/models.lisp")
 (load-file "lisp/history.lisp")
+(load-file "lisp/copy.lisp")
 (load-file "lisp/interrupt.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
@@ -70,3 +71,6 @@
 
 ;; Input history: Up/Down on an empty input, kept in ~/.lisper/history.jsonl.
 (history-start)
+
+;; /copy and Ctrl-Y: last reply / code block to the clipboard (OSC 52).
+(copy-start)

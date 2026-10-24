@@ -81,6 +81,15 @@
   (let ((lines (1+ (count #\Newline text))))
     (format nil "~D line~:P, ~D chars" lines (length text))))
 
+(defun ui-split-words (s)
+  (let ((r nil) (start nil))
+    (dotimes (i (length s))
+      (if (member (char s i) '(#\Space #\Tab))
+          (when start (push (subseq s start i) r) (setf start nil))
+          (unless start (setf start i))))
+    (when start (push (subseq s start) r))
+    (nreverse r)))
+
 (defun copy-run (what)
   "Copy by WHAT: \"\" / reply, \"code [N]\", \"user\".  Returns a message."
   (let* ((words (remove "" (ui-split-words what) :test #'string=))
@@ -109,15 +118,6 @@
                     (format nil "Copied code block ~D of ~D (~A)." (1+ k) (length blocks)
                             (copy-describe text)))))))
       (t "Usage: /copy [reply | code [N] | user]"))))
-
-(defun ui-split-words (s)
-  (let ((r nil) (start nil))
-    (dotimes (i (length s))
-      (if (member (char s i) '(#\Space #\Tab))
-          (when start (push (subseq s start i) r) (setf start nil))
-          (unless start (setf start i))))
-    (when start (push (subseq s start) r))
-    (nreverse r)))
 
 (defun slash-copy (ui args)
   (declare (ignore ui))
