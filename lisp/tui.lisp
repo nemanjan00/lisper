@@ -230,8 +230,8 @@ a SIGWINCH — TTY-SIZE spawns stty, which is too expensive per frame."
         (when (and rows cols)
           (setf (tui-ui-height ui) rows
                 (tui-ui-width ui) cols)))
-      (tty-write (format nil "~C[?1049h~C[?25l~C[0m~C[2J~C[?1002h~C[?1006h~C[H"
-                         #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc))
+      (tty-write (format nil "~C[?1049h~C[?25l~C[0m~C[2J~C[?1002h~C[?1006h~C[?2004h~C[H"
+                         #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc))
       (setf (tui-ui-threads ui)
             (list (sb-thread:make-thread (lambda () (tui-key-loop ui))
                                          :name "tui-keys")
@@ -262,8 +262,8 @@ background processes must not outlive a restart).")
       (setf *emit* 'terminal-emit)
       (tui-kill-threads)
       (ignore-errors
-        (write-string (format nil "~C[?1002l~C[?1000l~C[?1006l~C[0m~C[?25h~C[?1049l"
-                              #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc)
+        (write-string (format nil "~C[?2004l~C[?1002l~C[?1000l~C[?1006l~C[0m~C[?25h~C[?1049l"
+                              #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc)
                       (tui-ui-tty ui))
         (finish-output (tui-ui-tty ui)))
       ;; Restore the terminal BEFORE dropping *TUI*: the saved termios
@@ -328,8 +328,8 @@ the user used to be the crash detector."
     (tui-kill-threads)
     (when ui
       (ignore-errors
-        (write-string (format nil "~C[?1002l~C[?1000l~C[?1006l~C[0m~C[?25h~C[?1049l~%TUI died: ~A~%"
-                              #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc condition)
+        (write-string (format nil "~C[?2004l~C[?1002l~C[?1000l~C[?1006l~C[0m~C[?25h~C[?1049l~%TUI died: ~A~%"
+                              #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc #\Esc condition)
                       (tui-ui-tty ui))
         (finish-output (tui-ui-tty ui)))
       ;; Restore BEFORE clearing *TUI*: the restore needs the tty fd from

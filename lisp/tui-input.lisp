@@ -98,7 +98,34 @@ CSI or SS3 introducer."
           ((char= c #\O) (tui-read-ss3 tty))
           ((char= c #\H) :home)
           ((member c '(#\F #\E)) :end)
+          ;; ESC Return = Alt+Return: a newline in the input.
+          ((member c '(#\Return #\Newline)) :newline)
           (t (unread-char c tty) :escape))))
+
+(defun tui-read-paste (tty)
+  "Bracketed paste: the text up to ESC [ 2 0 1 ~ as (:paste STRING), line
+ends normalised to newlines. Waits up to a second per byte; a paste whose
+end marker never comes ends at the timeout."
+  (let ((end (format nil "~C[201~~" #\Esc))
+        (buf (make-array 0 :element-type 'character :adjustable t :fill-pointer 0)))
+    (loop for c = (tui-read-seq-char tty 1.0)
+          while c
+          do (vector-push-extend c buf)
+             (let ((n (length buf)) (m (length end)))
+               (when (and (>= n m) (string= end buf :start2 (- n m)))
+                 (decf (fill-pointer buf) m)
+                 (return))))
+    (let ((s (coerce buf 'string)))
+      (list :paste
+            (with-output-to-string (o)
+              (loop with i = 0 while (< i (length s))
+                    do (let ((c (char s i)))
+                         (cond ((and (char= c #\Return) (< (1+ i) (length s))
+                                     (char= (char s (1+ i)) #\Newline))
+                                nil)
+                               ((char= c #\Return) (write-char #\Newline o))
+                               (t (write-char c o))))
+                       (incf i)))))))
 
 (defun tui-read-ss3 (tty)
   "ESC O <final>: application-mode cursor keys (and F-keys we ignore).
@@ -124,9 +151,11 @@ a final byte that belongs to the next key."
           finally (return (if (null c)
                               :escape
                               (let ((p (get-output-stream-string params)))
-                                (if (and (plusp (length p)) (char= (char p 0) #\<))
-                                    (tui-parse-mouse p c)
-                                    (tui-csi-key p c))))))))
+                                (cond ((and (plusp (length p)) (char= (char p 0) #\<))
+                                       (tui-parse-mouse p c))
+                                      ((and (string= p "200") (char= c #\~))
+                                       (tui-read-paste tty))
+                                      (t (tui-csi-key p c)))))))))
 
 (defun tui-parse-mouse (params final)
   "Parse the body of an SGR mouse sequence (\"<b;x;y\") with FINAL #\\M
@@ -153,6 +182,13 @@ modifier/motion bits we ignore."
         ((and (string= params "5") (char= final #\~)) :pgup)
         ((and (string= params "6") (char= final #\~)) :pgdn)
         ((and (string= params "3") (char= final #\~)) :delete)
+        ;; Shift/Ctrl/Alt+Return where the terminal reports it: CSI u
+        ;; (13;MOD u) or xterm modifyOtherKeys (27;MOD;13 ~).
+        ((and (char= final #\u) (> (length params) 3) (string= "13;" params :end2 3))
+         :newline)
+        ((and (char= final #\~) (> (length params) 6) (string= "27;" params :end2 3)
+              (string= ";13" params :start2 (- (length params) 3)))
+         :newline)
         ;; Home/End as CSI ~-forms: 1~/7~ and 4~/8~ (screen-256color
         ;; sends 1~ and 4~).
         ((and (member params '("1" "7") :test #'string=) (char= final #\~))
@@ -243,6 +279,36 @@ with the trimmed input before it is sent to the model; the first to
 return T consumes it (and must clear the input itself if it wants to).
 Slash commands live here.")
 
+(defun tui-line-bounds (ui &optional (pos (tui-ui-input-cursor ui)))
+  "Start and end of the input line holding position POS."
+  (let* ((in (tui-ui-input ui))
+         (s (let ((p (position #\Newline in :end pos :from-end t))) (if p (1+ p) 0)))
+         (e (or (position #\Newline in :start pos) (length in))))
+    (values s e)))
+
+(defun tui-cursor-line-move (ui delta)
+  "Move the cursor one input line up (DELTA -1) or down (1), keeping the
+column. True when it moved; NIL on the first/last line."
+  (let ((in (tui-ui-input ui)) (cur (tui-ui-input-cursor ui)))
+    (multiple-value-bind (s e) (tui-line-bounds ui cur)
+      (let ((col (- cur s)))
+        (cond ((and (minusp delta) (plusp s))
+               (multiple-value-bind (ps pe) (tui-line-bounds ui (1- s))
+                 (setf (tui-ui-input-cursor ui) (min pe (+ ps col)))
+                 t))
+              ((and (plusp delta) (< e (length in)))
+               (multiple-value-bind (ns ne) (tui-line-bounds ui (1+ e))
+                 (setf (tui-ui-input-cursor ui) (min ne (+ ns col)))
+                 t)))))))
+
+(defun tui-input-insert-string (ui text)
+  "Insert TEXT (a paste) at the cursor: newlines kept, tabs to spaces,
+other control characters dropped."
+  (loop for c across text
+        do (cond ((char= c #\Newline) (tui-input-insert ui c))
+                 ((char= c #\Tab) (tui-input-insert ui #\Space))
+                 ((graphic-char-p c) (tui-input-insert ui c)))))
+
 (defun tui-normal-key (ui key)
   (when (or (and *tui-key-interceptor* (funcall *tui-key-interceptor* ui key))
             (some (lambda (f) (funcall f ui key)) *tui-key-interceptors*))
@@ -253,13 +319,20 @@ Slash commands live here.")
         ;; The terminal wheel becomes Up/Down arrows when the host tmux
         ;; has mouse mode off — scroll a few lines per notch.
         ((eq key :up)
-         (if (and (zerop (length (tui-ui-input ui)))
-                  (lisping-core:queued-messages))
-             ;; Empty input + Up: select the newest queued message.
-             (setf (tui-ui-queue-sel ui)
-                   (1- (length (lisping-core:queued-messages))))
-             (tui-scroll-chat-by ui 3)))
-        ((eq key :down) (tui-scroll-chat-by ui -3))
+         (cond ((tui-cursor-line-move ui -1))   ; inside a multi-line input
+               ((and (zerop (length (tui-ui-input ui)))
+                     (lisping-core:queued-messages))
+                ;; Empty input + Up: select the newest queued message.
+                (setf (tui-ui-queue-sel ui)
+                      (1- (length (lisping-core:queued-messages)))))
+               (t (tui-scroll-chat-by ui 3))))
+        ((eq key :down)
+         (unless (tui-cursor-line-move ui 1)
+           (tui-scroll-chat-by ui -3)))
+        ((or (eq key :newline) (and (characterp key) (char= key #\Newline)))
+         (tui-input-insert ui #\Newline))     ; Alt+Return, Ctrl-J
+        ((and (consp key) (eq (first key) :paste))
+         (tui-input-insert-string ui (second key)))
         ((and (consp key) (eq (first key) :mouse)) (tui-mouse ui key))
         ((eq key :pgup) (tui-scroll-chat ui :pgup))
         ((eq key :pgdn) (tui-scroll-chat ui :pgdn))
@@ -268,14 +341,11 @@ Slash commands live here.")
         ((eq key :left) (tui-cursor-move ui -1))
         ((eq key :right) (tui-cursor-move ui 1))
         ((or (eq key :home) (and (characterp key) (char= key #\Soh))) ; C-a
-         (setf (tui-ui-input-cursor ui) 0))
-        ((and (characterp key) (char= key #\Enq)) ; C-e
-         (setf (tui-ui-input-cursor ui) (length (tui-ui-input ui))))
-        ((eq key :end) (setf (tui-ui-input-cursor ui)
-                             (length (tui-ui-input ui))))
+         (setf (tui-ui-input-cursor ui) (tui-line-bounds ui)))
+        ((or (eq key :end) (and (characterp key) (char= key #\Enq))) ; C-e
+         (setf (tui-ui-input-cursor ui) (nth-value 1 (tui-line-bounds ui))))
         ((eq key :delete) (tui-input-delete ui))
-        ((and (characterp key)
-              (member key '(#\Return #\Newline)))
+        ((and (characterp key) (char= key #\Return))
          (tui-submit-input ui))
         ((and (characterp key) (member key '(#\Rubout #\Backspace)))
          (tui-input-backspace ui))
