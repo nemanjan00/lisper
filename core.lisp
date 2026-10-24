@@ -699,7 +699,8 @@ that did resolve through, and catches the ones that never will."
     (sort found #'string<)))
 
 (defun configure-session ()
-  "Set *home*, *session* and *cwd* from LISPER_HOME, LISPER_SESSION and LISPER_CWD.
+  "Set *home*, *session* and *cwd* from LISPER_HOME, LISPER_SESSION and LISPER_CWD
+(else the session's saved cwd, else *root*).
 Run by MAIN and by TEST-BOOT's fresh process, so files see the same values in both."
   (flet ((dir (d) (and d (plusp (length d))
                        (pathname (if (char= (char d (1- (length d))) #\/) d (concatenate 'string d "/"))))))
@@ -707,7 +708,13 @@ Run by MAIN and by TEST-BOOT's fresh process, so files see the same values in bo
                           (namestring (merge-pathnames ".lisper/" (user-homedir-pathname)))))
           *session* (let ((id (sb-ext:posix-getenv "LISPER_SESSION")))
                       (if (session-name-p id) id "main"))
-          *cwd* (dir (sb-ext:posix-getenv "LISPER_CWD")))))
+          *cwd* (dir (sb-ext:posix-getenv "LISPER_CWD")))
+    ;; Never NIL, and already right while init.lisp loads: else the cwd this
+    ;; session saved last time, else the harness.
+    (unless *cwd*
+      (let ((meta (ignore-errors (json-decode (read-text (session-path "meta.json"))))))
+        (setf *cwd* (or (and (hash-table-p meta) (stringp (gethash "cwd" meta)) (dir (gethash "cwd" meta)))
+                        *root*))))))
 
 (defun print-boot-problems (&optional extra)
   "Used by TEST-BOOT in the child process: load init.lisp, then EXTRA (a file
