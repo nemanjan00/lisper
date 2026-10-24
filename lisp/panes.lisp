@@ -249,23 +249,32 @@ one ends in an ellipsis when text is left over)."
               (concatenate 'string (subseq l 0 (min (length l) (1- width))) "…"))))
     out))
 
+(defvar *todo-top* 0
+  "First line of the todo list shown in the pane: it is anchored to the
+top (the working-on item first), scrolled by the wheel.")
+
 (defun todo-mouse (ui key)
-  "Mouse interceptor: a left click on the todo pane's \"✓ N done\" line
-folds/unfolds the finished items."
+  "Mouse interceptor for the todo pane: a left click on its \"✓ N done\"
+line folds/unfolds the finished items; the wheel scrolls from the top."
   (declare (ignore ui))
   (destructuring-bind (tag b x y kind) key
-    (when (and (eq tag :mouse) (eq kind :press) *todo-done-row* *panes-canvas*
-               (zerop (logand b 67)))
+    (when (and (eq tag :mouse) (eq kind :press) *panes-canvas*)
       (let ((x0 (1- x)) (y0 (1- y)))
         (dolist (rect (layout-leaves (panes-layout-now) 0 0 (uigrid-w *panes-canvas*)
                                      (uigrid-h *panes-canvas*)))
           (destructuring-bind (name rx ry rw rh) rect
             (when (and (equal name "todo")
-                       (<= rx x0) (< x0 (+ rx rw)) (< ry y0 (+ ry rh))
-                       (= (- y0 ry 1) *todo-done-row*))
-              (setf *todo-done-expanded* (not *todo-done-expanded*))
-              (pane-dirty "todo")
-              (return-from todo-mouse t))))))))
+                       (<= rx x0) (< x0 (+ rx rw)) (< ry y0 (+ ry rh)))
+              (cond ((<= 64 b 65)
+                     (setf *todo-top* (max 0 (+ *todo-top* (if (evenp b) -3 3))))
+                     (pane-dirty "todo")
+                     (return-from todo-mouse t))
+                    ((and *todo-done-row* (zerop (logand b 67))
+                          (= (- y0 ry 1) *todo-done-row*))
+                     (setf *todo-done-expanded* (not *todo-done-expanded*)
+                           *todo-top* 0)
+                     (pane-dirty "todo")
+                     (return-from todo-mouse t))))))))))
 
 (defun pane-todo-render (pane w h)
   "Readable todo list: the working-on item first (▶, highlighted, a
@@ -308,12 +317,11 @@ spinner while the agent is busy), then open items (○), then done items
                       (put-line (format nil "▸ ✓ ~D done (click)" (length done)) 8)))))))
       (let* ((lines (nreverse lines))
              (n (length lines))
-             (s (max 0 (min (pane-scroll pane) (max 0 (- n h))))))
-        (setf (pane-scroll pane) s)
-        (let* ((end (max 0 (- n s)))
-               (start (max 0 (- end h))))
-          (when *todo-done-row* (setf *todo-done-row* (- *todo-done-row* start)))
-          (subseq lines start end))))))
+             (start (max 0 (min *todo-top* (max 0 (- n h)))))
+             (end (min n (+ start h))))
+        (setf *todo-top* start)
+        (when *todo-done-row* (setf *todo-done-row* (- *todo-done-row* start)))
+        (subseq lines start end)))))
 
 ;;; ---------------------------------------------------------------
 ;;; Layout tree
