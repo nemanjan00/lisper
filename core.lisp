@@ -1263,8 +1263,19 @@ try again, so the session can't get stuck with a history that never fits."
                       (when (zerop dropped) (error c))
                       (emit :error :text (format nil "context too long for the model: dropped ~D old messages and retrying" dropped))))))))))
 
+(defun note-request (body)
+  "Keep this request as tmp/request-last.json and the one before as
+tmp/request-prev.json in *HOME*. Where they first differ is where the API's
+prompt cache stopped matching: everything after it was paid for fresh."
+  (ignore-errors
+    (let ((last (home-path "tmp/request-last.json")))
+      (when (probe-file last) (rename-file last (home-path "tmp/request-prev.json")))
+      (with-open-file (out last :direction :output :if-exists :supersede :external-format :utf-8)
+        (write-string (json-encode body) out)))))
+
 (defun complete-once ()
   (let ((body (request-body)))
+    (note-request body)
     (if (eq *complete* 'default-complete)
         (default-complete body)
         (let ((message (handler-case (funcall *complete* body)
