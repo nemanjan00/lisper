@@ -25,7 +25,7 @@
 (defvar *usage-seen* nil "The last *LAST-USAGE* object that was counted.")
 (defvar *usage-lock* (sb-thread:make-mutex :name "usage"))
 
-(defvar *usage-prices*
+(defparameter *usage-prices*
   '(("opus-5-5"  4.0   0.2    5.0   20.0)
     ("opus-5"    5.0   0.5    6.25  25.0)
     ("opus-4-1" 15.0   1.5   18.75  75.0)
