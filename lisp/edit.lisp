@@ -18,7 +18,8 @@ Writes and loads the result via the core; returns a status string."
         (error "edit_file: text occurs more than once in ~A: ~S" path (subseq old 0 (min 40 (length old)))))
       (let ((result (lisping-core::write-file-and-load
                      path (concatenate 'string (subseq text 0 pos) new
-                                       (subseq text (+ pos (length old)))))))
+                                       (subseq text (+ pos (length old))))
+                     :base text)))
         (if (and (stringp result) (search "NOT SAVED" result))
             result
             (let ((stuck (with-open-file (in path :direction :input
@@ -140,7 +141,8 @@ write-and-load check."
       (let ((result (lisping-core::write-file-and-load
                      path (concatenate 'string (subseq text 0 start)
                                        new-source
-                                       (subseq text end)))))
+                                       (subseq text end))
+                     :base text)))
         (if (and (stringp result) (search "NOT SAVED" result))
             result
             (format nil "replaced ~A in ~A (~A)" name path (or result "loaded and committed")))))))
@@ -197,22 +199,26 @@ once in the evolving text. Returns the final text; pure, errors only."
               (concatenate 'string (subseq text 0 pos) new
                            (subseq text (+ pos (length old)))))))))
 
-(defun ef-write-files (pairs)
-  "Write PAIRS ((path . content) ...) as one boot-checked atomic change."
-  (lisping-core:write-files-and-load pairs))
+(defun ef-write-files (pairs bases)
+  "Write PAIRS ((path . content) ...) as one boot-checked atomic change.
+BASES: (path . text the content was edited from), one per pair, so the
+core's stale-write guard compares against exactly what we read."
+  (lisping-core:write-files-and-load pairs :bases bases))
 
 (defun edit-files (edits)
   "EDITS: a list of (path old new). Computes every file's final content
 first (any mismatch errors before anything is written), then writes all
 files as one boot-checked change. Returns a status string."
   (let* ((grouped (ef-group-edits edits))
+         (bases (mapcar (lambda (g) (cons (car g) (rf-read-file-string (car g))))
+                        grouped))
          (pairs (mapcar (lambda (g)
                           (cons (car g)
                                 (ef-apply-to-text (car g)
-                                                  (rf-read-file-string (car g))
+                                                  (cdr (assoc (car g) bases :test #'equal))
                                                   (cdr g))))
                         grouped)))
-    (let ((result (ef-write-files pairs)))
+    (let ((result (ef-write-files pairs bases)))
       (if (and (stringp result) (search "NOT SAVED" result))
           result
           (format nil "edited ~{~A~^, ~} (~D edit~:P; ~A)"
