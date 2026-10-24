@@ -59,20 +59,57 @@ end — the boot crash on the queued->user line upgrade.)"
         do (uibuf-append buf (list (cons p attr)) :fresh (or fresh (> i 0)))))
 
 (defun ui-wrap-chunks (chunks width)
-  "Wrap chunk text at WIDTH columns; returns a list of chunk-lists (lines)."
+  "Word-wrap chunk text at WIDTH columns; returns a list of chunk-lists
+(lines).  Breaks at the last space that fits (a word longer than the
+line is cut at WIDTH); a line that starts with spaces keeps that indent
+on its continuation lines."
   (when (plusp width)
-    (let ((out nil) (cur nil) (len 0))
-      (dolist (ck chunks)
-        (let* ((s (car ck)) (a (cdr ck)) (start 0) (m (length s)))
-          (loop while (< start m)
-                do (let* ((rem (- width len)) (take (min rem (- m start))))
-                     (push (cons (subseq s start (+ start take)) a) cur)
-                     (incf len take)
-                     (incf start take)
-                     (when (= len width)
-                       (push (nreverse cur) out)
-                       (setf cur nil len 0))))))
-      (when cur (push (nreverse cur) out))
+    (let* ((text (apply #'concatenate 'string (mapcar #'car chunks)))
+           (attrs (make-array (length text)))
+           (n (length text))
+           (indent (min (or (position #\Space text :test-not #'char=) 0)
+                        (max 0 (floor width 2))))
+           (out nil)
+           (start 0)
+           (first-line t))
+      (let ((i 0))
+        (dolist (ck chunks)
+          (dotimes (k (length (car ck))) (setf (aref attrs i) (cdr ck)) (incf i))))
+      (flet ((emit-line (from to pad)
+               ;; chunks for text[from,to) preceded by PAD spaces
+               (let ((cur nil) (a nil) (s nil))
+                 (when (plusp pad)
+                   (push (cons (make-string pad :initial-element #\Space)
+                               (if (plusp n) (aref attrs (min from (1- n))) 7))
+                         cur))
+                 (loop for k from from below to
+                       do (if (and s (eql a (aref attrs k)))
+                              (vector-push-extend (char text k) s)
+                              (progn
+                                (when s (push (cons (coerce s 'string) a) cur))
+                                (setf a (aref attrs k)
+                                      s (make-array 1 :element-type 'character
+                                                      :adjustable t :fill-pointer 1
+                                                      :initial-element (char text k))))))
+                 (when s (push (cons (coerce s 'string) a) cur))
+                 (push (nreverse cur) out))))
+        (loop while (< start n)
+              do (let* ((pad (if first-line 0 indent))
+                        (room (- width pad)))
+                   (if (<= (- n start) room)
+                       (progn (emit-line start n pad) (setf start n))
+                       (let* ((brk (position #\Space text :start start :end (+ start room 1)
+                                                          :from-end t))
+                              ;; a space inside the indent is no break point
+                              (brk (and brk (> brk (+ start (if first-line indent 0))) brk)))
+                         (if brk
+                             (progn (emit-line start brk pad)
+                                    (setf start (or (position #\Space text :start brk
+                                                                           :test-not #'char=)
+                                                    n)))
+                             (progn (emit-line start (+ start room) pad)
+                                    (incf start room))))))
+                 (setf first-line nil)))
       (nreverse out))))
 
 (defun ui-truncate-chunks (chunks width)
