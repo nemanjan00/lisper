@@ -333,7 +333,7 @@ other control characters dropped."
         ((or (eq key :newline) (and (characterp key) (char= key #\Newline)))
          (tui-input-insert ui #\Newline))     ; Alt+Return, Ctrl-J
         ((and (consp key) (eq (first key) :paste))
-         (tui-input-insert-string ui (second key)))
+         (tui-paste ui (second key)))
         ((and (consp key) (eq (first key) :mouse)) (tui-mouse ui key))
         ((eq key :pgup) (tui-scroll-chat ui :pgup))
         ((eq key :pgdn) (tui-scroll-chat ui :pgdn))
@@ -363,7 +363,7 @@ other control characters dropped."
          ;; object and STRING-TRIM may too — TEXT must not alias IN, or
          ;; resetting IN's fill-pointer below would blank the message
          ;; before SEND-USER-MESSAGE reads it.
-         (text (string-trim " " (copy-seq in))))
+         (text (tui-expand-pastes (string-trim " " (copy-seq in)))))
     ;; Editing a queued message: Enter saves it back (empty deletes),
     ;; it is NOT sent as a new message.  QUEUE-EDIT is the pinned
     ;; string; EDIT-QUEUED returns NIL when it was delivered anyway
@@ -402,11 +402,75 @@ other control characters dropped."
       (tui-show-queued ui text)
       (send-user-message text))))
 
+(defvar *tui-pastes* nil
+  "Alist (PLACEHOLDER . FULL-TEXT) of big pastes shown in the input line
+as a short placeholder such as [pasted 29 lines].")
+
+(defvar *tui-paste-min-lines* 3 "Pastes of at least this many lines are compacted.")
+(defvar *tui-paste-min-chars* 200 "... or at least this many characters.")
+
+(defun tui-paste-label (text)
+  (let ((lines (1+ (count #\Newline (string-right-trim '(#\Newline) text)))))
+    (if (> lines 1)
+        (format nil "pasted ~D lines" lines)
+        (format nil "pasted ~D chars" (length text)))))
+
+(defun tui-paste (ui text)
+  "A bracketed paste: short text is inserted as typed; a big one becomes
+a placeholder in the input line (the full text is kept in *TUI-PASTES*
+and put back by TUI-EXPAND-PASTES when the message is sent)."
+  (if (or (>= (1+ (count #\Newline (string-right-trim '(#\Newline) text)))
+              *tui-paste-min-lines*)
+          (>= (length text) *tui-paste-min-chars*))
+      (let* ((base (tui-paste-label text))
+             (name (format nil "[~A]" base)))
+        (when (zerop (length (tui-ui-input ui))) (setf *tui-pastes* nil))
+        ;; Two pastes of the same size need different placeholders.
+        (loop for n from 2
+              while (or (assoc name *tui-pastes* :test #'string=)
+                        (search name (coerce (tui-ui-input ui) 'string)))
+              do (setf name (format nil "[~A #~D]" base n)))
+        (push (cons name text) *tui-pastes*)
+        (tui-input-insert-string ui name))
+      (tui-input-insert-string ui text)))
+
+(defun tui-expand-pastes (text)
+  "TEXT with every paste placeholder replaced by the pasted text."
+  (let ((out text))
+    (dolist (p *tui-pastes* out)
+      (loop for pos = (search (car p) out)
+            while pos
+            do (setf out (concatenate 'string (subseq out 0 pos) (cdr p)
+                                      (subseq out (+ pos (length (car p))))))))))
+
+(defun tui-paste-before (ui)
+  "Length of the placeholder that ends at the cursor, or NIL."
+  (let ((text (coerce (tui-ui-input ui) 'string))
+        (cur (tui-ui-input-cursor ui)))
+    (loop for p in *tui-pastes*
+          for n = (length (car p))
+          when (and (>= cur n) (string= (car p) text :start2 (- cur n) :end2 cur))
+            return n)))
+
+(defun tui-paste-after (ui)
+  "Length of the placeholder that starts at the cursor, or NIL."
+  (let ((text (coerce (tui-ui-input ui) 'string))
+        (cur (tui-ui-input-cursor ui)))
+    (loop for p in *tui-pastes*
+          for n = (length (car p))
+          when (and (<= (+ cur n) (length text))
+                    (string= (car p) text :start2 cur :end2 (+ cur n)))
+            return n)))
+
 (defun tui-cursor-move (ui delta)
-  "Move the input cursor DELTA characters, clamped to the buffer."
-  (let ((len (length (tui-ui-input ui))))
+  "Move the input cursor DELTA characters, clamped to the buffer; one
+step over a paste placeholder skips all of it."
+  (let ((len (length (tui-ui-input ui)))
+        (step (cond ((= delta -1) (- (or (tui-paste-before ui) 1)))
+                    ((= delta 1) (or (tui-paste-after ui) 1))
+                    (t delta))))
     (setf (tui-ui-input-cursor ui)
-          (max 0 (min len (+ (tui-ui-input-cursor ui) delta))))))
+          (max 0 (min len (+ (tui-ui-input-cursor ui) step))))))
 
 (defun tui-input-insert (ui c)
   "Insert C at the cursor, shifting the tail right. REPLACE copies as if
@@ -421,20 +485,22 @@ via an intermediate, so the overlapping shift is safe."
 
 (defun tui-input-delete (ui)
   "Delete the character under the cursor (the Delete key)."
-  (let ((in (tui-ui-input ui))
-        (cur (tui-ui-input-cursor ui)))
+  (let* ((in (tui-ui-input ui))
+         (cur (tui-ui-input-cursor ui))
+         (n (or (tui-paste-after ui) 1)))
     (when (< cur (length in))
-      (replace in in :start1 cur :start2 (1+ cur))
-      (decf (fill-pointer in)))))
+      (replace in in :start1 cur :start2 (+ cur n))
+      (decf (fill-pointer in) n))))
 
 (defun tui-input-backspace (ui)
   "Delete the character before the cursor."
-  (let ((in (tui-ui-input ui))
-        (cur (tui-ui-input-cursor ui)))
+  (let* ((in (tui-ui-input ui))
+         (cur (tui-ui-input-cursor ui))
+         (n (or (tui-paste-before ui) 1)))
     (when (plusp cur)
-      (replace in in :start1 (1- cur) :start2 cur)
-      (decf (fill-pointer in))
-      (setf (tui-ui-input-cursor ui) (1- cur)))))
+      (replace in in :start1 (- cur n) :start2 cur)
+      (decf (fill-pointer in) n)
+      (setf (tui-ui-input-cursor ui) (- cur n)))))
 
 (defun tui-clear-input (ui)
   (setf (fill-pointer (tui-ui-input ui)) 0
