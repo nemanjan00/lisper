@@ -245,7 +245,9 @@ arguments and output."
                                (cons (tcall-summary call) (if err 1 7))
                                (cons (cond ((null text) " …")
                                            ((> n 1) (format nil " → ~D lines" n))
-                                           (t (format nil " → ~A" (str-truncate (first-line text) 60))))
+                                           (t (format nil " → ~A"
+                                                      (str-truncate
+                                                       (string-left-trim "=> " (first-line text)) 60))))
                                      (if err 1 8))))
                 6 call)
           rows)
