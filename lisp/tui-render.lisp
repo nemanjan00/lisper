@@ -600,20 +600,59 @@ Returns an integer."
     (list (length lisping-core:*held*))
     (t 0)))
 
+(defvar *tui-status-arrows* (cons (code-char #xE0B0) (code-char #xE0B2))
+  "Separator glyphs of the status bar: (right-pointing . left-pointing).
+Powerline's U+E0B0 / U+E0B2 need a patched (Nerd/Powerline) font; for a
+plain font set this to (cons #\\▶ #\\◀) or (cons #\\Space #\\Space).")
+
 (defun tui-draw-status (g ui y w)
-  (let ((attr (ui-attr 7 :bright t :bg 4)))
-    (dotimes (x w) (ui-grid-put g x y #\Space attr))
-    (ui-grid-write g 1 y (format nil " lisping-ai ~A [~D todo~:P open] ~A~@[ [~D held]~]"
-                                 *model*
-                                 (count-if-not #'cdr *todos*)
-                                 *pane-focus*
-                                 (let ((h (tui-held-count)))
-                                   (unless (zerop h) h)))
-                   attr (1- w))
-    (let* ((now (multiple-value-list (decode-universal-time (get-universal-time))))
-           (time (format nil "~2,'0d:~2,'0d " (nth 2 now) (nth 1 now)))
-           (hint (if (tui-ui-prefix ui)
-                     "C-b cancel | q quit | r redraw | Left/Right pane | 1-9 pane"
-                     "C-b prefix")))
-      (ui-grid-write g (max 1 (- w (length hint) (length time) 1)) y
-                     (concatenate 'string hint " " time) attr w))))
+  "Powerline-style status bar: coloured segments joined by arrow glyphs
+(*TUI-STATUS-ARROWS*, right-pointing . left-pointing), a dark fill
+between the left and right groups.  Segments are (TEXT FG BG) with the
+8-colour numbers of UI-ATTR.  When the row is too narrow the hint
+drops out, then the right group, rather than overlapping the left."
+  (let* ((fill (ui-attr 7 :bg 0))
+         (now (multiple-value-list (decode-universal-time (get-universal-time))))
+         (time (format nil "~2,'0d:~2,'0d" (nth 2 now) (nth 1 now)))
+         (held (tui-held-count))
+         (hint (if (tui-ui-prefix ui)
+                   "C-b cancel | q quit | r redraw | Left/Right pane | 1-9 pane"
+                   "C-b prefix"))
+         (left (append
+                (list (list "lisping-ai" 0 2)
+                      (list (format nil "~A" *model*) 0 4)
+                      (list (format nil "~D todo~:P" (count-if-not #'cdr *todos*)) 7 5)
+                      (list (format nil "~A" *pane-focus*) 7 0))
+                (when (plusp held)
+                  (list (list (format nil "~D held" held) 0 3)))))
+         (time-seg (list time 0 6))
+         (right (list (list hint 7 0) time-seg)))
+    (dotimes (x w) (ui-grid-put g x y #\Space fill))
+    (labels ((seg-attr (s) (ui-attr (second s) :bright (= (second s) 7) :bg (third s)))
+             (seg-width (s) (+ 2 (length (first s))))
+             (put (x ch attr) (when (< -1 x w) (ui-grid-put g x y ch attr)))
+             (draw-left (segs)
+               (let ((x 0))
+                 (loop for (s . rest) on segs
+                       do (ui-grid-write g x y (format nil " ~A " (first s))
+                                         (seg-attr s) (max 0 (- w x)))
+                          (incf x (seg-width s))
+                          (put x (car *tui-status-arrows*)
+                               (ui-attr (third s) :bg (if rest (third (first rest)) 0)))
+                          (incf x))
+                 x))
+             (right-width (segs)       ; each segment: arrow + padded text
+               (reduce #'+ segs :key (lambda (s) (1+ (seg-width s)))))
+             (draw-right (segs)
+               (let ((x (- w (right-width segs))) (prev-bg 0))
+                 (dolist (s segs)
+                   (put x (cdr *tui-status-arrows*) (ui-attr (third s) :bg prev-bg))
+                   (incf x)
+                   (ui-grid-write g x y (format nil " ~A " (first s))
+                                  (seg-attr s) (max 0 (- w x)))
+                   (incf x (seg-width s))
+                   (setf prev-bg (third s))))))
+      (let ((lw (draw-left left)))
+        (cond ((<= (+ lw (right-width right)) w) (draw-right right))
+              ((<= (+ lw (right-width (list time-seg))) w)
+               (draw-right (list time-seg))))))))
