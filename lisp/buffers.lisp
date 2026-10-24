@@ -58,17 +58,18 @@ end — the boot crash on the queued->user line upgrade.)"
         for i from 0
         do (uibuf-append buf (list (cons p attr)) :fresh (or fresh (> i 0)))))
 
-(defun ui-wrap-chunks (chunks width)
+(defun ui-wrap-chunks (chunks width &optional hang)
   "Word-wrap chunk text at WIDTH columns; returns a list of chunk-lists
 (lines).  Breaks at the last space that fits (a word longer than the
-line is cut at WIDTH); a line that starts with spaces keeps that indent
-on its continuation lines."
+line is cut at WIDTH); continuation lines are indented by HANG columns,
+or by the line's own leading spaces when HANG is NIL."
   (when (plusp width)
     (let* ((text (apply #'concatenate 'string (mapcar #'car chunks)))
            (attrs (make-array (length text)))
            (n (length text))
-           (indent (min (or (position #\Space text :test-not #'char=) 0)
-                        (max 0 (floor width 2))))
+           (lead (min (or (position #\Space text :test-not #'char=) 0)
+                      (max 0 (floor width 2))))
+           (indent (if hang (min hang (max 0 (floor width 2))) lead))
            (out nil)
            (start 0)
            (first-line t))
@@ -101,7 +102,7 @@ on its continuation lines."
                        (let* ((brk (position #\Space text :start start :end (+ start room 1)
                                                           :from-end t))
                               ;; a space inside the indent is no break point
-                              (brk (and brk (> brk (+ start (if first-line indent 0))) brk)))
+                              (brk (and brk (> brk (+ start (if first-line lead 0))) brk)))
                          (if brk
                              (progn (emit-line start brk pad)
                                     (setf start (or (position #\Space text :start brk
