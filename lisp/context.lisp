@@ -621,11 +621,12 @@ PREVIOUS request recalibrates the ratio, so this tracks reality."
          *ctx-chars-per-token*))
 
 (defun ctx-trim-call-args (&optional (limit 1500))
-  "Stub out huge tool_call ARGUMENTS of assistant messages in finished
-territory (before the latest real user message).  The calls are done,
-their results follow them, trace.log has the full text — but each
-untrimmed batch rides every request forever (an edit_files batch can be
-15k chars)."
+  "Stub out huge tool_call ARGUMENTS and old reasoning_content of
+assistant messages in finished territory (before the latest real user
+message).  The calls are done, their results follow them, trace.log has
+the full text — but each untrimmed blob rides every request forever
+(an edit_files batch can be 15k chars; old thinking blocks added up to
+300k chars in one session)."
   (let ((guard (ctx-latest-user-index)) (trimmed 0))
     (loop for m in *messages* for i from 0
           when (< i guard)
@@ -637,7 +638,11 @@ untrimmed batch rides every request forever (an edit_files batch can be
                    (setf (gethash "arguments" f)
                          (format nil "{\"_trimmed\":\"~D chars of args; work finished, trace.log has it\"}"
                                  (length args)))
-                   (incf trimmed)))))
+                   (incf trimmed))))
+             (let ((rc (gethash "reasoning_content" m)))
+               (when (and (stringp rc) (> (length rc) 800))
+                 (remhash "reasoning_content" m)
+                 (incf trimmed))))
     trimmed))
 
 (defun ctx-before-request (body)
