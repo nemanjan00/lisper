@@ -468,7 +468,7 @@ context pane's full-width rect suppress the separators above it.
       (dotimes (x w)
         (dotimes (y h)
           (when (gap-p x y)
-            (ui-grid-put g x y (panes-gap-junction-char g x y) 8))))
+            (ui-grid-put g x y (panes-gap-junction-char g x y rects) 8))))
       ;; Title rows: where a gap bar ends at a pane's ─ title line from
       ;; above, that ─ becomes ┴.  The cell above must be an uncovered
       ;; GAP cell — a pane-covered neighbour is just chat text, which
