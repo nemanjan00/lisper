@@ -51,6 +51,15 @@ before the window is full, so thresholds are percents of THIS.  At most
 
 (defvar *ctx-near-at* 80 "Percent at which the note becomes an instruction.")
 
+(defvar *ctx-task-note-at* 60
+  "Percent of the budget below which finishing a todo triggers no nudge
+(a context edit far back re-caches everything after it: only worth it
+when it cuts a lot).")
+
+(defvar *ctx-min-cut-percent* 20
+  "Smallest share of the context a context edit should free; smaller
+edits cost more cache than they save.")
+
 (defvar *ctx-noted-percent* 0 "Last noted percent (ratchets +5; resets on drops).")
 
 (defvar *ctx-pending-note* nil "Milestone note waiting to be injected.")
@@ -569,6 +578,12 @@ registry).  Returns T if it offloaded."
                            collect (cons (ctx-entry-id m) (ctx-est-tokens c)))))
     (subseq (sort candidates #'> :key #'cdr) 0 (min k (length candidates)))))
 
+(defun ctx-current-percent ()
+  "Percent of *CTX-BUDGET* the context takes now (last reported
+prompt_tokens or the local estimate, whichever is larger)."
+  (round (* 100 (max (or *ctx-last-prompt-tokens* 0) (or *ctx-last-est* 0)))
+         *ctx-budget*))
+
 (defun ctx-threshold-note (percent)
   "A note when the context passes a threshold, or NIL.  Edge-triggered:
 after noting at P, the next note comes at P+5, so the request is never
@@ -579,14 +594,15 @@ budget), not of the whole window."
     (setf *ctx-noted-percent* percent)
     (with-output-to-string (s)
       (if (>= percent *ctx-near-at*)
-          (format s "[context: ~D% of the ~:D-token budget (past ~D%)] Free space BEFORE going on: collapse the biggest finished stretches with context_rewind {from, to, summary}, offload big results with context_offload {entry, text}.~%"
-                  percent *ctx-budget* *ctx-near-at*)
+          (format s "[context: ~D% of the ~:D-token budget (past ~D%)] Free space BEFORE going on, in ONE batch: a single context_rewind over the biggest finished stretch (plus offloads of its big results) that frees at least ~~~D% of the context.~%"
+                  percent *ctx-budget* *ctx-near-at* *ctx-min-cut-percent*)
           (format s "[context: ~D% of the ~:D-token budget] The biggest finished parts:~%"
                   percent *ctx-budget*))
       (dolist (c (ctx-biggest-finished-results 3))
         (format s "- e~D ≈ ~D est tokens: context_offload {\"entry\": \"e~D\"}~%"
                 (car c) (cdr c) (car c)))
-      (format s "Collapse finished stretches with context_rewind {from, to, summary}; summaries keep what later work needs verbatim (paths, ids, decisions).~%"))))
+      (format s "Collapse in one go with context_rewind {from, to, summary} only if it frees ~D%+ of the context; skip small edits (each re-caches everything after it). Summaries keep what later work needs verbatim (paths, ids, decisions).~%"
+              *ctx-min-cut-percent*))))
 
 (progn
   (defvar *ctx-note-in-flight* nil
@@ -600,11 +616,16 @@ retire the nudge only when a response actually arrives (clearing it at
 injection would lose it on a failed request)."
     (case (getf event :type)
       (:tool-result
+       ;; Edits far back re-cache everything after them (1.25x write vs
+       ;; 0.1x read), so a finished task only earns a nudge once the
+       ;; context is big enough for one batched collapse to pay back.
        (when (and (equal (getf event :name) "todo")
-                  (ctx-head-p "done:" (getf event :text)))
+                  (ctx-head-p "done:" (getf event :text))
+                  (>= (ctx-current-percent) *ctx-task-note-at*))
          (setf *ctx-pending-note*
-               (format nil "[context: a task is done] ~A The work for it above is finished; once nothing below needs it verbatim, collapse it with context_rewind {from, to, summary} (summaries keep paths, ids, decisions later work needs), or offload its big results with context_offload {entry, text}."
-                       (ctx-short (getf event :text))))))
+               (format nil "[context: a task is done] ~A The context is at ~D% of the budget. If the finished work is a big share of it (~D%+), collapse it in ONE context_rewind covering everything finished (summaries keep paths, ids, decisions later work needs); otherwise leave it, small edits cost more cache than they save."
+                       (ctx-short (getf event :text))
+                       (ctx-current-percent) *ctx-min-cut-percent*))))
       ;; A response arrived.  Only retire the note if it was actually
       ;; injected into the request this response answers; a :tool-call
       ;; can also arrive interleaved in the same turn that SET the note.
@@ -869,7 +890,7 @@ Idempotent."
                (not (search "[context:compactor]" *system-prompt*)))
       (setf *system-prompt*
             (concatenate 'string *system-prompt* "
-- [context:compactor] Keep your context small from the start: as soon as a part of the work is done (files read and understood, a step completed), collapse it with context_rewind {from, to, summary}, keeping in the summary what later work needs verbatim (paths, line numbers, ids, decisions). Big tool results you no longer need: context_offload {entry, text}. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
+- [context:compactor] Keep your context lean, but edit it rarely: a rewind/offload far back makes the provider re-cache everything after it (about 12x the price of a cache read), so small edits never pay back. Batch: wait until finished work is at least ~20% of the context or you are near the budget, then collapse it all in ONE context_rewind {from, to, summary}, keeping in the summary what later work needs verbatim (paths, line numbers, ids, decisions). Big tool results are trimmed automatically when they arrive; context_offload {entry, text} is for a rare huge old one. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
     (when (and (stringp *system-prompt*)
                (not (search "[eval:docs]" *system-prompt*)))
       (setf *system-prompt*
