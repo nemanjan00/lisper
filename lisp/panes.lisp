@@ -146,12 +146,20 @@ their lines and used to cut them to the height."
     (setf (pane-scroll pane) s)
     (subseq lines start (min n (+ start h)))))
 
+(defvar *todo-top* 0
+  "First line of the todo list shown in the pane: it is anchored to the
+top (the working-on item first), scrolled by the wheel and the keys.")
+
 (defun pane-scroll-by (name delta)
   (sb-thread:with-recursive-lock (*tui-lock*)
     (let ((p (pane-get name)))
       (when p
         (when (member name *pane-top-anchored* :test #'equal)
           (setf delta (- delta)))
+        ;; The todo pane keeps its own top line (*todo-top*, clamped by its
+        ;; renderer); keys and the focused-pane path must move that too.
+        (when (eq (pane-kind p) :todo)
+          (setf *todo-top* (max 0 (- *todo-top* delta))))
         (setf (pane-scroll p) (max 0 (+ (pane-scroll p) delta)))
         ;; Reaching the bottom clears the 'N new' marker.
         (when (and (eq (pane-kind p) :chat) (zerop (pane-scroll p)))
@@ -276,10 +284,6 @@ one ends in an ellipsis when text is left over)."
         (setf (car (last out))
               (concatenate 'string (subseq l 0 (min (length l) (1- width))) "…"))))
     out))
-
-(defvar *todo-top* 0
-  "First line of the todo list shown in the pane: it is anchored to the
-top (the working-on item first), scrolled by the wheel.")
 
 (defun todo-mouse (ui key)
   "Mouse interceptor for the todo pane: a left click on its \"✓ N done\"
