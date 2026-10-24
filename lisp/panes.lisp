@@ -499,6 +499,55 @@ context pane's full-width rect suppress the separators above it.
                              (aref (uigrid-attrs g) (+ cx (* ry w))))))))))))
 
 
+(defun panes-junction-problems (layout w h)
+  "Render only the gap columns of LAYOUT on a W×H grid whose title rows
+start with a non-─ glyph (a powerline segment), then list every gap cell
+that touches a title row but is not a junction, and every title cell
+directly under a gap bar that is not ┴/┼.  NIL when the grid is right.
+Independent of the draw code's connectivity logic: it only restates the
+rule \"a separator meeting a title line is a ┬ ┴ ├ ┤ ┼, never a │\".
+A cell is a gap when no rect covers it."
+  (let* ((rects (layout-leaves layout 0 0 w h))
+         (g (ui-grid-make w h))
+         (problems nil))
+    (dolist (r rects)
+      (destructuring-bind (name rx ry rw rh) r
+        (declare (ignore name rh))
+        (dotimes (i rw)
+          (ui-grid-put g (+ rx i) ry (if (< i 3) #\A #\─) 8))))
+    (panes-draw-gap-columns g rects)
+    (flet ((gap-p (x y) (and (< -1 x w) (< -1 y h) (not (panes-rect-cell-p rects x y))))
+           (title-p (x y) (and (< -1 x w) (< -1 y h) (panes-rect-cell-p rects x y t))))
+      (dotimes (y h)
+        (dotimes (x w)
+          (let ((c (panes-grid-char g x y)))
+            (when (gap-p x y)
+              (when (and (or (title-p (1- x) y) (title-p (1+ x) y))
+                         (not (find c "┬┴├┤┼")))
+                (push (list :gap-not-junction x y c) problems))
+              (when (and (title-p (1- x) y) (title-p (1+ x) y) (not (find c "┬┴┼")))
+                (push (list :between-titles x y c) problems)))
+            (when (and (title-p x y) (gap-p x (1- y)) (not (find c "┴┼")))
+              (push (list :title-under-bar x y c) problems))))))
+    (nreverse problems)))
+
+(defun panes-junction-selftest ()
+  "Run PANES-JUNCTION-PROBLEMS over the default and the live layout at a
+few sizes; WARN on any problem, so a regression fails the boot check."
+  (dolist (layout (remove-duplicates
+                   (list (default-layout) *layout*
+                         '(:vsplit 0.85 (:hsplit 0.78 (leaf "chat") (leaf "todo"))
+                           (:hsplit 0.68 (leaf "context") (leaf "tasks"))))
+                   :test #'equal))
+    (dolist (size '((208 40) (120 30) (80 24)))
+      (let ((p (ignore-errors (panes-junction-problems layout (first size) (second size)))))
+        (when p
+          (warn "pane separator junctions wrong at ~Dx~D: ~S" (first size) (second size)
+                (subseq p 0 (min 3 (length p)))))))))
+
+(unless (boundp '*layout*) (defvar *layout* nil))
+(when lisping-core:*test-boot* (panes-junction-selftest))
+
 ;;; ---------------------------------------------------------------
 ;;; Operations (also exposed as tools)
 
