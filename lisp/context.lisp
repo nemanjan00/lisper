@@ -834,7 +834,10 @@ status line, then one truncated line per rewind (newest first as kept in
                                   (format nil " · ~D off" *ctx-offloaded-count*) "")
                               (if *ctx-pending-note* " · note" ""))
                       w)
-                 8)))
+                 8))
+      ;; Session cost, short form (lisp/usage.lisp).
+      (let ((u (and (fboundp 'usage-compact-line) (funcall 'usage-compact-line))))
+        (when u (add (cons (fit u w) 8)))))
     (let ((out (mapcar (lambda (l) (ui-truncate-chunks l w)) (nreverse lines))))
       (subseq out 0 (min h (length out))))))
 
