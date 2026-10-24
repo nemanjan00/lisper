@@ -31,6 +31,36 @@ originals.")
 
 (defvar *ctx-offloaded-count* 0)
 
+;;; Batched edits: a rewind/offload far back makes the provider re-cache
+;;; everything after it, so the tools only QUEUE; the queue is applied in
+;;; one batch by CTX-MAYBE-APPLY-BATCH (a before-request step).
+(defvar *ctx-queue* nil
+  "Queued context edits, oldest first: plists (:kind :rewind|:offload
+:from ID :to ID :summary TEXT :saving TOKENS).  Persisted with the state.")
+
+(defvar *ctx-batches* nil
+  "Batches applied in this session, newest first:
+(universal-time before-tokens after-tokens edits).  /compact counts too.")
+
+(defvar *ctx-batch-min-percent* 30
+  "The queue applies once its edits together cut this share of the context ...")
+
+(defvar *ctx-force-percent* 85
+  "... or the context is at least this percent of the budget.")
+
+(defvar *ctx-batch-gap* 900
+  "Seconds between applied batches (not enforced when over budget).")
+
+(defvar *ctx-auto-compact* t
+  "When true, a context at *CTX-AUTO-COMPACT-PERCENT* of the budget asks for /compact.")
+
+(defvar *ctx-auto-compact-percent* 95)
+
+(defvar *ctx-auto-compact-at* nil "Universal time of the last automatic /compact request.")
+
+(defvar *ctx-batch-report* nil
+  "What the last applied batch did; goes to the model once, as a note.")
+
 (defun ctx-model-window (&optional (model lisping-core:*model*))
   "Context window in tokens for MODEL (by name): Kimi K-series 1M,
 Claude Sonnet/Opus/Haiku 200k, anything unknown 200k (the safe side)."
@@ -140,6 +170,22 @@ id assignment can never hand out a live message's id."
 (defun ctx-originals-file ()
   (lisping-core:session-path "ctx-originals.json"))
 
+(defun ctx-queue-json ()
+  (coerce (mapcar (lambda (q)
+                    (obj :kind (string-downcase (symbol-name (getf q :kind)))
+                         :from (or (getf q :from) 0) :to (or (getf q :to) 0)
+                         :summary (or (getf q :summary) "")
+                         :saving (or (getf q :saving) 0)))
+                  *ctx-queue*)
+          'vector))
+
+(defun ctx-batches-json ()
+  (coerce (mapcar (lambda (b)
+                    (obj :time (or (first b) 0) :before (or (second b) 0)
+                         :after (or (third b) 0) :edits (or (fourth b) 0)))
+                  *ctx-batches*)
+          'vector))
+
 (defun ctx-save-state ()
   "Persist *CTX-ORIGINALS*, *CTX-STRETCHES* and *CTX-NEXT-ID* to the
 session dir, so entry ids still resolve after a restart."
@@ -163,7 +209,9 @@ session dir, so entry ids still resolve after a restart."
                                    collect (obj :from (first st) :to (second st)
                                                 :short (third st) :marker (fourth st)
                                                 :count (fifth st) :est (sixth st)))
-                             'vector)))
+                             'vector)
+                 :batches (ctx-batches-json)
+                 :queue (ctx-queue-json)))
            s))))))
 
 (defun ctx-load-state ()
@@ -181,6 +229,16 @@ whenever it meets a higher x-id)."
                          (get-output-stream-string out)))))))
         (when (hash-table-p data)
           (clrhash *ctx-originals*)
+          (setf *ctx-queue*
+                (loop for q across (or (gethash "queue" data) #())
+                      collect (list :kind (if (equal (gethash "kind" q) "offload") :offload :rewind)
+                                    :from (gethash "from" q) :to (gethash "to" q)
+                                    :summary (gethash "summary" q)
+                                    :saving (or (gethash "saving" q) 0)))
+                *ctx-batches*
+                (loop for b across (or (gethash "batches" data) #())
+                      collect (list (gethash "time" b) (gethash "before" b)
+                                    (gethash "after" b) (gethash "edits" b))))
           (loop for rec across (or (gethash "originals" data) #())
                 do (setf (gethash (gethash "id" rec) *ctx-originals*)
                          (cons (if (equal (gethash "kind" rec) "content") :content :message)
@@ -298,6 +356,213 @@ calls produce several)."
                      (equal (gethash "role" (nth (1+ j) *messages*)) "tool"))
           do (incf j))
     (values i j)))
+
+;;; ------------------------------------------------- batched edits: logic
+
+(defun ctx-current-tokens ()
+  (max (or *ctx-last-prompt-tokens* 0) (or *ctx-last-est* 0)))
+
+(defun ctx-queue-saving ()
+  "Tokens the queued edits would free, together."
+  (reduce #'+ *ctx-queue* :key (lambda (q) (or (getf q :saving) 0))))
+
+(defun ctx-queue-percent ()
+  (let ((now (ctx-current-tokens)))
+    (if (plusp now) (round (* 100 (ctx-queue-saving)) now) 0)))
+
+(defun ctx-gap-left ()
+  "Seconds until another batch may be applied (0 = now)."
+  (let ((last (first (first *ctx-batches*))))
+    (if last
+        (max 0 (- (+ last *ctx-batch-gap*) (get-universal-time)))
+        0)))
+
+(defun ctx-fmt-age (secs)
+  (cond ((< secs 90) (format nil "~D s" (max 0 secs)))
+        ((< secs 5400) (format nil "~D min" (round secs 60)))
+        (t (format nil "~,1F h" (/ secs 3600.0)))))
+
+(defun ctx-batch-ready-p ()
+  "True when the queue should be applied at the next request: it cuts
+*CTX-BATCH-MIN-PERCENT* of the context or the context is near the budget,
+and the gap since the last batch has passed (unless over budget)."
+  (and *ctx-queue*
+       (let ((budget-pct (ctx-current-percent)))
+         (and (or (>= (ctx-queue-percent) *ctx-batch-min-percent*)
+                  (>= budget-pct *ctx-force-percent*))
+              (or (>= budget-pct 100) (zerop (ctx-gap-left)))))))
+
+(defun ctx-rewind-plan (from-msg to-msg)
+  "Check a rewind of FROM-MSG .. TO-MSG against the conversation and the
+current-task guard.  (values i j error): the snapped index range, or an
+error string."
+  (let* ((i (position from-msg *messages* :test #'eq))
+         (j (position to-msg *messages* :test #'eq))
+         (guard (ctx-latest-user-index)))
+    (cond
+      ((or (null i) (null j))
+       (values nil nil "[ctx] ERROR: entries found, but no longer in the visible conversation (already collapsed? use context_search)."))
+      ((and guard (>= (min i j) guard))
+       (values nil nil "[ctx] ERROR: that stretch is the current task — rewind only FINISHED work before the latest user message."))
+      (t
+       (when (> i j) (rotatef i j))
+       (multiple-value-setq (i j) (ctx-snap-range i j))
+       (when (and guard (> j (1- guard))) (setf j (1- guard)))
+       (if (and guard (>= i guard))
+           (values nil nil "[ctx] ERROR: snapped to whole tool-call units, the stretch reaches into the current task — rewind less, or finish the task first.")
+           (values i j nil))))))
+
+(defun ctx-offload-check (id)
+  "(values message error) for offloading entry ID."
+  (let ((msg (and id (ctx-find-message id))))
+    (cond
+      ((null msg) (values nil "[ctx] ERROR: unknown entry."))
+      ((null (position msg *messages* :test #'eq))
+       (values nil "[ctx] ERROR: entry is not in the visible conversation (already collapsed? use context_search)."))
+      (t
+       (let ((content (gethash "content" msg))
+             (guard (ctx-latest-user-index)))
+         (cond
+           ((not (stringp content)) (values nil "[ctx] ERROR: entry has no text content to offload."))
+           ((ctx-head-p "[offloaded" content) (values nil "[ctx] ERROR: entry is already offloaded."))
+           ((and (equal (gethash "role" msg) "user") guard (eq msg (nth guard *messages*)))
+            (values nil "[ctx] ERROR: the latest user message (the current task) stays verbatim."))
+           (t (values msg nil))))))))
+
+(defun ctx-do-offload (id text)
+  "Offload entry ID now (used when a batch is applied)."
+  (multiple-value-bind (msg err) (ctx-offload-check id)
+    (if err
+        err
+        (let ((content (gethash "content" msg)))
+          (setf (gethash id *ctx-originals*) (cons :content content))
+          (setf (gethash "content" msg)
+                (format nil "~A — [offloaded ~D chars; context_restore {\"entry\": \"e~D\"} puts it back]"
+                        (ctx-short text) (length content) id))
+          (incf *ctx-offloaded-count*)
+          (setf *ctx-requests-since-collapse* 0)
+          (ctx-save-state)
+          (pane-dirty "context")
+          (format nil "[ctx] offloaded entry e~D (~D chars)." id (length content))))))
+
+(defun ctx-queue-add (item)
+  "Queue ITEM.  Queued edits inside a new rewind's range are replaced by
+it.  Returns an error string, or NIL."
+  (let ((lo (getf item :from)) (hi (getf item :to)))
+    (flet ((inside (q) (and (<= lo (getf q :from)) (<= (getf q :to) hi)
+                            (not (and (eq (getf item :kind) :offload)
+                                      (eq (getf q :kind) :rewind))))))
+      (dolist (q *ctx-queue*)
+        (when (and (<= lo (getf q :to)) (<= (getf q :from) hi) (not (inside q)))
+          (return-from ctx-queue-add
+            (format nil "[ctx] ERROR: e~D…e~D overlaps the queued ~(~A~) e~D…e~D without covering it — queue one rewind that covers both."
+                    lo hi (getf q :kind) (getf q :from) (getf q :to)))))
+      (setf *ctx-queue* (append (remove-if #'inside *ctx-queue*) (list item))))
+    (ctx-save-state)
+    (pane-dirty "context")
+    nil))
+
+(defun ctx-queue-answer ()
+  "The tool answer after queueing."
+  (format nil "[ctx] queued (~D edit~:P pending, ~~~A tokens = ~D% of the context). ~A"
+          (length *ctx-queue*) (ctx-fmt-k (ctx-queue-saving)) (ctx-queue-percent)
+          (cond ((ctx-batch-ready-p)
+                 "The batch is big enough: it applies at the next request, in one go.")
+                (t (format nil "Queued, applies once the batch reaches ~D% or the context nears budget (~D%)~:[~;; the last batch was too recent, next one allowed in ~A~]."
+                           *ctx-batch-min-percent* *ctx-force-percent*
+                           (plusp (ctx-gap-left)) (ctx-fmt-age (ctx-gap-left)))))))
+
+(defun ctx-apply-queue ()
+  "Apply every queued edit as ONE batch: offloads first (so a rewind can
+cover an offloaded entry), then rewinds.  (values report before after n)."
+  (let* ((queue *ctx-queue*)
+         (before (ctx-current-tokens))
+         (results '()))
+    (sb-sys:without-interrupts
+      (dolist (q (append (remove :rewind queue :key (lambda (x) (getf x :kind)))
+                         (remove :offload queue :key (lambda (x) (getf x :kind)))))
+        (push (handler-case
+                  (if (eq (getf q :kind) :offload)
+                      (ctx-do-offload (getf q :from) (getf q :summary))
+                      (let ((a (ctx-find-message (getf q :from)))
+                            (b (ctx-find-message (getf q :to))))
+                        (if (and a b)
+                            (ctx-do-rewind a b (getf q :summary))
+                            "[ctx] ERROR: those entries are no longer in the conversation.")))
+                (error (c) (format nil "[ctx] ERROR: ~A" c)))
+              results))
+      (setf *ctx-queue* nil))
+    (let ((after (round (+ (length (ctx-system-prompt-text)) (or *ctx-tools-chars* 0)
+                           (loop for m in *messages* sum (ctx-message-chars m)))
+                        *ctx-chars-per-token*)))
+      (setf lisping-core:*last-usage* nil
+            *ctx-low-pt-streak* 0 *ctx-prev-request-chars* nil
+            *ctx-noted-percent* 0 *ctx-requests-since-collapse* 0)
+      (push (list (get-universal-time) before after (length queue)) *ctx-batches*)
+      (ctx-save-state)
+      (pane-dirty "context")
+      (values (format nil "[context batch] ~D queued edit~:P applied together: ~~~A → ~~~A tokens.~{~%- ~A~}"
+                      (length queue) (ctx-fmt-k before) (ctx-fmt-k after) (reverse results))
+              before after (length queue)))))
+
+(defun ctx-maybe-apply-batch (body)
+  "Before-request step: apply the queue when it is due, and rebuild the
+request's messages from the edited conversation.  Returns BODY."
+  (when (ctx-batch-ready-p)
+    (multiple-value-bind (report before after n) (ctx-apply-queue)
+      (setf *ctx-batch-report* report)
+      (lisping-core:emit :info :text (format nil "⚙ context batch: ~D edit~:P applied, ~A → ~A tokens"
+                                             n (ctx-fmt-k before) (ctx-fmt-k after)))
+      (let ((old (gethash "messages" body)))
+        (when (vectorp old)
+          (setf (gethash "messages" body)
+                (coerce (cons (aref old 0) (copy-list *messages*)) 'vector))))))
+  body)
+
+(defun ctx-maybe-auto-compact (percent)
+  "Near the budget with nothing better queued: ask for /compact (at most
+once per *CTX-BATCH-GAP*)."
+  (when (and *ctx-auto-compact*
+             (>= percent *ctx-auto-compact-percent*)
+             (boundp '*compact-pending*)
+             (not (symbol-value '*compact-pending*))
+             (or (null *ctx-auto-compact-at*)
+                 (> (- (get-universal-time) *ctx-auto-compact-at*) *ctx-batch-gap*)))
+    (setf *ctx-auto-compact-at* (get-universal-time)
+          (symbol-value '*compact-pending*) (list :focus ""))
+    (lisping-core:emit :info :text (format nil "⚙ context at ~D% of the budget: compacting at the next model call" percent))))
+
+(defun ctx-note-batch (before after n)
+  "Record a compaction (/compact) as an applied batch; queued edits die with it."
+  (push (list (get-universal-time) before after n) *ctx-batches*)
+  (setf *ctx-queue* nil))
+
+(defun ctx-visible-stretches ()
+  "Stretches whose collapse marker is still in the conversation (not
+nested inside a later rewind)."
+  (remove-if-not (lambda (st) (ctx-find-message (fourth st))) *ctx-stretches*))
+
+(defun ctx-batch-lines ()
+  "Pane lines (text attr) for applied batches and pending queued edits."
+  (let ((lines '()))
+    (when *ctx-batches*
+      (let ((b (first *ctx-batches*)))
+        (push (list (format nil "batches this session: ~D (last ~A ago: ~A → ~A)"
+                            (length *ctx-batches*)
+                            (ctx-fmt-age (- (get-universal-time) (or (first b) 0)))
+                            (ctx-fmt-k (or (second b) 0)) (ctx-fmt-k (or (third b) 0)))
+                    8)
+              lines)))
+    (when *ctx-queue*
+      (push (list (format nil "queued: ~D edit~:P, ~~~A tokens (~D% of the context) · ~A"
+                          (length *ctx-queue*) (ctx-fmt-k (ctx-queue-saving)) (ctx-queue-percent)
+                          (cond ((ctx-batch-ready-p) "applies at the next request")
+                                ((plusp (ctx-gap-left))
+                                 (format nil "next batch in ~A" (ctx-fmt-age (ctx-gap-left))))
+                                (t (format nil "applies at ~D% or near budget" *ctx-batch-min-percent*))))
+                  3)
+            lines))
+    (nreverse lines)))
 
 (defun ctx-do-rewind (from-msg to-msg summary)
   (let* ((i (position from-msg *messages* :test #'eq))
