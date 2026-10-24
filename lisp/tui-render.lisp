@@ -154,7 +154,9 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
                                             (getf event :args))))
       (:tool-result (tui-chat-result ui (getf event :name) (getf event :text)))
       (:error (tui-chat-add ui (list (cons (getf event :text) 1))))
-      (:info (tui-chat-add ui (list (cons (getf event :text) 8))))
+      (:info (if (equal (getf event :text) "turn cancelled")
+                 (tui-show-system ui "cancel" "the turn was stopped here")
+                 (tui-chat-add ui (list (cons (getf event :text) 8)))))
       ;; :kind is NIL for what the user typed, a string for system messages.
       ;; Those aren't editable, so no queued echo; they show on delivery.
       (:queued (unless (getf event :kind)
