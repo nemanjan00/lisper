@@ -53,9 +53,5 @@
     (slash-say "Nothing is running.")))
 
 (defun interrupt-start ()
-  "Called from init.lisp: register /stop, and drop the old run-turn wrapper
-of an earlier version of this file if this image still has it."
-  (ignore-errors
-   (sb-ext:without-package-locks
-     (sb-int:unencapsulate 'lisping-core::run-turn 'interrupt)))
+  "Called from init.lisp: register /stop."
   (define-slash "stop" 'slash-stop "interrupt the running turn (also Esc Esc, Ctrl-C on empty input)"))
