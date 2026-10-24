@@ -1109,6 +1109,12 @@ and would keep rejecting every later request."
   "The request for the model. Blank user messages are left out and tool calls
 are paired with results, however *messages* got that way, since the API rejects
 both and would fail every later request."
+  ;; The pairing repairs *messages* itself, once: a stub made fresh for every
+  ;; request is a new object each time, so anything that marks messages (entry
+  ;; ids) changes the request there, and the API's prompt cache stops matching.
+  (let ((paired (pair-tool-results *messages*)))
+    (unless (and (= (length paired) (length *messages*)) (every #'eq paired *messages*))
+      (setf *messages* paired)))
   (let ((body (obj :model *model*
                    :max_tokens *max-tokens*
                    :messages (coerce (cons (obj :role "system" :content (system-prompt-text))
