@@ -357,7 +357,7 @@ other control characters dropped."
          (setf (tui-ui-input-cursor ui) (nth-value 1 (tui-line-bounds ui))))
         ((eq key :delete) (tui-input-delete ui))
         ;; Ctrl-O: fold/unfold the selected tool run/call, else all runs.
-        ((and (characterp key) (char= key #\So))
+        ((and (characterp key) (char= key #\Si))
          (when (fboundp 'chat-ctrl-o) (funcall 'chat-ctrl-o)))
         ;; Enter on an empty input toggles the selected tool run/call.
         ((and (characterp key) (char= key #\Return)
