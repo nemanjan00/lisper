@@ -361,69 +361,21 @@ over MAX-RATE messages in the last 60s — then drop them and count."
 
 (defun pane-tasks-render (pane w h)
   (declare (ignore pane))
-  (let* ((task-lines
-          (let ((tasks (task-list)))
-            (if (null tasks)
-                (list (list (cons "(no background tasks)" 8)))
-                (loop for task in tasks
-                      collect (list (cons (str-truncate
-                                           (format nil "~A ~A ~Ds ~DL~@[ ~S~]"
-                                                   (task-name task)
-                                                   (task-status-string task)
-                                                   (- (get-universal-time) (task-start task))
-                                                   (task-line-count task)
-                                                   (task-pattern task))
-                                           w)
-                                          (if (eq (task-status task) :running) 7 8)))))))
-         (held (copy-list lisping-core::*held*))
-         (queue-lines
-          (when held
-            (append
-             (list (list (cons "─ queue ─" 8)))
-             (loop for item in held
-                   for text = (if (consp item) (car item) item)
-                   for i from 1
-                   collect (list (cons (format nil "~D: " i) 8)
-                                 (cons (str-truncate text (max 1 (- w 4))) 5)))
-             (list (list (cons "(queue_edit tool to edit)" 8))))))
-         (lines (append task-lines queue-lines)))
+  (let ((lines
+         (let ((tasks (task-list)))
+           (if (null tasks)
+               (list (list (cons "(no background tasks)" 8)))
+               (loop for task in tasks
+                     collect (list (cons (str-truncate
+                                          (format nil "~A ~A ~Ds ~DL~@[ ~S~]"
+                                                  (task-name task)
+                                                  (task-status-string task)
+                                                  (- (get-universal-time) (task-start task))
+                                                  (task-line-count task)
+                                                  (task-pattern task))
+                                          w)
+                                         (if (eq (task-status task) :running) 7 8))))))))
     (subseq lines (max 0 (- (length lines) h)))))
-
-(defun queue-edit-tool (args)
-  "queue_edit {index, text} — replace the text of queued (held) user
-message INDEX (1-based, as shown in the tasks pane's queue section),
-or queue_edit {index, delete:true} to remove it.  Only *HELD* messages
-(already arrived, waiting for the turn to end) can be edited — the
-queue.txt file is drained into the inbox every second, so edit it
-on disk instead if you must."
-  (let* ((index (ctx-parse-int (arg args "index")))
-         (text (arg args "text"))
-         (del (arg args "delete")))
-    (cond
-      ((or (null index) (< index 1) (> index (length lisping-core::*held*)))
-       (format nil "[queue] ERROR: no queued message ~A (~D held)."
-               (or (arg args "index") "?") (length lisping-core::*held*)))
-      (del
-       (let ((removed (nth (1- index) lisping-core::*held*)))
-         (setf lisping-core::*held* (remove removed lisping-core::*held*
-                                            :count 1 :test #'eq))
-         (format nil "[queue] removed queued message ~D: ~S"
-                 index (str-truncate (if (consp removed) (car removed) removed) 60))))
-      ((and (stringp text) (plusp (length text)))
-       (let* ((cell (nthcdr (1- index) lisping-core::*held*))
-              (old (car cell)))
-         (setf (car cell) (if (consp old) (cons text (cdr old)) text))
-         (format nil "[queue] message ~D now: ~S" index (str-truncate text 60))))
-      (t "[queue] ERROR: pass text to set or delete:true to remove."))))
-
-(register-tool "queue_edit"
-  "Edit or remove a queued (held) user message: {index, text} replaces its text, {index, delete:true} removes it.  Indices are 1-based, as listed in the tasks pane's queue section."
-  (obj :type "object"
-       :properties (obj :index (obj :type "string" :description "1-based index of the queued message")
-                        :text (obj :type "string" :description "new text for the message")
-                        :delete (obj :type "boolean" :description "true to remove the message instead of editing"))
-       :required (vector "index"))
-  'queue-edit-tool)
 
 (defun tasks-init-panes ()
   "Register the tasks pane and put it right of the context pane.
