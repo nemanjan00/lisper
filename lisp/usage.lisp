@@ -128,6 +128,13 @@ is true when some model had no price, so the cost leaves it out."
               (getf s :calls) (usage-fmt-tokens (getf s :prompt)) (usage-hit-rate s)
               (usage-fmt-tokens (getf s :completion)) (usage-fmt-cost cost)))))
 
+(defun usage-compact-line ()
+  "Short form for a narrow pane: calls, cache hit rate and cost."
+  (multiple-value-bind (s cost) (usage-sum)
+    (when (plusp (getf s :calls))
+      (format nil "~D calls · ~D% cached · ~A" (getf s :calls) (usage-hit-rate s)
+              (usage-fmt-cost cost)))))
+
 (defun usage-report ()
   "Lines for /usage."
   (multiple-value-bind (s cost partial) (usage-sum)
