@@ -45,8 +45,13 @@ originals.")
 (defvar *ctx-batch-min-percent* 30
   "The queue applies once its edits together cut this share of the context ...")
 
-(defvar *ctx-force-percent* 85
-  "... or the context is at least this percent of the budget.")
+(defvar *ctx-force-percent* 95
+  "The queue applies when the context is at least this percent of the
+budget (near the limit) ...")
+
+(defvar *ctx-big-cut-floor-percent* 80
+  "... or when it cuts *CTX-BATCH-MIN-PERCENT* AND the context is at least
+this percent of the budget.  Below that nothing is edited at all.")
 
 (defvar *ctx-batch-gap* 900
   "Seconds between applied batches (not enforced when over budget).")
@@ -54,7 +59,7 @@ originals.")
 (defvar *ctx-auto-compact* t
   "When true, a context at *CTX-AUTO-COMPACT-PERCENT* of the budget asks for /compact.")
 
-(defvar *ctx-auto-compact-percent* 95)
+(defvar *ctx-auto-compact-percent* 99)
 
 (defvar *ctx-auto-compact-at* nil "Universal time of the last automatic /compact request.")
 
@@ -72,16 +77,17 @@ Claude Sonnet/Opus/Haiku 200k, anything unknown 200k (the safe side)."
 (defvar *ctx-window* (ctx-model-window)
   "Context window in tokens, from the model name (see CTX-MODEL-WINDOW).")
 
-(defvar *ctx-budget* (min 200000 (floor (* 3 *ctx-window*) 4))
-  "Working budget in tokens: cost, latency and quality suffer long
-before the window is full, so thresholds are percents of THIS.  At most
-200k, and 3/4 of the window on small-window models.")
+(defvar *ctx-budget* (floor (* 9 *ctx-window*) 10)
+  "Working budget in tokens, 90% of the window (180k of 200k): the user
+prefers a large context to a lean one and accepts a cold cache after
+idle time, so nothing is trimmed to save tokens; thresholds are
+percents of THIS.")
 
-(defvar *ctx-note-at* 70 "Percent of the budget at which to note.")
+(defvar *ctx-note-at* 88 "Percent of the budget at which to note.")
 
-(defvar *ctx-near-at* 80 "Percent at which the note becomes an instruction.")
+(defvar *ctx-near-at* 94 "Percent at which the note becomes an instruction.")
 
-(defvar *ctx-task-note-at* 60
+(defvar *ctx-task-note-at* 92
   "Percent of the budget below which finishing a todo triggers no nudge
 (a context edit far back re-caches everything after it: only worth it
 when it cuts a lot).")
@@ -388,7 +394,8 @@ calls produce several)."
 and the gap since the last batch has passed (unless over budget)."
   (and *ctx-queue*
        (let ((budget-pct (ctx-current-percent)))
-         (and (or (>= (ctx-queue-percent) *ctx-batch-min-percent*)
+         (and (or (and (>= (ctx-queue-percent) *ctx-batch-min-percent*)
+                       (>= budget-pct *ctx-big-cut-floor-percent*))
                   (>= budget-pct *ctx-force-percent*))
               (or (>= budget-pct 100) (zerop (ctx-gap-left)))))))
 
@@ -468,8 +475,8 @@ it.  Returns an error string, or NIL."
           (length *ctx-queue*) (ctx-fmt-k (ctx-queue-saving)) (ctx-queue-percent)
           (cond ((ctx-batch-ready-p)
                  "The batch is big enough: it applies at the next request, in one go.")
-                (t (format nil "Queued, applies once the batch reaches ~D% or the context nears budget (~D%)~:[~;; the last batch was too recent, next one allowed in ~A~]."
-                           *ctx-batch-min-percent* *ctx-force-percent*
+                (t (format nil "Queued, applies once the batch reaches ~D% and the context is past ~D% of budget, or the context nears budget (~D%)~:[~;; the last batch was too recent, next one allowed in ~A~]."
+                           *ctx-batch-min-percent* *ctx-big-cut-floor-percent* *ctx-force-percent*
                            (plusp (ctx-gap-left)) (ctx-fmt-age (ctx-gap-left)))))))
 
 (defun ctx-apply-queue ()
@@ -559,7 +566,7 @@ nested inside a later rewind)."
                           (cond ((ctx-batch-ready-p) "applies at the next request")
                                 ((plusp (ctx-gap-left))
                                  (format nil "next batch in ~A" (ctx-fmt-age (ctx-gap-left))))
-                                (t (format nil "applies at ~D% or near budget" *ctx-batch-min-percent*))))
+                                (t (format nil "applies near the budget (~D%)" *ctx-force-percent*))))
                   3)
             lines))
     (nreverse lines)))
@@ -1229,7 +1236,7 @@ Idempotent."
                (not (search "[context:compactor]" *system-prompt*)))
       (setf *system-prompt*
             (concatenate 'string *system-prompt* "
-- [context:compactor] Keep your context lean, but edit it rarely: a rewind/offload far back makes the provider re-cache everything after it (about 12x the price of a cache read), so small edits never pay back. The code enforces this: context_rewind and context_offload only QUEUE an edit; the queue is applied in ONE batch at the next request, and only once the queued edits together cut at least 30% of the context or the context is above ~85% of the budget, and at most once per 15 minutes (not enforced over budget). So queue a rewind when a big finished stretch exists (one context_rewind over the whole stretch, with a summary that keeps what later work needs verbatim: paths, line numbers, ids, decisions), then carry on; do not repeat it, the answer says when it applies. Big tool results are trimmed automatically when they arrive; context_offload {entry, text} is for a rare huge old one. Near the budget the harness may run /compact itself. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
+- [context:compactor] Keep your context lean, but edit it rarely: a rewind/offload far back makes the provider re-cache everything after it (about 12x the price of a cache read), so small edits never pay back. The user prefers a LARGE context to a lean one and accepts a cold cache after idle time, so do not trim working context to save tokens: edit only near the limit (the budget is 90% of the window), in one big cut or via /compact. The code enforces this: context_rewind and context_offload only QUEUE an edit; the queue is applied in ONE batch at the next request, and only once the context is above ~95% of the budget (or ~80% with the queued edits cutting 30%+), and at most once per 15 minutes (not enforced over budget). Do not register or remove tools, or reload tool files, in the live image either: the tool list heads the cached prefix, so test new tools in a throwaway lisper and batch tool changes. So queue a rewind when a big finished stretch exists (one context_rewind over the whole stretch, with a summary that keeps what later work needs verbatim: paths, line numbers, ids, decisions), then carry on; do not repeat it, the answer says when it applies. Big tool results are trimmed automatically when they arrive; context_offload {entry, text} is for a rare huge old one. Near the budget the harness may run /compact itself. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
     (when (and (stringp *system-prompt*)
                (not (search "[eval:docs]" *system-prompt*)))
       (setf *system-prompt*
