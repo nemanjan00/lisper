@@ -8,6 +8,17 @@
 
 (defconstant +ui-bg-mask+ 240)
 
+;; Style bits above the 8 colour bits (the grid stores 16-bit attrs).
+(defconstant +attr-bold+ 256)
+(defconstant +attr-italic+ 512)
+(defconstant +attr-underline+ 1024)
+
+(defun ui-style-codes (attr)
+  "SGR parameters for the style bits of ATTR (bold 1, italic 3, underline 4)."
+  (append (and (logtest attr +attr-bold+) (list 1))
+          (and (logtest attr +attr-italic+) (list 3))
+          (and (logtest attr +attr-underline+) (list 4))))
+
 (defun ui-attr (fg &key bright bg bgbright)
   (logior (logand fg 7)
           (if bright 8 0)
@@ -95,25 +106,29 @@ colour+1 and bit 7 the bright flag."
   "SGR parameters (truecolor fg and bg) for ATTR under THEME, or NIL
 without a theme."
   (when theme
-    (or (aref (theme-cache theme) attr)
-        (setf (aref (theme-cache theme) attr)
-              (let* ((fg (aref (theme-fg theme) (logand attr 15)))
-                     (slot (ui-attr-bg-slot attr))
-                     (bg (if slot (aref (theme-bg theme) slot) (theme-default-bg theme))))
-                (append (cons 38 (cons 2 fg)) (cons 48 (cons 2 bg))))))))
+    (let* ((base (logand attr 255))
+           (colours (or (aref (theme-cache theme) base)
+                        (setf (aref (theme-cache theme) base)
+                              (let* ((fg (aref (theme-fg theme) (logand attr 15)))
+                                     (slot (ui-attr-bg-slot attr))
+                                     (bg (if slot (aref (theme-bg theme) slot) (theme-default-bg theme))))
+                                (append (cons 38 (cons 2 fg)) (cons 48 (cons 2 bg))))))))
+      (if (> attr 255)
+          (append colours (ui-style-codes attr))
+          colours))))
 
 (defun ui-attr-codes (attr)
   "SGR parameters for ATTR: truecolor under *TUI-THEME*, else plain ANSI."
   (or (ui-theme-codes attr)
       (let ((fg (logand attr 7))
             (fb (logbitp 3 attr))
-            (bg (ash attr -4))
+            (bg (logand (ash attr -4) 7))
             (bb (logbitp 7 attr))
             (codes nil))
         (when (plusp bg)
           (push (+ 39 bg (if bb 60 0)) codes))
         (push (+ 30 fg (if fb 60 0)) codes)
-        (nreverse codes))))
+        (append (nreverse codes) (ui-style-codes attr)))))
 
 (defun ui-attr-string (attr prev)
   (if (= attr prev)
