@@ -351,7 +351,15 @@ other control characters dropped."
         ((and (characterp key) (member key '(#\Rubout #\Backspace)))
          (tui-input-backspace ui))
         ((and (characterp key) (char= key #\Nak)) (tui-clear-input ui)) ; C-u
-        ((and (characterp key) (char= key #\Etx)) (tui-clear-input ui)) ; C-c
+        ;; C-c: stops a running turn when the input is empty, else clears it.
+        ((and (characterp key) (char= key #\Etx))
+         (unless (and (zerop (length (tui-ui-input ui)))
+                      (fboundp 'interrupt-turn)
+                      (funcall 'interrupt-turn))
+           (tui-clear-input ui)))
+        ;; Esc twice while a turn runs: interrupt it.
+        ((or (eq key :escape) (and (characterp key) (char= key #\Esc)))
+         (when (fboundp 'interrupt-esc) (funcall 'interrupt-esc)))
         ((and (characterp key) (char= key #\Eot)) (tui-ctrl-d ui))       ; C-d
         ((and (characterp key) (graphic-char-p key))
          (tui-input-insert ui key))
