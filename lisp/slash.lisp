@@ -132,16 +132,42 @@ answer (keeping the selection when still in range), else close it."
                     (make-completion
                      :items items :start start :end end)))))))))
 
-(defun completion-accept (ui)
-  "Replace the word under the popup with the selected item."
+(defun completion-replace-word (ui string)
+  "Replace the popup's word in the input with STRING, cursor after it."
   (let* ((c *completion*)
-         (item (nth (completion-sel c) (completion-items c)))
          (in (tui-ui-input ui))
          (tail (subseq in (min (length in) (completion-end c)))))
     (setf (fill-pointer in) (completion-start c))
-    (loop for ch across (car item) do (vector-push-extend ch in))
+    (loop for ch across string do (vector-push-extend ch in))
     (loop for ch across tail do (vector-push-extend ch in))
-    (setf (tui-ui-input-cursor ui) (+ (completion-start c) (length (car item))))
+    (setf (tui-ui-input-cursor ui) (+ (completion-start c) (length string)))))
+
+(defun completion-common-prefix (items)
+  "Longest prefix shared by the insert strings of ITEMS."
+  (let ((p (car (first items))))
+    (dolist (it (rest items) p)
+      (let ((m (mismatch p (car it))))
+        (when m (setf p (subseq p 0 m)))))))
+
+(defun completion-extend (ui)
+  "Vim-style first Tab: when every candidate shares a longer prefix
+than the word typed so far, insert it and keep the popup open. Returns
+T when it did."
+  (let* ((c *completion*)
+         (common (completion-common-prefix (completion-items c)))
+         (typed (- (min (tui-ui-input-cursor ui) (length (tui-ui-input ui)))
+                   (completion-start c))))
+    (when (and (cdr (completion-items c)) (> (length common) typed))
+      (completion-replace-word ui common)
+      (setf (completion-end c) (tui-ui-input-cursor ui)
+            (completion-sel c) 0)
+      t)))
+
+(defun completion-accept (ui)
+  "Replace the word under the popup with the selected item."
+  (let* ((c *completion*)
+         (item (nth (completion-sel c) (completion-items c))))
+    (completion-replace-word ui (car item))
     (completion-close)
     ;; Refresh now so a completed "/resume " immediately offers its
     ;; arguments; the state is recorded so the draw doesn't redo it.
@@ -167,16 +193,24 @@ Tab with no popup asks the Tab sources (path completion)."
            (mod (1+ (completion-sel *completion*)) (length (completion-items *completion*))))
      t)
     ((and *completion* (characterp key) (char= key #\Tab))
-     (completion-accept ui) t)
+     ;; Common prefix first; accept the highlighted item only when
+     ;; there is nothing more to extend (or the user chose with Up/Down).
+     (unless (and (not (completion-moved *completion*)) (completion-extend ui))
+       (completion-accept ui))
+     (setf *completion-seen* (completion-input-state ui))
+     t)
     ((and *completion* (or (eq key :escape) (and (characterp key) (char= key #\Esc))))
      (completion-close)
      (setf *completion-seen* (completion-input-state ui))
      t)
     ((and (characterp key) (char= key #\Tab))
      (completion-open ui (cons 'slash-source *completion-sources*))
-     ;; A single candidate completes at once, like vim.
-     (when (and *completion* (null (cdr (completion-items *completion*))))
-       (completion-accept ui))
+     ;; A single candidate completes at once, like vim; several that
+     ;; share a longer prefix extend to it and leave the popup open.
+     (when *completion*
+       (if (null (cdr (completion-items *completion*)))
+           (completion-accept ui)
+           (completion-extend ui)))
      (setf *completion-seen* (completion-input-state ui))
      t)
     (t nil)))
