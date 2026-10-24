@@ -36,6 +36,7 @@
 (load-file "lisp/models.lisp")
 (load-file "lisp/history.lisp")
 (load-file "lisp/copy.lisp")
+(load-file "lisp/search.lisp")
 (load-file "lisp/interrupt.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
@@ -74,3 +75,6 @@
 
 ;; /copy and Ctrl-Y: last reply / code block to the clipboard (OSC 52).
 (copy-start)
+
+;; /find: search the chat scrollback, highlight, Ctrl-P/Ctrl-N.
+(find-start)

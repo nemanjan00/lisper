@@ -222,7 +222,11 @@ ratios come back exactly when the terminal is wide again."
 
 (defun pane-chat-render (pane w h)
   (when *tui*
-    (tui-visible-lines pane (tui-ui-chat *tui*) w h)))
+    (let ((lines (tui-visible-lines pane (tui-ui-chat *tui*) w h)))
+      ;; lisp/search.lisp: highlight the /find term, note the pane height.
+      (if (fboundp 'find-render-hook)
+          (funcall 'find-render-hook lines h)
+          lines))))
 
 (defun pane-buf-render (pane w h)
   (tui-visible-lines pane (pane-buf pane) w h))
