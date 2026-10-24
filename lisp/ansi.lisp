@@ -42,16 +42,73 @@ arrow into NEXT-BG."
   (list (cons (format nil " ~A " text) (tui-seg-attr fg bg))
         (cons (string (car *tui-status-arrows*)) (tui-arrow-attr bg next-bg))))
 
+(defstruct (tui-theme (:conc-name theme-))
+  "A palette for the 8-bit ATTR slots.  FG and BG are 16-entry vectors of
+(r g b), indexed by slot (0-7 normal, 8-15 bright).  The arrow of a
+powerline segment uses the segment's bg slot as its fg, so slots 1-7
+should be the same colour in both vectors.  DEFAULT-BG fills cells with
+no bg slot (the screen background).  CACHE memoises SGR params per attr."
+  name fg bg default-bg (cache (make-array 256 :initial-element nil)))
+
+(defvar *tui-theme* nil
+  "The active TUI-THEME, or NIL for the terminal's own 16 ANSI colours.")
+
+(defvar *tui-themes* nil
+  "Alist name-string -> TUI-THEME; (define-tui-theme ...) adds to it.")
+
+(defun define-tui-theme (name &key fg bg default-bg)
+  "Register theme NAME from vectors of 16 #xRRGGBB integers FG and BG
+and the integer DEFAULT-BG."
+  (flet ((rgb (n) (list (ldb (byte 8 16) n) (ldb (byte 8 8) n) (ldb (byte 8 0) n))))
+    (let ((th (make-tui-theme :name name :fg (map 'vector #'rgb fg)
+                              :bg (map 'vector #'rgb bg)
+                              :default-bg (rgb default-bg))))
+      (setf *tui-themes* (append (remove name *tui-themes* :key #'car :test #'string=)
+                                 (list (cons name th))))
+      th)))
+
+;;; Dracula (draculatheme.com): bg 282a36, current line 44475a, fg f8f8f2,
+;;; comment 6272a4, cyan 8be9fd, green 50fa7b, orange ffb86c, pink ff79c6,
+;;; purple bd93f9, red ff5555, yellow f1fa8c.  Slot 0 is the dark ink used
+;;; on coloured segments (and a darker panel bg); slot 8 is the comment
+;;; colour as text and the current-line grey as a background.
+(define-tui-theme
+    "dracula"
+  :fg  #(#x282a36 #xff5555 #x50fa7b #xf1fa8c #xbd93f9 #xff79c6 #x8be9fd #xf8f8f2
+         #x6272a4 #xff6e6e #x69ff94 #xffb86c #xd6acff #xff92df #xa4ffff #xffffff)
+  :bg  #(#x21222c #xff5555 #x50fa7b #xf1fa8c #xbd93f9 #xff79c6 #x8be9fd #xf8f8f2
+         #x44475a #xff6e6e #x69ff94 #xffb86c #xd6acff #xff92df #xa4ffff #xffffff)
+  :default-bg #x282a36)
+
+(defun ui-attr-bg-slot (attr)
+  "Background slot 0-15 of ATTR, or NIL for the default.  Bits 4-6 hold
+colour+1 and bit 7 the bright flag."
+  (let ((v (logand (ash attr -4) 7)))
+    (and (plusp v) (+ (1- v) (if (logbitp 7 attr) 8 0)))))
+
+(defun ui-theme-codes (attr &optional (theme *tui-theme*))
+  "SGR parameters (truecolor fg and bg) for ATTR under THEME, or NIL
+without a theme."
+  (when theme
+    (or (aref (theme-cache theme) attr)
+        (setf (aref (theme-cache theme) attr)
+              (let* ((fg (aref (theme-fg theme) (logand attr 15)))
+                     (slot (ui-attr-bg-slot attr))
+                     (bg (if slot (aref (theme-bg theme) slot) (theme-default-bg theme))))
+                (append (cons 38 (cons 2 fg)) (cons 48 (cons 2 bg))))))))
+
 (defun ui-attr-codes (attr)
-  (let ((fg (logand attr 7))
-        (fb (logbitp 3 attr))
-        (bg (ash attr -4))
-        (bb (logbitp 7 attr))
-        (codes nil))
-    (when (plusp bg)
-      (push (+ 39 bg (if bb 60 0)) codes))
-    (push (+ 30 fg (if fb 60 0)) codes)
-    (nreverse codes)))
+  "SGR parameters for ATTR: truecolor under *TUI-THEME*, else plain ANSI."
+  (or (ui-theme-codes attr)
+      (let ((fg (logand attr 7))
+            (fb (logbitp 3 attr))
+            (bg (ash attr -4))
+            (bb (logbitp 7 attr))
+            (codes nil))
+        (when (plusp bg)
+          (push (+ 39 bg (if bb 60 0)) codes))
+        (push (+ 30 fg (if fb 60 0)) codes)
+        (nreverse codes))))
 
 (defun ui-attr-string (attr prev)
   (if (= attr prev)
