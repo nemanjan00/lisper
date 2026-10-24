@@ -21,12 +21,7 @@
   "DIR (the part of the word up to its last /, with the slash) as an
 absolute directory string, or NIL."
   (let* ((home (string-right-trim "/" (namestring (user-homedir-pathname))))
-         ;; *CWD* is NIL in a fresh session: fall back to the process
-         ;; directory, then home.
-         (cwd (string-right-trim
-               "/" (namestring (or lisping-core:*cwd*
-                                   (ignore-errors (sb-posix:getcwd))
-                                   home))))
+         (cwd (string-right-trim "/" (namestring lisping-core:*cwd*)))
          (d (cond ((string= dir "") (concatenate 'string cwd "/"))
                   ((char= (char dir 0) #\~)
                    (concatenate 'string home (subseq dir 1)))
