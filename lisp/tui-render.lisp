@@ -458,10 +458,10 @@ and empty messages are skipped."
         (replace (uigrid-attrs g) (uigrid-attrs *panes-canvas*))
         (tui-draw-queue g ui pane-h w)
         (tui-draw-status g ui (1- h) w)
-        (let* ((row (1- h))
+        (let* ((row (- h 2))
                ;; TUI-DRAW-INPUT returns the cursor column: with
                ;; horizontal scroll it is not prompt-len + cursor + 1.
-               (col (tui-draw-input g ui pane-h w))
+               (col (tui-draw-input g ui row w))
                (full (or (null *tui-prev-grid*)
                          (/= (uigrid-w *tui-prev-grid*) w)
                          (/= (uigrid-h *tui-prev-grid*) h)))
