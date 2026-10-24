@@ -66,7 +66,8 @@
   (let* ((a *activity*)
          (elapsed (floor (activity-seconds (- (activity-now) (activity-since a))))))
     (ecase (activity-kind a)
-      (:idle (list "idle" 7 :grey))
+      ;; Integer colours only: TUI-DRAW-STATUS uses UI-ATTR directly.
+      (:idle (list "idle" 7 4))
       (:thinking (list (format nil "~A thinking ~Ds" (activity-spinner) elapsed) 0 3))
       (:tool (list (format nil "~A ~A ~Ds" (activity-spinner)
                            (str-truncate (or (activity-name a) "tool") 24) elapsed)
