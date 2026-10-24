@@ -31,11 +31,21 @@ originals.")
 
 (defvar *ctx-offloaded-count* 0)
 
-(defvar *ctx-window* 1048576 "Context window in tokens (K3: 1M).")
+(defun ctx-model-window (&optional (model lisping-core:*model*))
+  "Context window in tokens for MODEL (by name): Kimi K-series 1M,
+Claude Sonnet/Opus/Haiku 200k, anything unknown 200k (the safe side)."
+  (let ((m (string-downcase (or model ""))))
+    (cond ((search "kimi" m) 1048576)
+          ((search "claude" m) 200000)
+          (t 200000))))
 
-(defvar *ctx-budget* 200000
+(defvar *ctx-window* (ctx-model-window)
+  "Context window in tokens, from the model name (see CTX-MODEL-WINDOW).")
+
+(defvar *ctx-budget* (min 200000 (floor (* 3 *ctx-window*) 4))
   "Working budget in tokens: cost, latency and quality suffer long
-before the window is full, so thresholds are percents of THIS.")
+before the window is full, so thresholds are percents of THIS.  At most
+200k, and 3/4 of the window on small-window models.")
 
 (defvar *ctx-note-at* 70 "Percent of the budget at which to note.")
 
