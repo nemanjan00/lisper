@@ -370,21 +370,24 @@ directory). Return (values output exit-code)."
 (defun wait-or-kill (process)
   "Wait for PROCESS (started with :wait nil) to exit. If the wait is unwound
 instead (a cancelled turn, an eval timeout), kill its process group, so the
-command and whatever it started don't run on unseen: TERM now, KILL after
-2 seconds if anything in the group is still alive. run-program makes each
-child the leader of its own group."
+command and whatever it started don't run on unseen: TERM, then KILL if the
+group is still there after a second. It returns only once the group is gone
+(or after 3 seconds at most), so cleanup that follows (removing a directory
+the child wrote to) doesn't race a dying child. run-program makes each child
+the leader of its own group."
   (let ((done nil))
     (unwind-protect (progn (sb-ext:process-wait process) (setf done t))
       (unless done
         (let ((pgid (sb-ext:process-pid process)))
-          (sb-unix:unix-kill (- pgid) sb-unix:sigterm)
-          (sb-thread:make-thread
-           (lambda ()
-             (sleep 2)
-             (when (sb-unix:unix-kill (- pgid) 0)
-               (sb-unix:unix-kill (- pgid) sb-unix:sigkill))
-             (ignore-errors (sb-ext:process-wait process)))
-           :name "reap-cancelled"))))
+          (flet ((group-gone-p (seconds)
+                   (loop repeat (* seconds 20)
+                         do (sb-ext:process-alive-p process) ; reaps the leader once it exits
+                            (unless (zerop (sb-unix:unix-kill (- pgid) 0)) (return t))
+                            (sleep 0.05))))
+            (sb-unix:unix-kill (- pgid) sb-unix:sigterm)
+            (unless (group-gone-p 1)
+              (sb-unix:unix-kill (- pgid) sb-unix:sigkill)
+              (group-gone-p 2))))))
     process))
 
 (defun tmp-path (name type)
@@ -591,42 +594,67 @@ another session's git holds the index lock. Return (values output exit-code)."
            (sleep 0.4))
   (shell command :directory directory))
 
-(defun staged-tree (paths)
-  "Build exactly the tree a path-limited commit of PATHS would make (HEAD plus the
-current contents of PATHS) in a temporary index, and check it out into a
-temporary directory. Return (values directory tree-hash), or NIL if git can't.
-Booting that directory checks precisely what gets committed: another session's
-uncommitted files in the working tree are not in it."
+(defun staged-tree (files dir)
+  "Build exactly the tree a path-limited commit of FILES would make (HEAD plus
+FILES, a list of (path . new text)) in a temporary index, and check it out into
+DIR. Return the tree's hash, or NIL if git can't. The caller removes DIR.
+The new text goes straight into git's object store: the working tree isn't
+written, so a cancelled or failed check leaves it as it was. Booting that
+directory checks precisely what gets committed: another session's uncommitted
+files in the working tree are not in it."
   (let* ((stamp (format nil "~D-~D" (get-universal-time) (random 1000000)))
          (index (namestring (home-path (format nil "tmp/index-~A" stamp))))
-         (dir (namestring (home-path (format nil "tmp/tree-~A/" stamp))))
-         (env (format nil "GIT_INDEX_FILE=~A " (shell-quote index))))
+         (env (format nil "GIT_INDEX_FILE=~A " (shell-quote index)))
+         (blobs (loop for (path . nil) in files
+                      for i from 0
+                      collect (list path (namestring (home-path (format nil "tmp/blob-~A-~D" stamp i)))))))
     (multiple-value-bind (out code)
-        (git (format nil "~Agit read-tree HEAD && ~Agit add -- ~{~A ~}&& ~Agit checkout-index -a --prefix=~A && ~Agit write-tree"
-                     env env (mapcar #'shell-quote paths) env (shell-quote dir) env))
-      (ignore-errors (delete-file index))
-      (cond ((eql code 0)
-             ;; As in the hook: the settings file and an empty state directory.
-             (when (probe-file (merge-pathnames ".env" *root*))
-               (shell (format nil "ln -s ~A ~A" (shell-quote (namestring (merge-pathnames ".env" *root*)))
-                              (shell-quote (concatenate 'string dir ".env")))))
-             (ensure-directories-exist (concatenate 'string dir "state/"))
-             (values dir (string-trim '(#\Space #\Newline)
-                                      (subseq out (1+ (or (position #\Newline (string-right-trim '(#\Newline) out) :from-end t) -1))))))
-            (t (remove-tree dir) nil)))))
+        (unwind-protect
+             (progn
+               (loop for (nil tmp) in blobs for (nil . text) in files do (write-text tmp text))
+               (git (format nil "~Agit read-tree HEAD && ~{~A && ~}~Agit checkout-index -a --prefix=~A && ~Agit write-tree"
+                            env
+                            (loop for (path tmp) in blobs
+                                  collect (format nil "~Agit update-index --add --cacheinfo ~:[100644~;100755~],$(git hash-object -w ~A),~A"
+                                                  env (eql 0 (nth-value 1 (shell (format nil "test -x ~A" (shell-quote path)) :directory *root*)))
+                                                  (shell-quote tmp) (shell-quote path)))
+                            env (shell-quote dir) env)))
+          (dolist (b blobs) (ignore-errors (delete-file (second b))))
+          (ignore-errors (delete-file index)))
+      (when (eql code 0)
+        ;; As in the hook: the settings file and an empty state directory.
+        (when (probe-file (merge-pathnames ".env" *root*))
+          (shell (format nil "ln -s ~A ~A" (shell-quote (namestring (merge-pathnames ".env" *root*)))
+                         (shell-quote (concatenate 'string dir ".env")))))
+        (ensure-directories-exist (concatenate 'string dir "state/"))
+        (string-trim '(#\Space #\Newline)
+                     (subseq out (1+ (or (position #\Newline (string-right-trim '(#\Newline) out) :from-end t) -1))))))))
 
 (defun remove-tree (dir)
   (when (and dir (or (search "/tmp/tree-" dir) (search "/tmp/home-" dir)))
     (shell (format nil "rm -rf ~A" (shell-quote dir)))))
 
-(defun checked-test-boot (paths extra)
-  "TEST-BOOT on the tree a commit of PATHS would hold. Return (values problems
-tree-hash); the hash is NIL when that tree couldn't be built and the working
-tree was booted instead."
-  (multiple-value-bind (dir tree) (staged-tree paths)
+(defun checked-test-boot (files extra)
+  "TEST-BOOT on the tree a commit of FILES, a list of (path . new text), would
+hold, without writing them to the working tree. Return (values problems
+tree-hash); the hash is NIL when that tree couldn't be built (no git, no HEAD):
+then the files are written to the working tree for the boot and always put back
+afterwards, even when the boot is cancelled."
+  (let ((dir (namestring (home-path (format nil "tmp/tree-~D-~D/" (get-universal-time) (random 1000000))))))
     (unwind-protect
-         (values (test-boot :timeout 60 :extra extra :directory (or dir *root*)) tree)
-      (remove-tree dir))))
+         (let ((tree (staged-tree files dir)))
+           (when tree
+             (return-from checked-test-boot
+               (values (test-boot :timeout 60 :extra extra :directory dir) tree))))
+      (remove-tree dir)))
+  (let ((olds (mapcar (lambda (f) (read-text (merge-pathnames (car f) *root*))) files)))
+    (unwind-protect
+         (progn (dolist (f files) (write-text (merge-pathnames (car f) *root*) (cdr f)))
+                (values (test-boot :timeout 60 :extra extra) nil))
+      (sb-sys:without-interrupts
+        (loop for f in files for old in olds
+              for file = (merge-pathnames (car f) *root*)
+              do (if old (write-text file old) (ignore-errors (delete-file file))))))))
 
 (defun commit (message &optional path checked)
   "Commit under the project directory: just PATH when given (so the commit holds
@@ -982,12 +1010,15 @@ name, so a file init.lisp doesn't load yet is checked too), and print the proble
     (format t "~&BOOT-PROBLEMS:~S~%" problems)
     (finish-output)))
 
-(defun scratch-home ()
+(defun scratch-home-path ()
+  (namestring (home-path (format nil "tmp/home-~D-~D/" (get-universal-time) (random 1000000)))))
+
+(defun scratch-home (&optional (dir (scratch-home-path)))
   "A temporary *HOME* for a test boot, deleted after it: copies of the home's
 own files and of this session's data files (not its transcript, logs or lock).
 Paths resolve as they do in the live image, but a file that writes at load time
 writes the copies, never the live session."
-  (let ((dir (namestring (home-path (format nil "tmp/home-~D-~D/" (get-universal-time) (random 1000000))))))
+  (progn
     (shell (format nil "D=~A; S=~A; mkdir -p \"$D/sessions/$S\" && cd ~A && for f in * .[!.]*; do case $f in tmp|sessions|.git|switch|*.log) ;; *) [ -e \"$f\" ] && cp -a \"$f\" \"$D/\" ;; esac; done; cd \"sessions/$S\" 2>/dev/null && for f in *; do case $f in lock|messages*|*.jsonl|*.log|queue.*|tmp) ;; *) [ -e \"$f\" ] && cp -a \"$f\" \"$D/sessions/$S/\" ;; esac; done; true"
                    (shell-quote dir) (shell-quote *session*) (shell-quote (namestring *home*))))
     dir))
@@ -999,15 +1030,19 @@ clean). The running image can pass a check only because of state left over
 from earlier; this shows whether the files work from scratch. DIRECTORY is the
 project to boot (the working tree by default). It runs on a SCRATCH-HOME."
   (multiple-value-bind (out code)
-      (let ((home (scratch-home)))
+      ;; The path is chosen before the copy starts, so a cancel during the
+      ;; copy still removes it.
+      (let ((home (scratch-home-path)))
         (unwind-protect
-             (shell (format nil "cd ~A && LISPER_HOME=~A LISPER_SESSION=~A LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
+             (progn
+               (scratch-home home)
+               (shell (format nil "cd ~A && LISPER_HOME=~A LISPER_SESSION=~A LISPING_NO_TUI=1 LISPING_HEADLESS=1 timeout --foreground ~D ~A --core ~A --noinform --non-interactive --load core.lisp --eval ~A 2>&1"
                             (shell-quote (namestring directory))
                             (shell-quote home) (shell-quote *session*)
                             timeout
                             (shell-quote (namestring sb-ext:*runtime-pathname*))
                             (shell-quote (namestring sb-ext:*core-pathname*))
-                            (shell-quote (format nil "(lisping-core::print-boot-problems '~S)" extra))))
+                            (shell-quote (format nil "(lisping-core::print-boot-problems '~S)" extra)))))
           (remove-tree home)))
     (let ((mark (search "BOOT-PROBLEMS:" out)))
       (if mark
@@ -1038,28 +1073,28 @@ was made from), and FORCE work as BASE and FORCE do for WRITE-FILE-AND-LOAD."
       (when stale
         (return-from write-files-and-load
           (format nil "~{~A~%~}Nothing was written." stale))))
-    (flet ((restore ()
-             (dolist (e entries)
-               (destructuring-bind (name file code old base) e
-                 (declare (ignore name code base))
-                 (if old (write-text file old) (ignore-errors (delete-file file)))))))
-      (handler-case (dolist (e entries) (write-text (second e) (third e)))
-        (error (c) (restore) (return-from write-files-and-load (format nil "NOT SAVED: ~A" c))))
-      (let* ((lisp (remove-if-not (lambda (e) (equalp (pathname-type (second e)) "lisp")) entries))
-             (tree nil)
-             (fresh (and lisp (multiple-value-bind (problems hash)
-                                  (checked-test-boot (mapcar #'first entries) (mapcar #'first lisp))
-                                (setf tree hash)
-                                problems))))
-        (when fresh
-          (restore)
-          (return-from write-files-and-load
-            (format nil "NOT SAVED. In a fresh boot with these ~D files, loading reported:~%~{- ~A~%~}Every file was put back; the running image was not touched."
-                    (length entries) fresh)))
-        (dolist (e entries) (note-file (first e) (third e)))
-        (let ((out (make-string-output-stream)) (problems '()) (failure nil))
-          (dolist (e lisp)
-            (setf problems (append problems (load-collecting (second e) out))))
+    ;; The working tree is written only once the fresh boot passed, so a
+    ;; cancel or a failure before that leaves the disk as it was.
+    (let* ((lisp (remove-if-not (lambda (e) (equalp (pathname-type (second e)) "lisp")) entries))
+           (tree nil)
+           (fresh (and lisp (multiple-value-bind (problems hash)
+                                (checked-test-boot (mapcar (lambda (e) (cons (first e) (third e))) entries)
+                                                   (mapcar #'first lisp))
+                              (setf tree hash)
+                              problems))))
+      (when fresh
+        (return-from write-files-and-load
+          (format nil "NOT SAVED. In a fresh boot with these ~D files, loading reported:~%~{- ~A~%~}Nothing was written; the running image was not touched."
+                  (length entries) fresh)))
+      (let ((out (make-string-output-stream)) (problems '()) (failure nil))
+        ;; Written and committed as one step a cancel can't cut in half.
+        (sb-sys:without-interrupts
+          (handler-case (dolist (e entries) (write-text (second e) (third e)))
+            (error (c)
+              (dolist (e entries)
+                (if (fourth e) (write-text (second e) (fourth e)) (ignore-errors (delete-file (second e)))))
+              (return-from write-files-and-load (format nil "NOT SAVED: ~A" c))))
+          (dolist (e entries) (note-file (first e) (third e)))
           (git (format nil "git add -- ~{~A ~}" (mapcar (lambda (e) (shell-quote (first e))) entries)))
           (multiple-value-bind (gout code)
               (git (format nil "~Agit commit -q -m ~A -- ~{~A ~}"
@@ -1067,9 +1102,11 @@ was made from), and FORCE work as BASE and FORCE do for WRITE-FILE-AND-LOAD."
                            (shell-quote (format nil "update ~{~A~^, ~}" (mapcar #'first entries)))
                            (mapcar (lambda (e) (shell-quote (first e))) entries)))
             (unless (or (eql code 0) (search "nothing to commit" gout))
-              (setf failure (string-trim '(#\Space #\Newline) gout))))
-          (format nil "Wrote~:[~; and loaded~] ~{~A~^, ~}; ~:[committed together~;~:*~A~].~@[~%Loading into the running image reported (the files are kept: they boot cleanly):~%~{- ~A~%~}~]"
-                  lisp (mapcar #'first entries) (and failure (commit-note failure)) problems))))))
+              (setf failure (string-trim '(#\Space #\Newline) gout)))))
+        (dolist (e lisp)
+          (setf problems (append problems (load-collecting (second e) out))))
+        (format nil "Wrote~:[~; and loaded~] ~{~A~^, ~}; ~:[committed together~;~:*~A~].~@[~%Loading into the running image reported (the files are kept: they boot cleanly):~%~{- ~A~%~}~]"
+                  lisp (mapcar #'first entries) (and failure (commit-note failure)) problems)))))
 
 (defvar *file-seen* (make-hash-table :test 'equal)
   "File name (relative to *root*) -> the text this image last loaded, wrote or
@@ -1106,24 +1143,27 @@ that check exact (edit tools should pass it), and FORCE overrides it."
        (format nil "~A is part of the core and can't be written from here." name))
       ((stale-write name old base force))
       ((not (equalp (pathname-type file) "lisp"))
-       (write-text file code)
-       (note-file name code)
-       (format nil "Wrote ~A (~D characters); ~A." name (length code)
-               (commit-note (commit (format nil "~:[add~;update~] ~A" old name) name))))
+       (let ((failure (sb-sys:without-interrupts
+                        (write-text file code)
+                        (note-file name code)
+                        (commit (format nil "~:[add~;update~] ~A" old name) name))))
+         (format nil "Wrote ~A (~D characters); ~A." name (length code) (commit-note failure))))
       (t
-       (write-text file code)
-       (multiple-value-bind (fresh tree) (checked-test-boot (list name) name)
+       ;; The working file is written only once the fresh boot passed: a
+       ;; cancel during the boot leaves the disk as it was.
+       (multiple-value-bind (fresh tree) (checked-test-boot (list (cons name code)) name)
          (when fresh
-           (if old (write-text file old) (ignore-errors (delete-file file)))
            (return-from write-file-and-load
-             (format nil "NOT SAVED. In a fresh boot with this version of ~A, loading reported:~%~{- ~A~%~}~:[The file was new, so it was removed.~;The previous version was put back.~] The running image was not touched."
-                     name fresh old)))
-         (note-file name code)
-       (let* ((out (make-string-output-stream))
+             (format nil "NOT SAVED. In a fresh boot with this version of ~A, loading reported:~%~{- ~A~%~}The file was not written; the running image was not touched."
+                     name fresh)))
+       (let* ((failure (sb-sys:without-interrupts
+                         (write-text file code)
+                         (note-file name code)
+                         (commit (format nil "~:[add~;update~] ~A" old name) name tree)))
+              (out (make-string-output-stream))
               (problems (load-collecting file out))
               (output (limit-output (get-output-stream-string out)))
-              (init (read-text (init-path)))
-              (failure (commit (format nil "~:[add~;update~] ~A" old name) name tree)))
+              (init (read-text (init-path))))
          (format nil "~@[~A~%~]Wrote and loaded ~A; ~A.~@[~%~A~]~@[~%Loading into the running image reported (the file is kept, since it boots cleanly; a restart gives you exactly the files):~%~{- ~A~%~}~]"
                  (and (string/= output "") output) name (commit-note failure)
                  (unless (or (string= name "init.lisp") (and init (search (pathname-name file) init)))
@@ -1286,7 +1326,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *observers*: functions called with every event, before *emit*. The UI owns *emit*; anything else that needs to see events (your compactor, a logger) belongs in *observers*, so a UI restart can't drop it.
 - Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix. Any key starting with \"x-\" is stripped the same way, so you can keep your own bookkeeping on a message (an \"x-id\", say): it stays in *messages*, is saved with the session and survives restarts, but the model never sees it.
-- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages), pins one while the user edits it with (pin-queued text) so it isn't delivered mid-edit, then saves with (edit-queued text new-text), NIL deleting, or cancels with (release-queued text); any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call; so do system messages whose kind is in *mid-turn-kinds* (task exits, monitor matches). queued-messages lists only what the user typed: system messages can't be edited. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away; :queued and :user carry :kind, NIL for what the user typed and e.g. \"task\" or \"nudge\" for system messages, which a UI must not show as the user's. Activity for a UI indicator: :user starts a turn, :thinking marks each model call, :tool-call/:tool-result bracket a tool run, a failed model call that will be retried is an :error with :retry-in seconds and :attempt, and :idle (with :held, the count of waiting messages) means the turn is over and the agent waits for the user. (cancel-turn), from any thread, stops the running turn at once (for a UI's Esc or /stop): the model call or tool run is abandoned, a shell command's process group is killed, unfinished calls get stubs, an assistant message \"[core] The user cancelled this turn here.\" (x-kind \"cancel\") marks the cut, then :info and :idle follow; (turn-busy-p) says whether a turn is running. Code that must not be cut in half by it can run inside sb-sys:without-interrupts.
+- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages), pins one while the user edits it with (pin-queued text) so it isn't delivered mid-edit, then saves with (edit-queued text new-text), NIL deleting, or cancels with (release-queued text); any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call; so do system messages whose kind is in *mid-turn-kinds* (task exits, monitor matches). queued-messages lists only what the user typed: system messages can't be edited. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away; :queued and :user carry :kind, NIL for what the user typed and e.g. \"task\" or \"nudge\" for system messages, which a UI must not show as the user's. Activity for a UI indicator: :user starts a turn, :thinking marks each model call, :tool-call/:tool-result bracket a tool run, a failed model call that will be retried is an :error with :retry-in seconds and :attempt, and :idle (with :held, the count of waiting messages) means the turn is over and the agent waits for the user. (cancel-turn), from any thread, stops the running turn at once (for a UI's Esc or /stop): the model call or tool run is abandoned, a shell command's process group is killed, unfinished calls get stubs, an assistant message \"[core] The user cancelled this turn here.\" (x-kind \"cancel\") marks the cut, then :info and :idle follow; (turn-busy-p) says whether a turn is running. Where a cancel lands: the throw can hit anywhere in the turn except inside sb-sys:without-interrupts, which the core uses for changing *messages* and *held*, saving the session, and writing plus committing files. Edits through eval with file are safe: the working file is written only after the fresh boot passes, so a cancel during the check leaves the disk as it was; a cancel during the live load that follows leaves the image partly updated with a correct file on disk, which a restart fixes. Code of yours that must not be cut in half (several files or variables changed together) should run inside sb-sys:without-interrupts, kept short since the cancel waits for it; cleanup belongs in unwind-protect.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
 - The queue: text appended to the session's queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
@@ -1947,6 +1987,7 @@ number of messages restored."
 
 (defvar *agent-thread* nil "The thread running AGENT-LOOP.")
 (defvar *turn-busy* nil "True while the agent thread is in a turn.")
+(defvar *turn-id* 0 "Counts turns, so a late CANCEL-TURN interrupt can't stop the next one.")
 (defvar *in-turn* nil
   "Bound to T inside the agent thread's turn, where CANCEL-TURN's throw has
 somewhere to go.")
@@ -1963,8 +2004,12 @@ or the session files run without interrupts, so the cancel waits for them."
     (cond ((not (and *turn-busy* thread (sb-thread:thread-alive-p thread))) nil)
           ((eq thread sb-thread:*current-thread*)
            (throw 'cancel-turn :cancelled))
-          (t (sb-thread:interrupt-thread
-              thread (lambda () (when *in-turn* (throw 'cancel-turn :cancelled))))
+          (t ;; The interrupt runs some time later: by then this turn may
+             ;; have ended and a held message started the next one.
+             (let ((id *turn-id*))
+               (sb-thread:interrupt-thread
+                thread (lambda () (when (and *in-turn* (eql *turn-id* id))
+                                    (throw 'cancel-turn :cancelled)))))
              t))))
 
 (defun turn-cancelled ()
@@ -1986,6 +2031,7 @@ drop Dexador's pooled connections (one may be half-read)."
       (when (eq :cancelled
                 (catch 'cancel-turn
                   (let ((*in-turn* t))
+                    (incf *turn-id*)
                     (setf *turn-busy* t)
                     (unwind-protect
                          (handler-case (run-turn)
