@@ -803,12 +803,53 @@ anything not an exact multiple keeps the full ~:D form."
          (format nil "~DK" (/ n 1024)))
         (t (format nil "~:D" n))))
 
+(defvar *ctx-compact-width* 70
+  "Context panes narrower than this (a phone) use the dense view.")
+
+(defun ctx-compact-lines (w h)
+  "Dense context view for a narrow pane: a gauge bar of the budget, one
+status line, then one truncated line per rewind (newest first as kept in
+*ctx-stretches*).  Chunk lists, at most H of them, none wider than W."
+  (let* ((usage *last-usage*)
+         (pt (and (hash-table-p usage)
+                  (integerp (gethash "prompt_tokens" usage))
+                  (gethash "prompt_tokens" usage)))
+         (tokens (or pt *ctx-last-est*))
+         (pct (if (plusp *ctx-budget*) (round (* 100 tokens) *ctx-budget*) 0))
+         (colour (cond ((>= pct 90) 1) ((>= pct 70) 3) (t 2)))
+         (bar-w (max 4 (min 24 (- w 16))))
+         (filled (min bar-w (round (* bar-w (min 100 pct)) 100)))
+         (lines '()))
+    (flet ((add (&rest chunks) (push chunks lines))
+           (fit (s n) (str-truncate s (max 1 n))))
+      (add (cons (fit (format nil "~A~A " (if pt "" "~") (ctx-fmt-k tokens)) (- w 1)) 7)
+           (cons (make-string filled :initial-element #\█) colour)
+           (cons (make-string (- bar-w filled) :initial-element #\░) 8)
+           (cons (format nil " ~D%" pct) colour))
+      (add (cons (fit (format nil "~D msgs~A~A"
+                              (length *messages*)
+                              (if (plusp *ctx-offloaded-count*)
+                                  (format nil " · ~D off" *ctx-offloaded-count*) "")
+                              (if *ctx-pending-note* " · note" ""))
+                      w)
+                 8))
+      (dolist (st *ctx-stretches*)
+        (let ((head (format nil "e~D-~D ~A " (first st) (second st) (ctx-fmt-k (sixth st)))))
+          (add (cons head 6)
+               (cons (fit (substitute #\Space #\Newline (or (third st) ""))
+                          (- w (length head)))
+                     8)))))
+    (let ((out (nreverse lines)))
+      (subseq out 0 (min h (length out))))))
+
 (defun pane-context-render (pane w h)
   "Context size and what the compactor has collapsed, for the pane.
 Returns chunk LISTS (a chunk is (text . attr)).  Main number is the
 REAL prompt_tokens of the last request; the local estimate is only
-shown as what has grown since."
+shown as what has grown since.  Narrow panes get the dense view."
   (declare (ignore pane))
+  (when (< w *ctx-compact-width*)
+    (return-from pane-context-render (ctx-compact-lines w h)))
   (labels ((wrap (text width)
              ;; Word-wrap TEXT to WIDTH columns; continuation lines get a
              ;; two-space hanging indent.  Over-long words are split.
