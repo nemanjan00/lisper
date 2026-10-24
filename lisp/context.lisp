@@ -620,6 +620,26 @@ PREVIOUS request recalibrates the ratio, so this tracks reality."
             (loop for m in *messages* sum (ctx-message-chars m)))
          *ctx-chars-per-token*))
 
+(defun ctx-trim-call-args (&optional (limit 1500))
+  "Stub out huge tool_call ARGUMENTS of assistant messages in finished
+territory (before the latest real user message).  The calls are done,
+their results follow them, trace.log has the full text — but each
+untrimmed batch rides every request forever (an edit_files batch can be
+15k chars)."
+  (let ((guard (ctx-latest-user-index)) (trimmed 0))
+    (loop for m in *messages* for i from 0
+          when (< i guard)
+          do (dolist (tc (coerce (or (gethash "tool_calls" m) #()) 'list))
+               (let* ((f (gethash "function" tc))
+                      (args (and f (gethash "arguments" f))))
+                 (when (and args (> (length args) limit)
+                            (not (search "\"_trimmed\"" args :end2 (min 40 (length args)))))
+                   (setf (gethash "arguments" f)
+                         (format nil "{\"_trimmed\":\"~D chars of args; work finished, trace.log has it\"}"
+                                 (length args)))
+                   (incf trimmed)))))
+    trimmed))
+
 (defun ctx-before-request (body)
   "The compactor's view of every request: assign entry ids, offload
 over-long tool results (originals kept), prefix [entry N] marks on tool
@@ -627,6 +647,7 @@ results and user messages, and inject threshold / truncation /
 milestone notes.  Only the request copy is prefixed; stored messages
 stay clean.  Also calibrates the token estimate: PT (reported usage of
 the request just answered) against the chars we counted for it."
+  (ctx-trim-call-args)
   (let ((messages (gethash "messages" body)))
     (when (vectorp messages)
       ;; Chars of THIS request: system prompt + tool specs + messages.
