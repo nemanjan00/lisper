@@ -199,14 +199,14 @@ ratios come back exactly when the terminal is wide again."
   (layout-pane-names (panes-layout-now)))
 
 (defun pane-focus-nth (n)
-  "Focus the Nth pane (1-based) in layout order."
-  (let ((names (layout-pane-names)))
+  "Focus the Nth visible pane (1-based) in layout order."
+  (let ((names (panes-visible-names)))
     (when (<= 1 n (length names))
       (pane-focus-pane (nth (1- n) names)))))
 
 (defun pane-focus-step (delta)
   "Move focus DELTA panes forward (or back) in layout order, wrapping."
-  (let* ((names (layout-pane-names))
+  (let* ((names (panes-visible-names))
          (n (length names))
          (pos (position *pane-focus* names :test #'equal)))
     (when (plusp n)
