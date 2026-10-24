@@ -356,6 +356,15 @@ other control characters dropped."
         ((or (eq key :end) (and (characterp key) (char= key #\Enq))) ; C-e
          (setf (tui-ui-input-cursor ui) (nth-value 1 (tui-line-bounds ui))))
         ((eq key :delete) (tui-input-delete ui))
+        ;; Ctrl-O: fold/unfold the selected tool run/call, else all runs.
+        ((and (characterp key) (char= key #\So))
+         (when (fboundp 'chat-ctrl-o) (funcall 'chat-ctrl-o)))
+        ;; Enter on an empty input toggles the selected tool run/call.
+        ((and (characterp key) (char= key #\Return)
+              (zerop (length (tui-ui-input ui)))
+              (boundp '*chat-selected*) (symbol-value '*chat-selected*)
+              (fboundp 'chat-toggle))
+         (funcall 'chat-toggle (symbol-value '*chat-selected*)))
         ((and (characterp key) (char= key #\Return))
          (tui-submit-input ui))
         ((and (characterp key) (member key '(#\Rubout #\Backspace)))
@@ -579,7 +588,10 @@ and status rows belong to no pane and are ignored."
                  ((and target (<= 64 b 67))
                   (pane-scroll-by target (if (evenp b) 3 -3)))
                  ((and target (<= (logand b 3) 2))
-                  (pane-focus-pane target)))))
+                  (pane-focus-pane target)
+                  ;; A click on a tool run/call in the chat expands or folds it.
+                  (when (and (equal target "chat") (zerop (logand b 3)) (fboundp 'chat-click))
+                    (funcall 'chat-click x0 y0))))))
         (t nil)))))
 
 (defun tui-scroll-chat (ui key)
