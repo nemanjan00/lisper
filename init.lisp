@@ -38,6 +38,7 @@
 (load-file "lisp/copy.lisp")
 (load-file "lisp/search.lisp")
 (load-file "lisp/usage.lisp")
+(load-file "lisp/powerline.lisp")
 (load-file "lisp/interrupt.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
@@ -64,6 +65,7 @@
 
 ;; Colour theme (Dracula by default; /theme off for plain ANSI).
 (theme-start)
+(powerline-start)   ; /powerline: nerd | triangles | flat, saved in ~/.lisper/powerline
 
 ;; Todo nudge after an idle turn with open todos (/nudge on|off).
 (nudge-start)
