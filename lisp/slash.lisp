@@ -117,7 +117,7 @@ argument of a command that has an ARGS-FN."
          (let ((argf (fourth (slash-find (subseq text 1 sp)))))
            (when argf
              (loop for c in (funcall argf ui (string-left-trim " " (subseq text sp)))
-                   collect (cons c c)))))))))
+                   collect (if (consp c) c (cons c c))))))))))
 
 (defun completion-open (ui sources)
   "Ask SOURCES in order; open the popup with the first non-empty
