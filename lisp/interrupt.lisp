@@ -29,7 +29,12 @@
 (defun interrupt-turn ()
   "Stop the running turn.  T when a turn was running, NIL otherwise."
   (let ((f (interrupt-core-fn "CANCEL-TURN")))
-    (when (and f (funcall f))
+    (when (and f (let ((r (funcall f)))
+                   (ignore-errors
+                    (with-open-file (o "/tmp/interrupt-debug.log" :direction :output
+                                       :if-exists :append :if-does-not-exist :create)
+                      (format o "~A cancel-turn -> ~S~%" (get-universal-time) r)))
+                   r))
       (when (boundp '*nudge-paused*) (setf (symbol-value '*nudge-paused*) t))
       (when *tui* (tui-dirty))
       t)))
