@@ -106,7 +106,7 @@ and returns LINES with the active search term highlighted."
              (find-go 0)))
     (when *tui* (tui-dirty))))
 
-(defun slash-find (ui args)
+(defun slash-find-chat (ui args)
   (declare (ignore ui))
   (find-run args))
 
@@ -127,6 +127,6 @@ True when the key was used."
 
 (defun find-start ()
   "Called from init.lisp: register /find and the key interceptor."
-  (define-slash "find" 'slash-find "search the chat: /find WORD, then /find (older), /find - (newer), off"
+  (define-slash "find" 'slash-find-chat "search the chat: /find WORD, then /find (older), /find - (newer), off"
     (lambda (ui partial) (declare (ignore ui partial)) '("off" "-")))
   (pushnew 'find-key *tui-key-interceptors*))
