@@ -251,7 +251,7 @@ saved cwd, else *ROOT*). Saved with the session.")
         (when (< pos len) (fail "trailing characters"))))))
 
 ;;; ------------------------------------------------------------------
-;;; Processes and HTTP (through curl, so the core needs no libraries)
+;;; Processes and HTTP: through Dexador when Quicklisp has it, else curl
 
 (defun shell (command &key (directory (or *cwd* *root*)))
   "Run COMMAND with sh -c in DIRECTORY (default: *CWD*, the session's working
@@ -282,9 +282,75 @@ directory). Return (values output exit-code)."
              (format stream "HTTP ~A from ~A: ~A"
                      (http-error-status c) (http-error-url c) (http-error-body c)))))
 
+(defun quicklisp-dir ()
+  "Where lisper's Quicklisp lives: LISPER_QUICKLISP, else ~/.lisper/quicklisp/.
+Not under *HOME*, so test boots on a scratch home find it too."
+  (let ((d (sb-ext:posix-getenv "LISPER_QUICKLISP")))
+    (if (and d (plusp (length d)))
+        (pathname (if (char= (char d (1- (length d))) #\/) d (concatenate 'string d "/")))
+        (merge-pathnames ".lisper/quicklisp/" (user-homedir-pathname)))))
+
+(defun load-dexador ()
+  "Load Dexador through Quicklisp, quietly, if Quicklisp is installed in
+QUICKLISP-DIR with Dexador. True when it's loaded; else HTTP goes through curl."
+  (or (and (find-package "DEXADOR") t)
+      (let ((setup (merge-pathnames "setup.lisp" (quicklisp-dir))))
+        (when (probe-file setup)
+          (ignore-errors
+           (let ((*standard-output* (make-broadcast-stream))
+                 (*error-output* (make-broadcast-stream)))
+             (handler-bind ((warning #'muffle-warning))
+               (load setup)
+               (funcall (find-symbol "QUICKLOAD" "QL") :dexador :silent t))))
+          (and (find-package "DEXADOR") t)))))
+
+(defvar *http-backend* (if (load-dexador) :dexador :curl)
+  "How HTTP-POST-JSON talks HTTP: :dexador (in process, keep-alive) or :curl.
+A Dexador failure that isn't an HTTP status switches it to :curl for good.")
+
+(defun dex (name) (find-symbol name "DEXADOR"))
+
 (defun http-post-json (url body &key headers (timeout 600))
   "POST BODY encoded as JSON to URL. Return (values decoded-response status).
 Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings."
+  (if (eq *http-backend* :dexador)
+      (handler-case (http-post-json-dexador url body headers timeout)
+        (http-error (c) (error c))
+        (serious-condition (c)
+          ;; Not an HTTP status: a network error is retried like curl's, but a
+          ;; fault in this path itself mustn't cost the model calls.
+          (if (find-if (lambda (name) (search name (princ-to-string (type-of c))))
+                       '("SOCKET" "TIMEOUT" "CONNECTION" "STREAM" "SSL" "END-OF-FILE" "RESOLV"))
+              (error c)
+              (progn
+                (setf *http-backend* :curl)
+                (emit :info :text (format nil "Dexador failed (~A), using curl from now on." c))
+                (http-post-json-curl url body headers timeout)))))
+      (http-post-json-curl url body headers timeout)))
+
+(defun http-post-json-dexador (url body headers timeout)
+  (handler-bind ((serious-condition
+                   (lambda (c)
+                     (when (typep c (dex "HTTP-REQUEST-FAILED"))
+                       (let ((text (funcall (dex "RESPONSE-BODY") c)))
+                         (when (vectorp text)
+                           (setf text (sb-ext:octets-to-string text :external-format :utf-8)))
+                         (error 'http-error :status (funcall (dex "RESPONSE-STATUS") c) :url url
+                                            :body (subseq text 0 (min 2000 (length text)))))))))
+    (multiple-value-bind (text status)
+        (funcall (dex "POST") url
+                 :content (json-encode body)
+                 :headers (list* '("Content-Type" . "application/json; charset=utf-8")
+                                 '("Accept" . "application/json")
+                                 (loop for h in headers
+                                       for colon = (position #\: h)
+                                       collect (cons (subseq h 0 colon)
+                                                     (string-trim " " (subseq h (1+ colon))))))
+                 :connect-timeout 30 :read-timeout timeout
+                 :force-string t :keep-alive t)
+      (values (json-decode text) status))))
+
+(defun http-post-json-curl (url body headers timeout)
   (let ((request (tmp-path "request" "json")))
     (with-open-file (out request :direction :output :if-exists :supersede :external-format :utf-8)
       (json-encode body out))
