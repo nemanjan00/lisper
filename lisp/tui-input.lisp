@@ -54,7 +54,8 @@ TUI-MOUSE until one returns T.")
         do (handler-bind ((serious-condition #'tui-log-crash-at-signal))
              (handler-case
                  (let ((key (tui-read-key ui)))
-                   (tui-log-key key)
+                   (unless (and (boundp '*login*) (symbol-value '*login*)) ; a key being typed
+                     (tui-log-key key))
                    (sb-thread:with-recursive-lock (*tui-lock*)
                      (when (and *tui* (eq *tui* ui))
                        (if (tui-ui-prefix ui)

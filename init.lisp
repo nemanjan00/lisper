@@ -33,6 +33,7 @@
 (load-file "lisp/mcp.lisp")
 (load-file "lisp/theme.lisp")
 (load-file "lisp/nudge.lisp")
+(load-file "lisp/models.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -50,6 +51,7 @@
 ;; must see keys first while a question is open).
 (slash-start)
 (pathcomp-start)
+(models-start)
 (activity-start)
 
 ;; MCP servers (~/.lisper/mcp.json): /mcp command, tools SERVER__TOOL.

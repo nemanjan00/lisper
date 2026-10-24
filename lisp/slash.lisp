@@ -51,9 +51,10 @@ not: an unknown command is reported, never sent to the model)."
     (when name
       (let ((cmd (slash-find name)))
         (cond (cmd
-               (handler-case (funcall (second cmd) ui args)
-                 (error (c) (slash-say (format nil "/~A failed: ~A" name c))))
-               (tui-clear-input ui))
+               (unless (eq :keep-input
+                           (handler-case (funcall (second cmd) ui args)
+                             (error (c) (slash-say (format nil "/~A failed: ~A" name c)) nil)))
+                 (tui-clear-input ui)))
               ;; Unknown: report it but keep the text, so the user can
               ;; fix it (or turn it into a plain message with //).
               (t (slash-say (format nil "Unknown command /~A — try /help; start with // to send a message that begins with a slash." name)))))
@@ -215,13 +216,23 @@ Tab with no popup asks the Tab sources (path completion)."
      t)
     (t nil)))
 
+(defvar *slash-enter-picks* nil
+  "Command names (strings) whose popup is a picker: Enter takes the
+highlighted item even when the highlight was not moved.")
+
+(defun slash-enter-picks-p (text)
+  (multiple-value-bind (name args) (slash-parse text)
+    (and name (plusp (length (string-trim " " args)))
+         (member name *slash-enter-picks* :test #'string=))))
+
 (defun slash-submit (ui text)
   "Submit hook. Enter submits what was typed; the highlighted popup
 item replaces it only when the user moved the highlight with Up/Down
 (Tab is what accepts a suggestion). A text starting with // is a plain
 message without one slash: returning a string makes TUI-SUBMIT-INPUT
 send that instead of TEXT."
-  (when (and *completion* (completion-moved *completion*)
+  (when (and *completion* (or (completion-moved *completion*)
+                              (slash-enter-picks-p text))
              ;; Only a popup that belongs to this very input counts (a
              ;; keystroke may have arrived since the last redraw).
              (equal *completion-seen* (completion-input-state ui)))
