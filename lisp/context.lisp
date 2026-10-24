@@ -622,27 +622,34 @@ PREVIOUS request recalibrates the ratio, so this tracks reality."
 
 (defun ctx-trim-call-args (&optional (limit 1500))
   "Stub out huge tool_call ARGUMENTS and old reasoning_content of
-assistant messages in finished territory (before the latest real user
-message).  The calls are done, their results follow them, trace.log has
-the full text — but each untrimmed blob rides every request forever
-(an edit_files batch can be 15k chars; old thinking blocks added up to
-300k chars in one session)."
-  (let ((guard (ctx-latest-user-index)) (trimmed 0))
+assistant messages.  The calls are done, their results follow them,
+trace.log has the full text — but each untrimmed blob rides every
+request forever (an edit_files batch can be 15k chars; old thinking
+blocks added up to 300k chars in one session).
+Tool args are trimmed in finished territory (before the latest real
+user message).  reasoning_content is dropped anywhere except the live
+edge (the last 6 messages): old thinking is never needed again, and
+the guard does not move while only synthetic (task/note) messages
+arrive, so it would grow without bound in a long task."
+  (let ((guard (ctx-latest-user-index))
+        (edge (- (length *messages*) 6))
+        (trimmed 0))
     (loop for m in *messages* for i from 0
-          when (< i guard)
-          do (dolist (tc (coerce (or (gethash "tool_calls" m) #()) 'list))
-               (let* ((f (gethash "function" tc))
-                      (args (and f (gethash "arguments" f))))
-                 (when (and args (> (length args) limit)
-                            (not (search "\"_trimmed\"" args :end2 (min 40 (length args)))))
-                   (setf (gethash "arguments" f)
-                         (format nil "{\"_trimmed\":\"~D chars of args; work finished, trace.log has it\"}"
-                                 (length args)))
-                   (incf trimmed))))
-             (let ((rc (gethash "reasoning_content" m)))
-               (when (and (stringp rc) (> (length rc) 800))
-                 (remhash "reasoning_content" m)
-                 (incf trimmed))))
+          do (when (< i guard)
+               (dolist (tc (coerce (or (gethash "tool_calls" m) #()) 'list))
+                 (let* ((f (gethash "function" tc))
+                        (args (and f (gethash "arguments" f))))
+                   (when (and args (> (length args) limit)
+                              (not (search "\"_trimmed\"" args :end2 (min 40 (length args)))))
+                     (setf (gethash "arguments" f)
+                           (format nil "{\"_trimmed\":\"~D chars of args; work finished, trace.log has it\"}"
+                                   (length args)))
+                     (incf trimmed)))))
+             (when (< i edge)
+               (let ((rc (gethash "reasoning_content" m)))
+                 (when (and (stringp rc) (> (length rc) 800))
+                   (remhash "reasoning_content" m)
+                   (incf trimmed)))))
     trimmed))
 
 (defun ctx-before-request (body)
