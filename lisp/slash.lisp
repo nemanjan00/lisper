@@ -187,7 +187,10 @@ item replaces it only when the user moved the highlight with Up/Down
 (Tab is what accepts a suggestion). A text starting with // is a plain
 message without one slash: returning a string makes TUI-SUBMIT-INPUT
 send that instead of TEXT."
-  (when (and *completion* (completion-moved *completion*))
+  (when (and *completion* (completion-moved *completion*)
+             ;; Only a popup that belongs to this very input counts (a
+             ;; keystroke may have arrived since the last redraw).
+             (equal *completion-seen* (completion-input-state ui)))
     (let* ((start (completion-start *completion*))
            (item (nth (completion-sel *completion*) (completion-items *completion*)))
            (typed (subseq text (min (length text) start))))
