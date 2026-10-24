@@ -370,11 +370,12 @@ redraw thread."
     (dotimes (j h)
       (dotimes (i w)
         (ui-grid-put g (+ x i) (+ y j) #\Space 7)))
-    (let ((tattr (if (equal (pane-name p) *pane-focus*)
-                     (ui-attr 7 :bright t :bg 4)
-                     8)))
-      (dotimes (i w) (ui-grid-put g (+ x i) y #\─ tattr))
-      (ui-grid-write g (+ x 1) y (format nil " ~A " (pane-title p)) tattr (+ x w))
+    (let ((focused (equal (pane-name p) *pane-focus*)))
+      (dotimes (i w) (ui-grid-put g (+ x i) y #\─ (if focused 6 8)))
+      ;; Title as a powerline segment: cyan when focused, grey otherwise.
+      (ui-grid-write-chunks g x y
+                            (tui-seg-chunks (pane-title p) (if focused 0 7) (if focused 6 :grey))
+                            (+ x w))
       (let ((lines (handler-case
                        (let ((r (pane-render p)))
                          (funcall (if (symbolp r)

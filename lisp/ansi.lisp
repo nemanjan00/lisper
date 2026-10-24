@@ -14,6 +14,34 @@
           (if bg (ash (1+ (logand bg 7)) 4) 0)
           (if bgbright 128 0)))
 
+(defvar *tui-status-arrows* (cons (code-char #xE0B0) (code-char #xE0B2))
+  "Powerline separator glyphs: (right-pointing . left-pointing).  U+E0B0 /
+U+E0B2 need a patched (Nerd/Powerline) font; for a plain font set this to
+(cons #\\▶ #\\◀) or (cons #\\Space #\\Space).  Used by the status bar,
+pane titles, the input prompt, queue rows and chat labels.")
+
+(defun tui-seg-attr (fg bg)
+  "Attr for a segment: FG 0-7 (7 = bright white), BG 0-7 or :GREY."
+  (if (eq bg :grey)
+      (ui-attr fg :bright (= fg 7) :bg 0 :bgbright t)
+      (ui-attr fg :bright (= fg 7) :bg bg)))
+
+(defun tui-arrow-attr (bg next-bg)
+  "Attr for the arrow after a segment of colour BG: the arrow's
+foreground is BG, its background the next segment's NEXT-BG (nil = the
+terminal default)."
+  (let ((fg (if (eq bg :grey) 0 bg))
+        (bright (eq bg :grey)))
+    (cond ((null next-bg) (ui-attr fg :bright bright))
+          ((eq next-bg :grey) (ui-attr fg :bright bright :bg 0 :bgbright t))
+          (t (ui-attr fg :bright bright :bg next-bg)))))
+
+(defun tui-seg-chunks (text fg bg &optional next-bg)
+  "Chunk list for one powerline segment: \" TEXT \" on BG, then the
+arrow into NEXT-BG."
+  (list (cons (format nil " ~A " text) (tui-seg-attr fg bg))
+        (cons (string (car *tui-status-arrows*)) (tui-arrow-attr bg next-bg))))
+
 (defun ui-attr-codes (attr)
   (let ((fg (logand attr 7))
         (fb (logbitp 3 attr))

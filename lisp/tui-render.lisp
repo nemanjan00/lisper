@@ -99,17 +99,22 @@ queued echo of the same text instead of duplicating it."
          (tui-ui-chat ui)
          (lambda (ln)
            (string= (chunks-text (uline-chunks ln))
-                    (concatenate 'string "you (queued)> " text))))
+                    (chunks-text (tui-queued-chunks text)))))
         (setf *tui-queued-text* (delete text *tui-queued-text*
                                         :test #'equal :count 1)))
       (setf (tui-ui-shown-user ui) text
             (tui-ui-pending-user ui) nil
             (tui-ui-scroll ui) 0)
       (uibuf-append (tui-ui-chat ui)
-                    (list (cons "you> " (ui-attr 2 :bright t))
-                          (cons text (ui-attr 2 :bright t)))
+                    (append (tui-seg-chunks "you" 0 2)
+                            (list (cons (format nil " ~A" text) (ui-attr 7 :bright t))))
                     :fresh t)))
   (tui-dirty))
+
+(defun tui-queued-chunks (text)
+  "Chunk list of the dimmed echo line of a queued message."
+  (append (tui-seg-chunks "queued" 7 :grey)
+          (list (cons (format nil " ~A" text) 8))))
 
 (defun tui-show-queued (ui text)
   "Echo a just-submitted message dimmed, ahead of the model picking it
@@ -122,8 +127,7 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
       (when (eq *tui* ui)
         (setf *tui-queued-text* (append *tui-queued-text* (list text)))
         (uibuf-append (tui-ui-chat ui)
-                      (list (cons "you (queued)> " 8)
-                            (cons text 8))
+                      (tui-queued-chunks text)
                       :fresh t)))
     (tui-dirty)))
 
@@ -222,7 +226,7 @@ captures of the UI itself) never reads as chat."
     (let* ((lines (tui-chunk-lines (ui-parse-ansi (str-truncate text 2000))))
            (n (length lines)))
       (cond ((> n 2)
-             (tui-chat-add ui (list (cons (format nil "  <- ~D lines" n) 8))))
+             (tui-chat-add ui (list (cons (format nil "  ◂ ~D lines" n) 8))))
             (t
              (dolist (line lines)
                (tui-chat-add ui (list (cons (concatenate 'string
@@ -321,7 +325,7 @@ path; eval -> what it defines or calls; otherwise the short args."
   "Chunk-list for a tool-call line: dim and indented, set apart from
 the conversation.  Summarizing must never kill the emit path: on any
 error fall back to the eval code's first line (or just the name)."
-  (list (cons (format nil "  -> ~A"
+  (list (cons (format nil "  ▸ ~A"
                       (handler-case (tui-tool-summary name args)
                         (serious-condition ()
                           (let ((code (and (hash-table-p args)
@@ -519,16 +523,17 @@ the panes end there."
               for sel = (eql (tui-ui-queue-sel ui) i)
               for editing = (and (tui-ui-queue-edit ui)
                                  (eq (tui-ui-queue-edit ui) text))
-              for attr = (cond (sel (ui-attr 0 :bg 6))
-                               (editing (ui-attr 6))
-                               (t 8))
-              do (ui-grid-write g 0 row
-                                (str-truncate
-                                 (format nil "~A~D: ~A"
-                                         (cond (sel "→ ") (editing "✎ ") (t "  "))
-                                         (1+ i) text)
-                                 w)
-                                attr w))))))
+              for tag = (tui-seg-chunks
+                         (format nil "~A~D" (cond (sel "→ ") (editing "✎ ") (t "")) (1+ i))
+                         (if (or sel editing) 0 7)
+                         (cond (sel 6) (editing 5) (t :grey)))
+              for tag-w = (reduce #'+ tag :key (lambda (c) (length (car c))))
+              for tattr = (cond (sel (ui-attr 7 :bright t)) (editing (ui-attr 5)) (t 8))
+              do (ui-grid-write-chunks
+                  g 0 row
+                  (append tag (list (cons (concatenate 'string " " (str-truncate text (max 1 (- w tag-w 2))))
+                                          tattr)))
+                  w))))))
 
 (defun tui-draw-separator (g y w)
   "Thin dim line between the chat pane and the input row."
@@ -576,12 +581,14 @@ back into the UI's input-hscroll slot."
   "Draw prompt and the horizontally scrolled input line. Returns the
 terminal column (1-based) the cursor belongs on."
   (let* ((prefix (tui-ui-prefix ui))
-         (pattr (if prefix (ui-attr 3 :bright t) (ui-attr 2 :bright t)))
-         (prompt (if prefix "*> " "> "))
+         (prompt (cond (prefix (tui-seg-chunks "*" 0 3))
+                       ((tui-ui-queue-edit ui) (tui-seg-chunks "✎" 0 5))
+                       (t (tui-seg-chunks "❯" 0 2))))
          (text (coerce (tui-ui-input ui) 'string))
-         (plen (length prompt))
+         ;; prompt segment + arrow + one space
+         (plen (1+ (reduce #'+ prompt :key (lambda (c) (length (car c))))))
          (cursor (tui-ui-input-cursor ui)))
-    (ui-grid-write g 0 y prompt pattr w)
+    (ui-grid-write-chunks g 0 y prompt w)
     (multiple-value-bind (start count left right hs)
         (tui-input-window (length text) cursor (- w plen)
                           (tui-ui-input-hscroll ui))
@@ -599,11 +606,6 @@ Returns an integer."
     (integer lisping-core:*held*)
     (list (length lisping-core:*held*))
     (t 0)))
-
-(defvar *tui-status-arrows* (cons (code-char #xE0B0) (code-char #xE0B2))
-  "Separator glyphs of the status bar: (right-pointing . left-pointing).
-Powerline's U+E0B0 / U+E0B2 need a patched (Nerd/Powerline) font; for a
-plain font set this to (cons #\\▶ #\\◀) or (cons #\\Space #\\Space).")
 
 (defun tui-draw-status (g ui y w)
   "Powerline-style status bar: coloured segments joined by arrow glyphs
