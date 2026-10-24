@@ -313,6 +313,9 @@ other control characters dropped."
                  ((char= c #\Tab) (tui-input-insert ui #\Space))
                  ((graphic-char-p c) (tui-input-insert ui c)))))
 
+(defvar *history-pos*)   ; lisp/history.lisp, loaded after this file
+(declaim (ftype function history-prev history-next history-add))
+
 (defun tui-normal-key (ui key)
   (when (or (and *tui-key-interceptor* (funcall *tui-key-interceptor* ui key))
             (some (lambda (f) (funcall f ui key)) *tui-key-interceptors*))
@@ -329,9 +332,13 @@ other control characters dropped."
                 ;; Empty input + Up: select the newest queued message.
                 (setf (tui-ui-queue-sel ui)
                       (1- (length (lisping-core:queued-messages)))))
+               ;; Empty input (or already browsing): older sent message.
+               ((and (or *history-pos* (zerop (length (tui-ui-input ui))))
+                     (history-prev ui)))
                (t (tui-scroll-chat-by ui 3))))
         ((eq key :down)
-         (unless (tui-cursor-line-move ui 1)
+         (unless (or (tui-cursor-line-move ui 1)
+                     (history-next ui))
            (tui-scroll-chat-by ui -3)))
         ((or (eq key :newline) (and (characterp key) (char= key #\Newline)))
          (tui-input-insert ui #\Newline))     ; Alt+Return, Ctrl-J
@@ -398,6 +405,7 @@ as a short placeholder such as [pasted 29 lines].")
     ;; A hook returns T (consumed), a string (send that instead of the
     ;; typed text), or NIL (not mine).
     (when (plusp (length text))
+      (history-add text)
       (dolist (f *tui-submit-hooks*)
         (let ((r (funcall f ui text)))
           (cond ((stringp r) (setf text r) (return))

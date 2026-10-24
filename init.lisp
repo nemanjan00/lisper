@@ -34,6 +34,7 @@
 (load-file "lisp/theme.lisp")
 (load-file "lisp/nudge.lisp")
 (load-file "lisp/models.lisp")
+(load-file "lisp/history.lisp")
 (load-file "lisp/interrupt.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
@@ -66,3 +67,6 @@
 
 ;; Interrupt the running turn: Esc Esc, Ctrl-C on an empty input, /stop.
 (interrupt-start)
+
+;; Input history: Up/Down on an empty input, kept in ~/.lisper/history.jsonl.
+(history-start)
