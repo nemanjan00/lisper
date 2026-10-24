@@ -11,6 +11,7 @@
   (:export #:main
            ;; tools
            #:register-tool #:unregister-tool #:*tools* #:arg #:*turn-untrusted* #:*before-tool-call* #:*before-exit* #:quit
+           #:cancel-turn #:turn-busy-p
            ;; files
            #:home-path #:session-path #:*home* #:*session* #:*cwd* #:session-save #:session-forget #:home-commit #:read-file #:session-list #:session-switch
            #:load-file #:write-files-and-load #:test-boot #:*test-boot* #:*observers* #:synthetic-message-p #:commit #:restart-image #:*boot-errors* #:*previous-session*
@@ -362,8 +363,29 @@ directory). Return (values output exit-code)."
          (process (sb-ext:run-program "/bin/sh" (list "-c" command)
                                       :directory (namestring directory)
                                       :output out :error :output :input nil
-                                      :external-format :utf-8 :wait t)))
+                                      :external-format :utf-8 :wait nil)))
+    (wait-or-kill process)
     (values (get-output-stream-string out) (sb-ext:process-exit-code process))))
+
+(defun wait-or-kill (process)
+  "Wait for PROCESS (started with :wait nil) to exit. If the wait is unwound
+instead (a cancelled turn, an eval timeout), kill its process group, so the
+command and whatever it started don't run on unseen: TERM now, KILL after
+2 seconds if anything in the group is still alive. run-program makes each
+child the leader of its own group."
+  (let ((done nil))
+    (unwind-protect (progn (sb-ext:process-wait process) (setf done t))
+      (unless done
+        (let ((pgid (sb-ext:process-pid process)))
+          (sb-unix:unix-kill (- pgid) sb-unix:sigterm)
+          (sb-thread:make-thread
+           (lambda ()
+             (sleep 2)
+             (when (sb-unix:unix-kill (- pgid) 0)
+               (sb-unix:unix-kill (- pgid) sb-unix:sigkill))
+             (ignore-errors (sb-ext:process-wait process)))
+           :name "reap-cancelled"))))
+    process))
 
 (defun tmp-path (name type)
   (home-path (format nil "tmp/~A-~D-~D.~A" name (get-universal-time) (random 1000000) type)))
@@ -472,7 +494,8 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
                                                     (format s "url = ~A~%" (curl-quote url))
                                                     (dolist (h headers) (format s "header = ~A~%" (curl-quote h)))
                                                     (format s "max-time = ~D~%write-out = \"\\n%{http_code}\"~%" timeout)))
-                                          :output out :error nil :external-format :utf-8 :wait t))
+                                          :output out :error nil :external-format :utf-8 :wait nil))
+             (process (wait-or-kill process))
              (raw (get-output-stream-string out))
              (split (position #\Newline raw :from-end t))
              (status (and split (parse-integer raw :start (1+ split) :junk-allowed t))))
@@ -498,7 +521,8 @@ Signals an error for HTTP status 400 and up. HEADERS are \"Name: value\" strings
                 (process (sb-ext:run-program "curl" '("-sS" "-K" "-") :search t
                                              :input (make-string-input-stream config)
                                              :output out :error err
-                                             :external-format :utf-8 :wait t))
+                                             :external-format :utf-8 :wait nil))
+                (process (wait-or-kill process))
                 (raw (get-output-stream-string out))
                 (split (position #\Newline raw :from-end t))
                 (text (if split (subseq raw 0 split) ""))
@@ -1232,14 +1256,17 @@ logger) goes here instead of wrapping *EMIT*. A failing observer is reported and
         (fallback-emit (list :type :error :text (format nil "*emit* failed: ~A" c)))))))
 
 (defun add-message (message)
-  (setf *messages* (append *messages* (list message)))
+  ;; Without interrupts: CANCEL-TURN must not land between the change and
+  ;; its log line.
+  (sb-sys:without-interrupts
+    (setf *messages* (append *messages* (list message)))
+    (when *session-log*
+      (with-open-file (out *session-log* :direction :output :if-exists :append
+                                         :if-does-not-exist :create :external-format :utf-8)
+        (json-encode message out)
+        (terpri out))))
   (when (equal (gethash "role" message) "user")
-    (emit :user :text (gethash "content" message) :kind (gethash "x-kind" message)))
-  (when *session-log*
-    (with-open-file (out *session-log* :direction :output :if-exists :append
-                                       :if-does-not-exist :create :external-format :utf-8)
-      (json-encode message out)
-      (terpri out))))
+    (emit :user :text (gethash "content" message) :kind (gethash "x-kind" message))))
 
 (defvar *system-prompt*
   "You are lisping-ai: a running SBCL image that builds its own harness, the way Emacs is built out of Emacs Lisp.
@@ -1259,7 +1286,7 @@ Core API (package LISPING-CORE, already used by LISPING):
 - *emit*: function receiving every event as a plist (:type :user/:assistant/:thinking/:reasoning/:tool-call/:tool-result/:error/:info, plus :text, :name, :args; :user is each message from the user, however it arrived, when it enters the conversation; :queued is sent the moment a message arrives, which can be long before, while you are mid-turn). It defaults to terminal-emit, your terminal display: an ordinary function in package LISPING that you may redefine to change how the terminal looks.
 - *observers*: functions called with every event, before *emit*. The UI owns *emit*; anything else that needs to see events (your compactor, a logger) belongs in *observers*, so a UI restart can't drop it.
 - Messages the system writes (boot, core notes, stubs for interrupted tool calls) carry an \"x-kind\" key, which is stripped before the request; (synthetic-message-p m) tells them apart from what the user or you wrote. Tag synthetic messages you create yourself the same way, rather than marking them with a text prefix. Any key starting with \"x-\" is stripped the same way, so you can keep your own bookkeeping on a message (an \"x-id\", say): it stays in *messages*, is saved with the session and survives restarts, but the model never sees it.
-- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages), pins one while the user edits it with (pin-queued text) so it isn't delivered mid-edit, then saves with (edit-queued text new-text), NIL deleting, or cancels with (release-queued text); any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call; so do system messages whose kind is in *mid-turn-kinds* (task exits, monitor matches). queued-messages lists only what the user typed: system messages can't be edited. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away; :queued and :user carry :kind, NIL for what the user typed and e.g. \"task\" or \"nudge\" for system messages, which a UI must not show as the user's. Activity for a UI indicator: :user starts a turn, :thinking marks each model call, :tool-call/:tool-result bracket a tool run, a failed model call that will be retried is an :error with :retry-in seconds and :attempt, and :idle (with :held, the count of waiting messages) means the turn is over and the agent waits for the user.
+- Delivery: a message that arrives while you're mid-turn waits until the turn is over, then messages are delivered one per turn (*held* holds the waiting ones; a UI lists them with (queued-messages), pins one while the user edits it with (pin-queued text) so it isn't delivered mid-edit, then saves with (edit-queued text new-text), NIL deleting, or cancels with (release-queued text); any time, mid-turn included). A message starting with ! is urgent and goes in before your next model call; so do system messages whose kind is in *mid-turn-kinds* (task exits, monitor matches). queued-messages lists only what the user typed: system messages can't be edited. (setf *deliver-mid-turn* t) delivers everything mid-turn, as before. The :queued event still fires the moment a message arrives, so a UI can show it right away; :queued and :user carry :kind, NIL for what the user typed and e.g. \"task\" or \"nudge\" for system messages, which a UI must not show as the user's. Activity for a UI indicator: :user starts a turn, :thinking marks each model call, :tool-call/:tool-result bracket a tool run, a failed model call that will be retried is an :error with :retry-in seconds and :attempt, and :idle (with :held, the count of waiting messages) means the turn is over and the agent waits for the user. (cancel-turn), from any thread, stops the running turn at once (for a UI's Esc or /stop): the model call or tool run is abandoned, a shell command's process group is killed, unfinished calls get stubs, an assistant message \"[core] The user cancelled this turn here.\" (x-kind \"cancel\") marks the cut, then :info and :idle follow; (turn-busy-p) says whether a turn is running. Code that must not be cut in half by it can run inside sb-sys:without-interrupts.
 - *inbox* and (send-user-message text): user messages arrive here. A UI you build should push user input with send-user-message and show events through *emit*.
 - The terminal: (stop-terminal-input) stops the thread that reads lines from the terminal into *inbox* (*terminal-thread*), so you can take the terminal over, e.g. raw keys and full-screen drawing. (start-terminal-input) starts it again. Both, and terminal-input-loop, are yours to redefine.
 - The queue: text appended to the session's queue.txt arrives as user messages, several separated by a line containing only ---. It's how the user (or another program) reaches you without the terminal, e.g. when your UI owns it. queue-input-loop, take-queue, start-queue-input and stop-queue-input are yours to redefine.
@@ -1680,7 +1707,11 @@ urgent. Unpins it. Returns true, or NIL when it's gone (already delivered)."
 (defun take-queued-messages ()
   "Between model calls in a turn: let urgent messages, system messages of a
 *MID-TURN-KINDS* kind (and, with *DELIVER-MID-TURN*, all of them) into the
-conversation; hold the rest."
+conversation; hold the rest. Without interrupts: a CANCEL-TURN between
+taking a message off *HELD* and adding it would lose it."
+  (sb-sys:without-interrupts (take-queued-messages-1)))
+
+(defun take-queued-messages-1 ()
   (let ((now (sb-thread:with-recursive-lock (*held-lock*)
                (drain-inbox)
                (let ((go (remove-if-not (lambda (item) (and (or *deliver-mid-turn* (urgent-item-p item)
@@ -1742,6 +1773,9 @@ conversation; hold the rest."
 (defun session-save ()
   "Save this session: the conversation as it stands (after any compaction) and
 its working directory. Written atomically; resumed at the next boot."
+  (sb-sys:without-interrupts (session-save-1)))
+
+(defun session-save-1 ()
   (let ((file (session-path "messages.json"))
         (tmp (session-path "messages.json.tmp")))
     (with-open-file (out tmp :direction :output :if-exists :supersede :external-format :utf-8)
@@ -1911,13 +1945,54 @@ number of messages restored."
           (length *messages*))
         0)))
 
+(defvar *agent-thread* nil "The thread running AGENT-LOOP.")
+(defvar *turn-busy* nil "True while the agent thread is in a turn.")
+(defvar *in-turn* nil
+  "Bound to T inside the agent thread's turn, where CANCEL-TURN's throw has
+somewhere to go.")
+
+(defun turn-busy-p () *turn-busy*)
+
+(defun cancel-turn ()
+  "Stop the running turn now, from any thread: the model call or tool run in
+progress is abandoned (a shell command's process group is killed), unfinished
+tool calls get stub results, and the agent goes idle waiting for the next
+message. True if a turn was running. The parts that change *messages*, *held*
+or the session files run without interrupts, so the cancel waits for them."
+  (let ((thread *agent-thread*))
+    (cond ((not (and *turn-busy* thread (sb-thread:thread-alive-p thread))) nil)
+          ((eq thread sb-thread:*current-thread*)
+           (throw 'cancel-turn :cancelled))
+          (t (sb-thread:interrupt-thread
+              thread (lambda () (when *in-turn* (throw 'cancel-turn :cancelled))))
+             t))))
+
+(defun turn-cancelled ()
+  "After CANCEL-TURN: answer unfinished tool calls, note the cut for the model,
+drop Dexador's pooled connections (one may be half-read)."
+  (sb-sys:without-interrupts
+    (setf *messages* (pair-tool-results *messages*))
+    (let ((note (obj :role "assistant" :content "[core] The user cancelled this turn here.")))
+      (setf (gethash "x-kind" note) "cancel")
+      (add-message note)))
+  (let ((clear (and (find-package "DEXADOR") (dex "CLEAR-CONNECTION-POOL"))))
+    (when (and clear (fboundp clear)) (ignore-errors (funcall clear))))
+  (emit :info :text "turn cancelled"))
+
 (defun agent-loop ()
   (loop
     (let ((item (next-message)))
       (add-message (inbox-message (if (urgent-item-p item) (strip-urgent item) item)))
-      (handler-case (run-turn)
-        (serious-condition (c)
-          (emit :error :text (format nil "turn failed: ~A" c))))
+      (when (eq :cancelled
+                (catch 'cancel-turn
+                  (let ((*in-turn* t))
+                    (setf *turn-busy* t)
+                    (unwind-protect
+                         (handler-case (run-turn)
+                           (serious-condition (c)
+                             (emit :error :text (format nil "turn failed: ~A" c))))
+                      (setf *turn-busy* nil)))))
+        (turn-cancelled))
       (handler-case (session-save)
         (serious-condition (c)
           (emit :error :text (format nil "saving the session failed: ~A" c))))
@@ -2062,7 +2137,7 @@ appended meanwhile lands in a fresh queue.txt instead of being lost."
                             *model* (hash-table-count *tools*) (length *boot-errors*)
                             *session* (namestring (or *cwd* *root*)) (namestring (session-dir))))
   (dolist (e *boot-errors*) (emit :error :text e))
-  (let ((agent (sb-thread:make-thread #'agent-loop :name "agent"))
+  (let ((agent (setf *agent-thread* (sb-thread:make-thread #'agent-loop :name "agent")))
         (resume (take-resume-message)))
     (when (or resume *boot-errors*)
       (send-user-message
