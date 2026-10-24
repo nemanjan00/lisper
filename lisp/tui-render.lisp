@@ -628,8 +628,11 @@ drops out, then the right group, rather than overlapping the left."
                    "C-b cancel | q quit | r redraw | Left/Right pane | 1-9 pane"
                    "C-b prefix"))
          (left (append
-                (list (list "lisping-ai" 0 2)
-                      (list (format nil "~A" *model*) 0 4)
+                (list (list "lisping-ai" 0 2))
+                ;; What the agent is doing (lisp/activity.lisp).
+                (when (fboundp 'activity-segment)
+                  (list (funcall 'activity-segment)))
+                (list (list (format nil "~A" *model*) 0 4)
                       (list (format nil "~D todo~:P" (count-if-not #'cdr *todos*)) 7 5)
                       (list (format nil "~A" *pane-focus*) 7 0))
                 (when (plusp held)
