@@ -911,6 +911,9 @@ shown as what has grown since.  Narrow panes get the dense view."
                             extra)))
       (when *ctx-pending-note*
         (setf extra (append (reverse (line "milestone note: pending" 3)) extra)))
+      ;; Session tokens and rough cost (lisp/usage.lisp).
+      (let ((u (and (fboundp 'usage-summary-line) (funcall 'usage-summary-line))))
+        (when u (setf extra (append (reverse (line u 8)) extra))))
       (setf lines (append lines (nreverse extra)))
       (subseq lines 0 (min h (length lines))))));;; --------------------------------------------------------------- start
 
