@@ -8,10 +8,10 @@
 (defun edit-file-replace (path old new)
   "Replace the single occurrence of OLD with NEW in the file at PATH.
 Writes and loads the result via the core; returns a status string."
-  (let ((text (with-open-file (s path :direction :input :external-format :utf-8)
-                (with-output-to-string (out)
-                  (loop for line = (read-line s nil nil)
-                        while line do (write-line line out))))))
+  ;; read-text, not a read-line/write-line round-trip: the :base check
+  ;; compares against the disk BYTE-FOR-BYTE, and write-line would append
+  ;; a trailing newline a file might not have.
+  (let ((text (lisping-core::read-text path)))
     (let ((pos (search old text)))
       (unless pos (error "edit_file: text not found in ~A: ~S" path (subseq old 0 (min 40 (length old)))))
       (when (search old text :start2 (1+ pos))
@@ -53,11 +53,10 @@ Writes and loads the result via the core; returns a status string."
 ;;; no paren-count slips.
 
 (defun rf-read-file-string (path)
-  "Whole file as a string (LF-normalized)."
-  (with-open-file (s path :direction :input :external-format :utf-8)
-    (with-output-to-string (out)
-      (loop for line = (read-line s nil nil)
-            while line do (write-line line out)))))
+  "Whole file as a string — byte-for-byte (the core's read-text), NOT a
+read-line/write-line round-trip: edit_files passes the text as :base,
+which is compared against the disk exactly."
+  (lisping-core::read-text path))
 
 (defun rf-form-start (text pos)
   "Advance POS past whitespace, ;-to-EOL comments and (nested) #|...|#
