@@ -145,7 +145,7 @@ is true when some model had no price, so the cost leaves it out."
   "One line for the context pane, or NIL before any call."
   (multiple-value-bind (s cost) (usage-sum)
     (when (plusp (getf s :calls))
-      (format nil "session: ~D calls · ~A in (~D% cached) · ~A out · ~A"
+      (format nil "session: ~D calls · ~A in (~D% cached) · ~A out · ~A nominal"
               (getf s :calls) (usage-fmt-tokens (getf s :prompt)) (usage-hit-rate s)
               (usage-fmt-tokens (getf s :completion)) (usage-fmt-cost cost)))))
 
