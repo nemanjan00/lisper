@@ -1657,6 +1657,7 @@ process is running NAME: one session, one process."
 (defparameter +home-ignore+
   "# lisper: data is versioned; transcripts, logs and scratch files aren't.
 tmp/
+quicklisp/
 *.log
 *.jsonl
 *.tmp
@@ -1669,13 +1670,28 @@ switch
 "
   "The .gitignore written into a new *home*.")
 
+(defun split-lines (text)
+  (loop for start = 0 then (1+ end)
+        for end = (position #\Newline text :start start)
+        collect (string-right-trim '(#\Return) (subseq text start end))
+        while end))
+
 (defun home-commit (message)
   "Commit the data in *home* (notes, todos, layouts...) to its own git repo,
 creating it on first use, so a bad rewrite of a data file can be undone. Cheap:
 no boot check. Returns NIL on success, else git's complaint."
   (unless (probe-file (merge-pathnames ".git/" *home*))
-    (write-text (merge-pathnames ".gitignore" *home*) +home-ignore+)
     (shell "git init -q" :directory *home*))
+  ;; Every pattern in +HOME-IGNORE+, also in a .gitignore an older core wrote.
+  (let* ((path (merge-pathnames ".gitignore" *home*))
+         (have (or (read-text path) ""))
+         (lines (split-lines have))
+         (missing (remove-if (lambda (line) (or (zerop (length line)) (member line lines :test #'string=)))
+                             (split-lines +home-ignore+))))
+    (when missing
+      (write-text path (format nil "~A~:[~;~%~]~{~A~%~}" have
+                               (and (plusp (length have)) (char/= (char have (1- (length have))) #\Newline))
+                               missing))))
   (git "git add -A" :directory *home*)
   (multiple-value-bind (out code)
       ;; Without a configured identity every commit would fail; supply one for
