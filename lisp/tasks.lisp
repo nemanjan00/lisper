@@ -19,6 +19,9 @@
 group, so bg_stop can signal the whole GROUP (killing just the /bin/sh
 wrapper left the real job running).")
 
+(defvar *task-escalated* (make-hash-table :test #'equal)
+  "Task names whose group ignored SIGTERM and had to be SIGKILLed.")
+
 (defstruct (task (:constructor %make-task (name cmd)))
   name cmd process stream file
   (pid nil) (pgid nil)
@@ -140,8 +143,10 @@ with a synthetic message (kind \"task\" — delivered when the turn ends)."
   (tasks-save)
   (pane-dirty "tasks")
   (send-user-message
-   (format nil "[task ~A] ~A, ~D line~:P"
-           (task-name task) (task-status-string task) (task-line-count task))
+   (format nil "[task ~A] ~A~:[~; (SIGKILLed after ignoring SIGTERM)~], ~D line~:P"
+           (task-name task) (task-status-string task)
+           (remhash (task-name task) *task-escalated*)
+           (task-line-count task))
    :kind "task"))
 
 (defun task-poll-watch (task)
@@ -153,18 +158,30 @@ object, so poll the process group until it is gone."
   (tasks-save)
   (pane-dirty "tasks")
   (send-user-message
-   (format nil "[task ~A] gone (it was started before the restart), ~D line~:P"
-           (task-name task) (task-line-count task))
+   (format nil "[task ~A] gone (it was started before the restart~:[~;, SIGKILLed after ignoring SIGTERM~]), ~D line~:P"
+           (task-name task) (remhash (task-name task) *task-escalated*)
+           (task-line-count task))
    :kind "task"))
 
 (defun task-kill (task &optional (sig 15))
   "Signal TASK's whole process group when we know its pgid (setsid
 start, or reattached after a restart); otherwise just the process.
-Killing only the /bin/sh wrapper used to leave the real job running."
+Killing only the /bin/sh wrapper used to leave the real job running.
+A SIGTERM escalates: a thread waits ~3 s and, if the group is still
+alive (rtl_sdr, a stuck serial reader — they ignore TERM and keep
+holding the device), sends SIGKILL; the exit message then says so."
   (cond ((task-pgid task)
          (ignore-errors (sb-posix:kill (- (task-pgid task)) sig)))
         ((task-process task)
-         (ignore-errors (sb-ext:process-kill (task-process task) sig)))))
+         (ignore-errors (sb-ext:process-kill (task-process task) sig))))
+  (when (and (= sig 15) (task-pgid task))
+    (sb-thread:make-thread
+     (lambda ()
+       (sleep 3)
+       (when (task-group-alive-p task)
+         (setf (gethash (task-name task) *task-escalated*) t)
+         (ignore-errors (sb-posix:kill (- (task-pgid task)) 9))))
+     :name (format nil "task-escalate-~A" (task-name task)))))
 
 (defun bg-stop (name)
   "SIGTERM task NAME's process group (a no-op with a message if it
