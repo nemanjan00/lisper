@@ -32,6 +32,7 @@
 (load-file "lisp/slash.lisp")
 (load-file "lisp/pathcomp.lisp")
 (load-file "lisp/activity.lisp")
+(load-file "lisp/mcp.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -50,3 +51,6 @@
 (slash-start)
 (pathcomp-start)
 (activity-start)
+
+;; MCP servers (~/.lisper/mcp.json): /mcp command, tools SERVER__TOOL.
+(mcp-start)
