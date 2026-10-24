@@ -13,6 +13,8 @@
 ;;; or hung server never hangs the agent: requests carry timeouts, a dead
 ;;; server is restarted on its next use (and the result says so).
 
+(declaim (ftype function mcp-refresh-tools mcp-ensure))
+
 (defvar *mcp-servers* (make-hash-table :test 'equal)
   "Server name -> mcp-server.")
 
