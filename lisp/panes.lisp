@@ -223,6 +223,32 @@ ratios come back exactly when the terminal is wide again."
 (defun pane-buf-render (pane w h)
   (tui-visible-lines pane (pane-buf pane) w h))
 
+(defvar *todo-done-expanded* nil
+  "True when the todo pane lists finished items instead of one
+\"✓ N done\" line (click that line to toggle).")
+
+(defvar *todo-done-row* nil
+  "Row (0-based, below the title row) of the \"✓ N done\" line the last
+render drew, or NIL; the mouse handler toggles when it is clicked.")
+
+(defun todo-wrap-text (text width &optional (max-lines 3))
+  "TEXT cut into at most MAX-LINES pieces of WIDTH columns (the last
+one ends in an ellipsis when text is left over)."
+  (let ((width (max 4 width)) (out nil) (pos 0) (n (length text)))
+    (loop while (and (< pos n) (< (length out) max-lines))
+          do (let ((end (min n (+ pos width))))
+               (when (< end n)             ; prefer breaking at a space
+                 (let ((sp (position #\Space text :start pos :end end :from-end t)))
+                   (when (and sp (> sp pos)) (setf end (1+ sp)))))
+               (push (string-right-trim " " (subseq text pos end)) out)
+               (setf pos end)))
+    (setf out (nreverse out))
+    (when (< pos n)
+      (let ((l (car (last out))))
+        (setf (car (last out))
+              (concatenate 'string (subseq l 0 (min (length l) (1- width))) "…"))))
+    out))
+
 (defun pane-todo-render (pane w h)
   (let* ((lines
           (if (null *todos*)
