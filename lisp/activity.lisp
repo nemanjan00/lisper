@@ -49,6 +49,11 @@
                                          (round (* wait internal-time-units-per-second)))
                                :attempt (getf event :attempt)))))
      (:idle (activity-set :idle)))
+   ;; The todo pane shows the spinner / busy highlight: repaint it on
+   ;; every state change, so it appears at once and never stays on
+   ;; after the turn is over (the ticker only runs while busy).
+   (when (member (getf event :type) '(:user :thinking :tool-call :tool-result :idle :error))
+     (when (fboundp 'pane-dirty) (funcall 'pane-dirty "todo")))
    (when *tui* (tui-dirty)))
   nil)
 
@@ -110,8 +115,8 @@
              (when (and *tui* (activity-animated-p))
                (handler-case
                    (progn (tui-tick-status *tui*)
-                          ;; The todo pane's working-on spinner: ~3 repaints/s.
-                          (when (zerop (mod (incf n) 3))
+                          ;; The todo pane's working-on spinner: ~4 repaints/s.
+                          (when (zerop (mod (incf n) 2))
                             (pane-dirty "todo")))
                  (serious-condition () nil))))))
 
