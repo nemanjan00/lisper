@@ -274,6 +274,15 @@ keys fall through to normal input editing."
          ;; resetting IN's fill-pointer below would blank the message
          ;; before SEND-USER-MESSAGE reads it.
          (text (string-trim " " (copy-seq in))))
+    ;; Editing a queued message: Enter saves it back (empty deletes),
+    ;; it is NOT sent as a new message.
+    (when (tui-ui-queue-edit ui)
+      (lisping-core:edit-queued (tui-ui-queue-edit ui)
+                                (and (plusp (length text)) text))
+      (setf (tui-ui-queue-edit ui) nil
+            (fill-pointer in) 0
+            (tui-ui-input-cursor ui) 0)
+      (return-from tui-submit-input t))
     (when (plusp (length text))
       (setf (fill-pointer in) 0
             (tui-ui-input-cursor ui) 0)
