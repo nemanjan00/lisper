@@ -89,7 +89,7 @@ tried in order on Tab; the first non-empty answer opens the popup.")
   "Start/end of the word under the cursor (words split on spaces)."
   (let* ((in (tui-ui-input ui))
          (end (tui-ui-input-cursor ui))
-         (start (let ((p (position #\Space in :end end :from-end t)))
+         (start (let ((p (position-if (lambda (c) (member c '(#\Space #\Newline))) in :end end :from-end t)))
                   (if p (1+ p) 0))))
     (values start end)))
 
