@@ -1095,8 +1095,8 @@ status line, then one truncated line per rewind (newest first as kept in
            (cons (format nil " ~D%" pct) colour))
       (add (cons (fit (format nil "~D msgs~A~A~A"
                               (length *messages*)
-                              (if *ctx-stretches*
-                                  (format nil " · ~D rewinds" (length *ctx-stretches*)) "")
+                              (if *ctx-batches*
+                                  (format nil " · ~D batch~:*~[es~;~:;es~]" (length *ctx-batches*)) "")
                               (if (plusp *ctx-offloaded-count*)
                                   (format nil " · ~D off" *ctx-offloaded-count*) "")
                               (if *ctx-pending-note* " · note" ""))
@@ -1107,7 +1107,9 @@ status line, then one truncated line per rewind (newest first as kept in
         (when u (add (cons (fit u w) 8))))
       ;; One line per rewind (the docstring's promise), newest first —
       ;; the part a short pane scrolls through.
-      (dolist (st *ctx-stretches*)
+      (dolist (b (ctx-batch-lines))
+        (add (cons (fit (first b) w) (second b))))
+      (dolist (st (ctx-visible-stretches))
         (destructuring-bind (from to short &rest more) st
           (declare (ignore more))
           (add (cons (fit (format nil "e~D…e~D ~A" from to short) w) 8)))))
@@ -1176,7 +1178,9 @@ wheel scrolls it when there are more lines than rows."
                       (length *messages*))
               8)))
            (extra '()))
-      (dolist (st *ctx-stretches*)
+      (dolist (b (ctx-batch-lines))
+        (setf extra (append (reverse (line (first b) (second b))) extra)))
+      (dolist (st (ctx-visible-stretches))
         (setf extra (append (reverse (line (format nil "rewind e~D…e~D: ~A (~A)"
                                                    (first st) (second st) (third st)
                                                    (ctx-fmt-k (sixth st)))

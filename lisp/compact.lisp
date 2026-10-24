@@ -162,6 +162,8 @@ the new token estimate."
     (sb-sys:without-interrupts (setf *messages* new))
     (setf *ctx-requests-since-collapse* 0 *ctx-low-pt-streak* 0
           *ctx-prev-request-chars* nil *ctx-noted-percent* 0 *ctx-pending-note* nil)
+    ;; Counts as an applied batch (the 15 min gap restarts); queued edits die.
+    (ctx-note-batch before-est after 1)
     (ctx-save-state)
     (pane-dirty "context")
     after))
