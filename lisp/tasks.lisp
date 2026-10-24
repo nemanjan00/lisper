@@ -21,6 +21,7 @@ wrapper left the real job running).")
 
 (defstruct (task (:constructor %make-task (name cmd)))
   name cmd process stream file
+  (pid nil) (pgid nil)
   (start (get-universal-time))
   (status :running)                     ; :running | :exited
   exit-code
@@ -32,7 +33,8 @@ wrapper left the real job running).")
 (defvar *tasks* (make-hash-table :test 'equal) "name -> TASK.")
 
 ;;; Forward references: BG-START starts threads running these, defined below.
-(declaim (ftype function task-watch monitor-read-loop monitor-flush tasks-init-panes))
+(declaim (ftype function task-watch monitor-read-loop monitor-flush tasks-init-panes
+                task-poll-watch tasks-save))
 
 (defun task-list ()
   (sort (loop for v being the hash-values of *tasks* collect v)
@@ -66,6 +68,17 @@ accept a string too."
 ;;; ---------------------------------------------------------------
 ;;; start / watch / stop / inspect
 
+(defun task-discover-pgid (pid)
+  "The process group of a setsid --wait child: the session leader is its
+direct child, so pgrep -P PID gives child pid == new pgid."
+  (loop repeat 50
+        for out = (shell (format nil "pgrep -P ~D" pid))
+        for nl = (position #\Newline out)
+        for line = (subseq out 0 (or nl (length out)))
+        when (plusp (length (string-trim " " line)))
+          do (return (parse-integer line :junk-allowed t))
+        do (sleep 0.02)))
+
 (defun bg-start (name cmd &key monitor pattern max-rate)
   "Start CMD as background task NAME and return a status string.
 Output (stdout+stderr) goes to the session's tmp/task-NAME.log.  With
@@ -81,8 +94,11 @@ MONITOR, also start a reader forwarding matching lines to the agent."
                               :if-does-not-exist :create))
                 (proc (handler-case
                           (if *setsid*
+                              ;; --wait: setsid stays as parent of the new
+                              ;; session leader and propagates its exit code,
+                              ;; so PROCESS-WAIT still works.
                               (sb-ext:run-program *setsid*
-                                                  (list "/bin/sh" "-c" cmd)
+                                                  (list "--wait" "/bin/sh" "-c" cmd)
                                                   :wait nil :output stream :error :output)
                               (sb-ext:run-program "/bin/sh" (list "-c" cmd)
                                                   :wait nil :output stream :error :output))
@@ -94,6 +110,8 @@ MONITOR, also start a reader forwarding matching lines to the agent."
            (setf (task-process task) proc
                  (task-stream task) stream
                  (task-file task) file
+                 (task-pid task) (sb-ext:process-pid proc)
+                 (task-pgid task) (and *setsid* (task-discover-pgid (sb-ext:process-pid proc)))
                  (task-monitor task) monitor
                  (task-pattern task) (and pattern (plusp (length pattern)) pattern)
                  (task-max-rate task) (max 1 (or max-rate 20)))
@@ -104,9 +122,11 @@ MONITOR, also start a reader forwarding matching lines to the agent."
              (sb-thread:make-thread (lambda () (monitor-read-loop task))
                                     :name (format nil "monitor-~A" name)))
            (tasks-init-panes)
+           (tasks-save)
            (pane-dirty "tasks")
-           (format nil "~A ~S started (pid ~D), output: ~A"
+           (format nil "~A ~S started (pid ~D~@[ pgid ~D~]), output: ~A"
                    (if monitor "monitor" "task") name (sb-ext:process-pid proc)
+                   (task-pgid task)
                    (enough-namestring file lisping-core:*root*))))))
 
 (defun task-watch (task)
@@ -117,19 +137,34 @@ with a synthetic message (kind \"task\" — delivered when the turn ends)."
         (task-status task) :exited)
   (ignore-errors (close (task-stream task)))
   (setf (task-reader-stop task) t)      ; a monitor reader drains, then exits
+  (tasks-save)
   (pane-dirty "tasks")
   (send-user-message
    (format nil "[task ~A] ~A, ~D line~:P"
            (task-name task) (task-status-string task) (task-line-count task))
    :kind "task"))
 
+(defun task-poll-watch (task)
+  "Reattached watcher for a task from BEFORE a restart: no process
+object, so poll the process group until it is gone."
+  (loop while (task-group-alive-p task) do (sleep 1))
+  (setf (task-exit-code task) "gone" (task-status task) :exited)
+  (setf (task-reader-stop task) t)
+  (tasks-save)
+  (pane-dirty "tasks")
+  (send-user-message
+   (format nil "[task ~A] gone (it was started before the restart), ~D line~:P"
+           (task-name task) (task-line-count task))
+   :kind "task"))
+
 (defun task-kill (task &optional (sig 15))
-  "Signal TASK's whole process group (the setsid wrapper makes pid ==
-pgid); without setsid, just the process."
-  (let ((pid (sb-ext:process-pid (task-process task))))
-    (if *setsid*
-        (ignore-errors (sb-posix:kill (- pid) sig))
-        (ignore-errors (sb-ext:process-kill (task-process task) sig)))))
+  "Signal TASK's whole process group when we know its pgid (setsid
+start, or reattached after a restart); otherwise just the process.
+Killing only the /bin/sh wrapper used to leave the real job running."
+  (cond ((task-pgid task)
+         (ignore-errors (sb-posix:kill (- (task-pgid task)) sig)))
+        ((task-process task)
+         (ignore-errors (sb-ext:process-kill (task-process task) sig)))))
 
 (defun bg-stop (name)
   "SIGTERM task NAME's process group (a no-op with a message if it
@@ -169,6 +204,85 @@ already exited)."
               (format s ", monitor pattern ~S, max ~D/min, ~D dropped"
                       (task-pattern task) (task-max-rate task) (task-dropped task)))
             (format s "~%  ~A~%" (task-cmd task)))))))
+
+;;; ---------------------------------------------------------------
+;;; persistence: the task table survives restarts (reattach or kill)
+
+(defun tasks-file ()
+  (lisping-core:session-path "tmp/tasks.json"))
+
+(defun tasks-save ()
+  (ignore-errors
+    (let ((f (tasks-file)))
+      (when f
+        (with-open-file (s f :direction :output
+                           :if-exists :supersede :if-does-not-exist :create)
+          (write-string
+           (json-encode
+            (coerce (loop for task in (task-list)
+                          collect (obj :name (task-name task)
+                                       :cmd (task-cmd task)
+                                       :pid (or (task-pid task) 0)
+                                       :pgid (or (task-pgid task) 0)
+                                       :file (and (task-file task)
+                                                  (namestring (task-file task)))
+                                       :start (task-start task)
+                                       :status (if (eq (task-status task) :running)
+                                                   "running" "exited")
+                                       :monitor (if (task-monitor task) t nil)
+                                       :pattern (or (task-pattern task) "")
+                                       :max-rate (task-max-rate task)))
+                    'vector))
+           s))))))
+
+(defun task-group-alive-p (task)
+  (let ((pgid (task-pgid task)))
+    (and pgid (plusp pgid)
+         (handler-case (progn (sb-posix:kill (- pgid) 0) t)
+           (error () nil)))))
+
+(defun tasks-load ()
+  "Reload the persisted task table after a restart.  A task whose
+process group is still alive is reattached: a polling watcher takes
+over (no process object survives) and a monitor reader restarts; one
+whose group is gone is recorded as exited.  Runs once per boot."
+  (let ((f (tasks-file)))
+    (when (and f (probe-file f))
+      (let ((data (ignore-errors
+                    (json-decode
+                     (with-open-file (s f)
+                       (let ((out (make-string-output-stream)))
+                         (loop for ch = (read-char s nil nil)
+                               while ch do (write-char ch out))
+                         (get-output-stream-string out)))))))
+        (when (vectorp data)
+          (loop for rec across data
+                for name = (gethash "name" rec)
+                when (and name (not (gethash name *tasks*)))
+                  do (let ((task (%make-task name (or (gethash "cmd" rec) ""))))
+                       (setf (task-pid task) (gethash "pid" rec)
+                             (task-pgid task) (let ((p (gethash "pgid" rec)))
+                                                (and p (plusp p) p))
+                             (task-file task) (let ((fn (gethash "file" rec)))
+                                                (and fn (pathname fn)))
+                             (task-start task) (or (gethash "start" rec)
+                                                   (get-universal-time))
+                             (task-monitor task) (gethash "monitor" rec)
+                             (task-pattern task) (let ((p (gethash "pattern" rec)))
+                                                   (and p (plusp (length p)) p))
+                             (task-max-rate task) (max 1 (or (gethash "max-rate" rec) 20)))
+                       (if (and (equal (gethash "status" rec) "running")
+                                (task-group-alive-p task))
+                           (progn
+                             (setf (task-status task) :running)
+                             (sb-thread:make-thread (lambda () (task-poll-watch task))
+                                                    :name (format nil "task-~A" name))
+                             (when (task-monitor task)
+                               (sb-thread:make-thread (lambda () (monitor-read-loop task))
+                                                      :name (format nil "monitor-~A" name))))
+                           (setf (task-status task) :exited
+                                 (task-exit-code task) "lost in restart"))
+                       (setf (gethash name *tasks*) task))))))))
 
 ;;; ---------------------------------------------------------------
 ;;; monitor: tail the log, forward matching lines batched + rate-limited
@@ -305,6 +419,7 @@ Idempotent."
   (setf *tui-stop-hooks* (remove 'tasks-stop-all *tui-stop-hooks*))
   (setf *tui-stop-hooks* (append *tui-stop-hooks* (list 'tasks-stop-all)))
   (tasks-init-panes)
+  (unless lisping-core:*test-boot* (tasks-load))
   (lisping-core::register-tool
    "bg_start" "Start a background task running shell CMD named NAME (detached; no stdin; stdout+stderr to the session's tmp/task-NAME.log) and return immediately. When it exits, a '[task NAME] exited CODE, N lines' message arrives. Returns e.g. \"task \\\"build\\\" started (pid 1234), output: .../sessions/main/tmp/task-build.log\". Example: {\"name\":\"build\",\"cmd\":\"make -j4\"}. See also bg_list, bg_output, bg_stop."
    (lisping-core::obj "type" "object"
