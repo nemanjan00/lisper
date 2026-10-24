@@ -628,16 +628,25 @@ drops out, then the right group, rather than overlapping the left."
          (hint (if (tui-ui-prefix ui)
                    "C-b cancel | q quit | r redraw | Left/Right pane | 1-9 pane"
                    "C-b prefix"))
+         (name-seg (list "lisping-ai" 0 2))
+         (model-seg (list (format nil "~A" *model*) 0 4))
+         (todo-seg (list (format nil "~D todo~:P" (count-if-not #'cdr *todos*)) 7 5))
+         (focus-seg (list (format nil "~A" *pane-focus*) 7 0))
          (left (append
-                (list (list "lisping-ai" 0 2))
+                (list name-seg)
                 ;; What the agent is doing (lisp/activity.lisp).
                 (when (fboundp 'activity-segment)
                   (list (funcall 'activity-segment)))
-                (list (list (format nil "~A" *model*) 0 4)
-                      (list (format nil "~D todo~:P" (count-if-not #'cdr *todos*)) 7 5)
-                      (list (format nil "~A" *pane-focus*) 7 0))
+                (list model-seg todo-seg focus-seg)
                 (when (plusp held)
                   (list (list (format nil "~D held" held) 0 3)))))
+         ;; On a narrow terminal drop whole segments, least important
+         ;; first, instead of clipping one mid-word.
+         (left (let ((segs left))
+                 (dolist (victim (list model-seg todo-seg focus-seg name-seg) segs)
+                   (when (<= (reduce #'+ segs :key (lambda (s) (+ 3 (length (first s))))) w)
+                     (return segs))
+                   (setf segs (remove victim segs :test #'eq)))))
          (time-seg (list time 0 6))
          (right (list (list hint 7 0) time-seg)))
     (dotimes (x w) (ui-grid-put g x y #\Space fill))
