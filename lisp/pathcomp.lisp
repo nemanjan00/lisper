@@ -51,44 +51,33 @@ parsing, so names with [ * ? are fine). NIL when unreadable."
     out))
 
 (defun path-source (ui text start end)
-  "Completion source: candidates for the path under the cursor."
+  "Completion source: candidates for the path under the cursor, as
+(insert . display) pairs.  Dotfiles are listed only once the typed
+prefix starts with a dot; directories get a trailing /."
   (declare (ignore ui))
   (let ((word (subseq text start (min end (length text)))))
     (when (path-word-p word)
-      (let* ((slash (position #\/ word :from-end t))
-             ;; "~" and "." / ".." alone complete to themselves + /
-             (dir (cond (slash (subseq word 0 (1+ slash)))
-                        ((string= word "~") "~/")
-                        (t "")))
-             (prefix (if slash (subseq word (1+ slash)) ""))
-             (entries (and (not (and (null slash) (string/= word "~")
-                                     (not (member word '("." "..") :test #'string=))))
-                           (path-list-dir (path-expand-dir dir)))))
+      (let ((slash (position #\/ word :from-end t)))
         (cond
-          ((and (null slash) (member word '("." "..") :test #'string=))
-           (list (cons (concatenate 'string word "/") (concatenate 'string word "/"))))
-          ((and (null slash) (string= word "~"))
-           (list (cons "~/" "~/")))
+          ;; bare "." / ".." / "~" complete to themselves plus a slash
+          ((and (null slash) (member word '("." ".." "~") :test #'string=))
+           (let ((s (concatenate 'string word "/")))
+             (list (cons s s))))
+          ((null slash) nil)
           (t
-           (let ((shown (sort
-                         (loop for (name . dirp) in entries
-                               when (and (<= (length prefix) (length name))
-                                         (string= prefix name :end2 (length prefix))
-                                         (not (find #\Space name))
-                                         ;; dotfiles only when asked for
-                                         (or (plusp (length prefix))
-                                             (char/= (char name 0) #\.)
-                                             nil)
-                                         (or (zerop (length prefix))
-                                             t))
-                                 collect (cons name dirp))
-                         #'string< :key #'car)))
-             ;; With a "." prefix dotfiles are wanted.
-             (when (and (plusp (length prefix)) (char= (char prefix 0) #\.))
-               nil)
-             (loop for (name . dirp) in (subseq shown 0 (min 200 (length shown)))
-                   collect (let ((full (concatenate 'string dir name (if dirp "/" ""))))
-                             (cons full (concatenate 'string name (if dirp "/" "")))))))))))) 
+           (let* ((dir (subseq word 0 (1+ slash)))
+                  (prefix (subseq word (1+ slash)))
+                  (hits (sort (loop for (name . dirp) in (path-list-dir (path-expand-dir dir))
+                                    when (and (<= (length prefix) (length name))
+                                              (string= prefix name :end2 (length prefix))
+                                              (not (find #\Space name))
+                                              (or (plusp (length prefix))
+                                                  (char/= (char name 0) #\.)))
+                                      collect (cons name dirp))
+                              #'string< :key #'car)))
+             (loop for (name . dirp) in (subseq hits 0 (min 200 (length hits)))
+                   collect (cons (concatenate 'string dir name (if dirp "/" ""))
+                                 (concatenate 'string name (if dirp "/" ""))))))))))) 
 
 (defun pathcomp-install ()
   (pushnew 'path-source *completion-sources*)
