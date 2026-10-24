@@ -34,6 +34,7 @@
 (load-file "lisp/activity.lisp")
 (load-file "lisp/mcp.lisp")
 (load-file "lisp/theme.lisp")
+(load-file "lisp/nudge.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -58,3 +59,6 @@
 
 ;; Colour theme (Dracula by default; /theme off for plain ANSI).
 (theme-start)
+
+;; Todo nudge after an idle turn with open todos (/nudge on|off).
+(nudge-start)

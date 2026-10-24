@@ -90,7 +90,8 @@ the fallback when the message isn't found."
       (when (nudge-user-typed-p event)
         (setf *nudge-count* 0 *nudge-paused* nil)
         (when *tui* (tui-dirty))))
-     (t (incf *nudge-generation*))))
+     (t (incf *nudge-generation*)
+        (nudge-todo-changed))))
   nil)
 
 (defun nudge-todo-changed ()
