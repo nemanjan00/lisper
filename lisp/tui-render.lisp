@@ -487,7 +487,7 @@ where the queue/input rows start (the panes end just above it).")
              (h (tui-ui-height ui))
              ;; Panes own rows 0..pane-h-1 (each with its own top
              ;; border); then the queue rows, input, status.
-             (pane-h (max 3 (- h 2 (tui-queue-rows ui))))
+             (pane-h (max 3 (- h 1 (tui-input-rows ui) (tui-queue-rows ui))))
              (g (ui-grid-make w h)))
         (panes-ensure-canvas w pane-h)
         (panes-draw *panes-canvas*)
@@ -498,12 +498,13 @@ where the queue/input rows start (the panes end just above it).")
           (handler-case (funcall f g ui pane-h w)
             (error (c) (declare (ignore c)) nil)))
         (tui-draw-status g ui (1- h) w)
-        (let* ((input-row (- h 2))
-               ;; TUI-DRAW-INPUT returns the cursor column: with
-               ;; horizontal scroll it is not prompt-len + cursor + 1.
-               (col (tui-draw-input g ui input-row w))
-               ;; The cursor position in the frame is 1-based (ANSI).
-               (row (1+ input-row))
+        (let* ((input-row (- h 1 (tui-input-rows ui)))
+               ;; TUI-DRAW-INPUT returns the cursor column and row (1-based,
+               ;; ANSI): with horizontal scroll and several input lines
+               ;; they are not prompt-len + cursor + 1.
+               (cr (multiple-value-list (tui-draw-input g ui input-row w)))
+               (col (first cr))
+               (row (second cr))
                (full (or (null *tui-prev-grid*)
                          (/= (uigrid-w *tui-prev-grid*) w)
                          (/= (uigrid-h *tui-prev-grid*) h)))
@@ -612,9 +613,44 @@ back into the UI's input-hscroll slot."
         (let ((end (min len (+ hs inner))))
           (values hs (- end hs) (> hs 0) (< end len) hs)))))
 
+(defun tui-draw-input-lines (g ui y w plen)
+  "Several input lines: rows from Y, each line horizontally clipped (the
+cursor's line scrolls to keep the cursor visible), the window of
+TUI-INPUT-ROWS lines following the cursor. Returns (values col row),
+1-based."
+  (let* ((text (coerce (tui-ui-input ui) 'string))
+         (cursor (tui-ui-input-cursor ui))
+         (lines (loop with start = 0
+                      for p = (position #\Newline text :start start)
+                      collect (subseq text start p)
+                      while p do (setf start (1+ p))))
+         (rows (tui-input-rows ui))
+         (cl (count #\Newline text :end cursor))
+         (ccol (- cursor (let ((p (position #\Newline text :end cursor :from-end t)))
+                           (if p (1+ p) 0))))
+         (top (max 0 (min *tui-input-top* (- (length lines) rows))))
+         (cx plen))
+    (when (< cl top) (setf top cl))
+    (when (>= cl (+ top rows)) (setf top (1+ (- cl rows))))
+    (setf *tui-input-top* top)
+    (dotimes (k rows)
+      (let* ((i (+ top k)) (line (nth i lines)) (avail (- w plen)))
+        (when line
+          (if (= i cl)
+              (multiple-value-bind (start count left right hs)
+                  (tui-input-window (length line) ccol avail (tui-ui-input-hscroll ui))
+                (setf (tui-ui-input-hscroll ui) hs)
+                (let ((x plen))
+                  (when left (ui-grid-put g x (+ y k) #\‹ 8) (incf x))
+                  (ui-grid-write g x (+ y k) (subseq line start (+ start count)) 7 w)
+                  (when right (ui-grid-put g (1- w) (+ y k) #\› 8))
+                  (setf cx (+ x (- ccol start)))))
+              (ui-grid-write g plen (+ y k) (str-truncate line avail) 7 w)))))
+    (values (1+ cx) (+ y (- cl top) 1))))
+
 (defun tui-draw-input (g ui y w)
-  "Draw prompt and the horizontally scrolled input line. Returns the
-terminal column (1-based) the cursor belongs on."
+  "Draw prompt and the input line(s). Returns the terminal column and
+row (1-based) the cursor belongs on."
   (let* ((prefix (tui-ui-prefix ui))
          (prompt (cond (prefix (tui-seg-chunks "*" 0 3))
                        ((tui-ui-queue-edit ui) (tui-seg-chunks "✎" 0 5))
@@ -624,15 +660,17 @@ terminal column (1-based) the cursor belongs on."
          (plen (1+ (reduce #'+ prompt :key (lambda (c) (length (car c))))))
          (cursor (tui-ui-input-cursor ui)))
     (ui-grid-write-chunks g 0 y prompt w)
-    (multiple-value-bind (start count left right hs)
-        (tui-input-window (length text) cursor (- w plen)
-                          (tui-ui-input-hscroll ui))
-      (setf (tui-ui-input-hscroll ui) hs)
-      (let ((x plen))
-        (when left (ui-grid-put g x y #\‹ 8) (incf x))
-        (ui-grid-write g x y (subseq text start (+ start count)) 7 w)
-        (when right (ui-grid-put g (1- w) y #\› 8))
-        (+ x (- cursor start) 1)))))
+    (if (find #\Newline text)
+        (tui-draw-input-lines g ui y w plen)
+        (multiple-value-bind (start count left right hs)
+            (tui-input-window (length text) cursor (- w plen)
+                              (tui-ui-input-hscroll ui))
+          (setf (tui-ui-input-hscroll ui) hs)
+          (let ((x plen))
+            (when left (ui-grid-put g x y #\‹ 8) (incf x))
+            (ui-grid-write g x y (subseq text start (+ start count)) 7 w)
+            (when right (ui-grid-put g (1- w) y #\› 8))
+            (values (+ x (- cursor start) 1) (1+ y)))))))
 
 (defun tui-held-count ()
   "User messages the core is holding until the current turn ends.
