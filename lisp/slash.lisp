@@ -173,6 +173,9 @@ Tab with no popup asks the Tab sources (path completion)."
      t)
     ((and (characterp key) (char= key #\Tab))
      (completion-open ui (cons 'slash-source *completion-sources*))
+     ;; A single candidate completes at once, like vim.
+     (when (and *completion* (null (cdr (completion-items *completion*))))
+       (completion-accept ui))
      (setf *completion-seen* (completion-input-state ui))
      t)
     (t nil)))
