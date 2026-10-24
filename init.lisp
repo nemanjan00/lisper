@@ -33,6 +33,7 @@
 (load-file "lisp/pathcomp.lisp")
 (load-file "lisp/activity.lisp")
 (load-file "lisp/mcp.lisp")
+(load-file "lisp/theme.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -54,3 +55,6 @@
 
 ;; MCP servers (~/.lisper/mcp.json): /mcp command, tools SERVER__TOOL.
 (mcp-start)
+
+;; Colour theme (Dracula by default; /theme off for plain ANSI).
+(theme-start)

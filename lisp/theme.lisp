@@ -65,4 +65,5 @@
   "Called from init.lisp, before the UI starts: load the saved theme and
 register /theme."
   (theme-apply (theme-saved-name))
+  (unless lisping-core:*test-boot* (theme-redraw))
   (define-slash "theme" 'slash-theme "colour theme: /theme dracula | off" 'slash-theme-args))
