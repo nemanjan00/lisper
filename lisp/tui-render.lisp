@@ -426,7 +426,35 @@ and empty messages are skipped."
   "Sleep budget for the redraw wait: wake when the clock may tick over."
   (- 60 (nth-value 0 (decode-universal-time (get-universal-time)))))
 
+(defvar *tui-logged-kinds* (make-hash-table :test 'equal)
+  "(where . condition-type) -> T once logged by TUI-LOG-ONCE.")
+
+(defun tui-log-once (where what)
+  "Write WHAT (a condition or a string) to the trace, the first time per
+WHERE and kind: loops that swallow errors must not do it silently."
+  (let ((key (cons where (if (typep what 'condition) (type-of what) what))))
+    (unless (gethash key *tui-logged-kinds*)
+      (setf (gethash key *tui-logged-kinds*) t)
+      (ignore-errors
+        (lisping-core::trace-event
+         (list :type :error
+               :text (format nil "[tui] ~A: ~A" where what)))))))
+
 (defun tui-redraw-loop (ui)
+  "The redraw loop, logging why it ended when the UI is still meant to run
+(it used to vanish without a trace and leave a frozen screen)."
+  (let ((reason :returned))
+    (unwind-protect
+         (handler-bind ((serious-condition
+                          (lambda (c) (setf reason (format nil "condition ~A" c)))))
+           (tui-redraw-loop-1 ui)
+           (setf reason (cond ((null *tui*) "*tui* is nil")
+                              ((not (eq *tui* ui)) "*tui* is another UI")
+                              (t "loop returned"))))
+      (when *tui*
+        (tui-log-once "redraw thread exited" (format nil "~A" reason))))))
+
+(defun tui-redraw-loop-1 (ui)
   (loop while (and *tui* (eq *tui* ui))
         do (handler-bind ((serious-condition #'tui-log-crash-at-signal))
              (handler-case

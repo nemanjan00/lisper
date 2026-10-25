@@ -108,17 +108,36 @@
 
 (defvar *activity-ticker* nil "The ticker thread.")
 
+(defun tui-watchdog ()
+  "A UI without a live redraw thread is a frozen screen: start one again
+and say so in the trace."
+  (let ((ui *tui*))
+    (when (and ui (not (find-if (lambda (th)
+                                  (and (equal (sb-thread:thread-name th) "tui-redraw")
+                                       (sb-thread:thread-alive-p th)))
+                                (sb-thread:list-all-threads))))
+      (tui-log-once "watchdog" "no tui-redraw thread; started a new one")
+      (setf (tui-ui-threads ui)
+            (cons (sb-thread:make-thread (lambda () (tui-redraw-loop ui))
+                                         :name "tui-redraw")
+                  (remove "tui-redraw" (tui-ui-threads ui)
+                          :key #'sb-thread:thread-name :test #'equal)))
+      (tui-force-redraw))))
+
 (defun activity-ticker-loop (me)
-  (let ((n 0))
+  (let ((n 0) (ticks 0))
     (loop while (eq *activity-ticker* me)
           do (sleep 0.12)
+             (when (zerop (mod (incf ticks) 16))   ; about every 2 s
+               (handler-case (tui-watchdog)
+                 (serious-condition (c) (tui-log-once "watchdog" c))))
              (when (and *tui* (activity-animated-p))
                (handler-case
                    (progn (tui-tick-status *tui*)
                           ;; The todo pane's working-on spinner: ~4 repaints/s.
                           (when (zerop (mod (incf n) 2))
                             (pane-dirty "todo")))
-                 (serious-condition () nil))))))
+                 (serious-condition (c) (tui-log-once "activity ticker" c)))))))
 
 (defun activity-start ()
   "Install the observer and start the ticker. Idempotent."

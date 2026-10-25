@@ -880,7 +880,10 @@ and the buffer write hold the lock."
 
 
 (defun panes-ticker-loop ()
-  (loop while *tui* do (ignore-errors (panes-refresh-cmds)) (sleep 1)))
+  (loop while *tui*
+        do (handler-case (panes-refresh-cmds)
+             (serious-condition (c) (tui-log-once "panes ticker" c)))
+           (sleep 1)))
 
 ;;; ---------------------------------------------------------------
 ;;; Init
