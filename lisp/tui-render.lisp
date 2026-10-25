@@ -163,8 +163,8 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
                         (tui-replay-history ui)))))
       ;; :kind is NIL for what the user typed, a string for system messages.
       ;; Those aren't editable, so no queued echo; they show on delivery.
-      (:queued (unless (getf event :kind)
-                 (tui-show-queued ui (getf event :text))))
+      ;; (a typed message waits in the queue panel, not in the chat)
+      (:queued nil)
       (:user (let ((text (getf event :text)) (kind (getf event :kind)))
                (cond (kind (tui-show-system ui kind text))
                      ((not (equal text (tui-ui-pending-user ui)))

@@ -433,9 +433,9 @@ as a short placeholder such as [pasted 29 lines].")
           (setf (pane-scroll p) 0
                 *tui-chat-new* 0
                 (pane-needs-redraw p) 1)))
-      ;; Echo it dimmed right away; the core's :queued/:user events and
-      ;; TUI-SHOW-USER dedupe and upgrade this line.
-      (tui-show-queued ui text)
+      ;; No dim echo in the chat: a waiting message shows in the queue
+      ;; panel above the input, and the chat gets the real line when the
+      ;; core delivers it (the :user event).
       (send-user-message text))))
 
 (defvar *tui-paste-min-lines* 3 "Pastes of at least this many lines are compacted.")
