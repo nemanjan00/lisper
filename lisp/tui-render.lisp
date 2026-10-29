@@ -143,6 +143,24 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
                       :fresh t)))
     (tui-dirty)))
 
+(defun tui-verbose-boot-p ()
+  "LISPER_VERBOSE=1 brings back the long boot banner."
+  (let ((v (sb-posix:getenv "LISPER_VERBOSE")))
+    (and v (plusp (length v)) (not (string= v "0")))))
+
+(defun tui-boot-banner-p (text)
+  "TEXT is the core's boot banner (\"lisping-ai on MODEL, N tools, ...\")."
+  (and (stringp text) (not (tui-verbose-boot-p))
+       (eql 0 (search "lisping-ai on " text))))
+
+(defun tui-quiet-banner ()
+  "One quiet line instead of the boot banner: model, the directory when\nit is not the harness itself, and the way to help."
+  (let* ((cwd (and lisping-core:*cwd* (string-right-trim "/" (namestring lisping-core:*cwd*))))
+         (root (and lisping-core:*root* (string-right-trim "/" (namestring lisping-core:*root*)))))
+    (format nil "lisping-ai · ~A~@[ · ~A~] · /help"
+            lisping-core:*model*
+            (and cwd (not (equal cwd root)) cwd))))
+
 (defun tui-log-event (ui event)
   (let ((type (getf event :type)))
     (case type
@@ -154,7 +172,13 @@ so *TUI-QUEUED-TEXT* is a list, oldest first."
       (:error (tui-chat-add ui (list (cons (getf event :text) 1))))
       (:info (cond ((equal (getf event :text) "turn cancelled")
                     (tui-show-system ui "cancel" "the turn was stopped here"))
-                   (t (tui-chat-add ui (list (cons (getf event :text) 8)))
+                   (t (let ((tx (getf event :text)))
+                        (cond ((tui-boot-banner-p tx)
+                               (tui-chat-add ui (list (cons (tui-quiet-banner) 8))))
+                              ((and (stringp tx) (eql 0 (search "resumed session" tx))
+                                    (not (tui-verbose-boot-p)))
+                               nil)     ; the replay below shows the conversation
+                              (t (tui-chat-add ui (list (cons tx 8))))))
                       ;; The core loads the saved conversation AFTER init.lisp
                       ;; started the UI, so the replay at start saw nothing:
                       ;; replay when the core announces the resume.
