@@ -55,7 +55,8 @@ messages in the .jsonl log (context_search still finds them)."
 (defun slash-clear-conversation (ui args)
   (declare (ignore ui args))
   (clear-conversation)
-  :keep-input)
+  ;; NIL (not :keep-input): slash-run then clears the typed "/clear".
+  nil)
 
 ;;; -------------------------------------------------------------------- #cmd
 
@@ -103,7 +104,7 @@ output; ## starts a plain message that begins with one #."
 (defun session-cmds-start ()
   "Called from init.lisp after slash-start.  Idempotent."
   (define-slash "clear" 'slash-clear-conversation
-    "start a fresh conversation (forget messages, goal, loop; the input line is kept)")
+    "start a fresh conversation (forget messages, goal and loop)")
   (define-slash "new" 'slash-clear-conversation "same as /clear")
   (setf *tui-submit-hooks*
         (append (remove 'shell-input-submit *tui-submit-hooks*) (list 'shell-input-submit)))
