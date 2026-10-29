@@ -1,0 +1,52 @@
+#!/bin/sh
+# Compact PC sensor summary for a :cmd pane (lisp/panes.lisp re-runs it).
+# CPU load/temps, fans, board, NVMe, GPU, memory.  Missing tools are skipped.
+
+bar() {  # bar PERCENT [WIDTH] -> ████░░░░
+  awk -v p="${1:-0}" -v w="${2:-10}" 'BEGIN{n=int(p*w/100+0.5); if(n>w)n=w; if(n<0)n=0;
+    for(i=0;i<n;i++)printf "█"; for(i=n;i<w;i++)printf "░"}'
+}
+
+# CPU utilisation over 0.4 s from /proc/stat
+read -r _ u1 n1 s1 i1 w1 q1 sq1 _ < /proc/stat; sleep 0.4
+read -r _ u2 n2 s2 i2 w2 q2 sq2 _ < /proc/stat
+t=$(( (u2+n2+s2+i2+w2+q2+sq2) - (u1+n1+s1+i1+w1+q1+sq1) ))
+idle=$(( (i2+w2) - (i1+w1) ))
+cpu=$(( t > 0 ? 100 * (t - idle) / t : 0 ))
+load=$(cut -d' ' -f1-3 /proc/loadavg)
+printf 'CPU  %3d%% %s\n' "$cpu" "$(bar $cpu)"
+printf '     load %s · %d threads\n' "$load" "$(nproc)"
+
+if command -v sensors >/dev/null 2>&1; then
+  sensors 2>/dev/null | awk '
+    /^k10temp|^coretemp/ {cpu=1; next}
+    /^[a-z0-9_-]+-(pci|isa|i2c|virtual|mdio|acpi)/ {cpu=0; chip=$1; next}
+    cpu && /^(Tctl|Package id 0)/ {gsub(/\+/,"",$2); printf "     temp %s\n", $2}
+    /^CPU Package:/ {gsub(/\+/,"",$3); printf "     pkg  %s\n", $3}
+    /^Motherboard:/ {gsub(/\+/,"",$2); mb=$2}
+    /^VRM:/ {gsub(/\+/,"",$2); vrm=$2}
+    /^Composite:/ {gsub(/\+/,"",$2); nvme=$2}
+    /RPM/ {fan[++nf]=$1" "$2" RPM"}
+    END{
+      if (mb!="" || vrm!="") printf "BOARD board %s  vrm %s\n", mb, vrm
+      if (nvme!="") printf "NVME %s\n", nvme
+      for(i=1;i<=nf;i++) printf "FAN  %s\n", fan[i]
+    }'
+fi
+
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,fan.speed \
+    --format=csv,noheader,nounits 2>/dev/null | while IFS=, read -r name temp util mu mt pw fan; do
+    name=$(echo "$name" | sed 's/NVIDIA GeForce //; s/^ *//')
+    util=${util# }; mu=${mu# }; mt=${mt# }; temp=${temp# }; pw=${pw# }; fan=${fan# }
+    printf 'GPU  %s\n' "$name"
+    printf '     %3d%% %s  %s°C\n' "$util" "$(bar "$util")" "$temp"
+    printf '     vram %d/%d MiB  %s W  fan %s%%\n' "$mu" "$mt" "$pw" "$fan"
+  done
+fi
+
+awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} /SwapTotal/{st=$2} /SwapFree/{sf=$2}
+  END{u=t-a; p=100*u/t; w=10; n=int(p*w/100+0.5); b="";
+      for(i=0;i<n;i++)b=b "█"; for(i=n;i<w;i++)b=b "░";
+      printf "RAM  %3d%% %s\n     %.1f/%.1f GiB", p, b, u/1048576, t/1048576;
+      if (st>0) printf "  swap %.1f GiB", (st-sf)/1048576; printf "\n"}' /proc/meminfo
