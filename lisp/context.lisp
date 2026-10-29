@@ -1069,13 +1069,17 @@ print 0."
         (t (format nil "~,1FM" (/ n 1000000)))))
 
 (defun ctx-fmt-size (n)
-  "Human token counts for the context line: 1048576 -> \"1M\", 8192 -> \"8K\";
-anything not an exact multiple keeps the full ~:D form."
-  (cond ((and (>= n 1048576) (zerop (mod n 1048576)))
-         (format nil "~DM" (/ n 1048576)))
-        ((and (>= n 1024) (zerop (mod n 1024)))
-         (format nil "~DK" (/ n 1024)))
-        (t (format nil "~:D" n))))
+  "Short token counts for the context line: 200000 -> \"200k\",
+1048576 -> \"1M\", 128000 -> \"128k\", 131072 -> \"131k\"; below 1000 the
+plain number."
+  (flet ((short (x unit)
+           (let ((v (/ x unit)))
+             (if (< (abs (- v (round v))) 0.05)
+                 (format nil "~D" (round v))
+                 (format nil "~,1F" v)))))
+    (cond ((>= n 1000000) (format nil "~AM" (short n 1000000)))
+          ((>= n 1000) (format nil "~Ak" (short n 1000)))
+          (t (format nil "~D" n)))))
 
 (defvar *ctx-compact-width* 70
   "Context panes narrower than this (a phone) use the dense view.")
