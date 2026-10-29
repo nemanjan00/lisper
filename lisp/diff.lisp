@@ -20,6 +20,10 @@
 
 (defvar *diff-base* nil "HEAD at the last committed tool result.")
 
+(defun chat-call-diff-p (call)
+  "True when CALL has a diff to draw."
+  (and *chat-diff-show* (gethash call *chat-diffs*) t))
+
 (defun diff-head ()
   "Current HEAD of the harness repo, or \"\"."
   (or (ignore-errors

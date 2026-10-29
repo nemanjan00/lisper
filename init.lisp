@@ -34,6 +34,7 @@
 (load-file "lisp/activity.lisp")
 (load-file "lisp/mcp.lisp")
 (load-file "lisp/theme.lisp")
+(load-file "lisp/diff.lisp")
 (load-file "lisp/nudge.lisp")
 (load-file "lisp/models.lisp")
 (load-file "lisp/history.lisp")
@@ -74,6 +75,8 @@
 
 ;; Todo nudge after an idle turn with open todos (/nudge on|off).
 (nudge-start)
+;; Diffs of file-writing tools under their call (/diff on|off).
+(diff-start)
 
 ;; /compact [focus]: summarize the whole conversation in one model call.
 (compact-start)

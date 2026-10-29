@@ -19,7 +19,10 @@
 
 (in-package :lisping)
 
-(declaim (ftype function tui-tool-summary tui-chunk-lines tui-chat-note-new
+(declaim (special *chat-diffs* *chat-diff-show*))
+
+(declaim (ftype function diff-after-result chat-diff-rows chat-call-diff-p
+                tui-tool-summary tui-chunk-lines tui-chat-note-new
                 chunks-text first-line str-truncate layout-leaves panes-layout-now
                 pane-dirty tui-dirty chat-close-run chat-run-rows))
 
@@ -202,7 +205,9 @@ for the scroll marker."
   (when (and (eq *tui* ui) (stringp text))
     (sb-thread:with-recursive-lock (*tui-lock*)
       (let ((call (or (find name *chat-pending* :key #'tcall-name :test #'equal)
-                      (first *chat-pending*))))
+                      (first *chat-pending*)))
+            (diff (ignore-errors (diff-after-result text))))
+        (when (and call diff) (setf (gethash call *chat-diffs*) diff))
         (cond (call
                (setf *chat-pending* (remove call *chat-pending* :count 1)
                      (tcall-result call) text
@@ -273,6 +278,7 @@ arguments and output."
           (when (> total *chat-output-cap*)
             (push (list (list (cons (format nil "      … +~D lines" (- total *chat-output-cap*)) 8)) 6 call)
                   rows)))))
+    (dolist (r (ignore-errors (chat-diff-rows call))) (push r rows))
     (nreverse rows)))
 
 (defun chat-run-names (calls)
@@ -299,7 +305,7 @@ arguments and output."
                                  (when pending (list (cons " …" 3)))))
                 4 run)
           rows)
-    (dolist (c (if (trun-expanded run) calls errs))
+    (dolist (c (if (trun-expanded run) calls (remove-if-not (lambda (c) (or (tcall-error-p c) (chat-call-diff-p c))) calls)))
       (dolist (r (chat-call-rows c)) (push r rows)))
     (nreverse rows)))
 
