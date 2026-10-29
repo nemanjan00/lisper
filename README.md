@@ -55,7 +55,7 @@ k3 is thinking... (context 75,106 tokens, 74,496 cached)
   <- 12 lines
 k3 is thinking... (context 75,506 tokens, 75,008 cached)
 All pieces confirmed. Implementing in dependency order — first the hooks in existing files:
-  -> edit_files: {\"edits\":[{\"new\":\"(defvar *tui-stop-hooks* nil\\n  \\\"Functions run by TUI-STOP before the …
+  -> edit_files: {"edits":[{"new":"(defvar *tui-stop-hooks* nil\n  \"Functions run by TUI-STOP before the …
   edited lisp/tui.lisp, lisp/tui-input.lisp, lisp/panes.lisp (5 edits; Wrote and loaded lisp/tui.lisp, lisp/tui-input.lisp, lisp/panes.lisp; committed together.)
 k3 is thinking... (context 75,730 tokens, 75,264 cached)
 Hooks in. Now the tasks file:
@@ -69,7 +69,7 @@ k3 is thinking... (context 85,469 tokens, 80,896 cached)
 ─ context ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 context: 85k tokens (8% of 1M, 43% of budget)
 +4.4k est since · 130 messages
-rewind e200…e246: DONE (user confirmed \"looks ok\" e249): blank todo+context pa (9.9k)
+rewind e200…e246: DONE (user confirmed "looks ok" e249): blank todo+context pa (9.9k)
 rewind e68…e157: All 4 review todos DONE and archived via todo clear (user sa (15k)
 rewind e17…e26: edit_files verification COMPLETE: (1) write-files-and-load e (450)
 rewind e14…e15: read-file-string is undefined in LISPING (style warning + UN (370)
