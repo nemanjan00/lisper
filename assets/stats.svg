@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="220" viewBox="0 0 1200 220" role="img" aria-label="Measured over one run: 99.7% cache hit, 77.8k fewer tokens per request after one rewind, 5-7k typical context out of 1M, 1 restore needed in 21 rewinds">
+  <defs>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7c5cff"/>
+      <stop offset="0.5" stop-color="#00d4ff"/>
+      <stop offset="1" stop-color="#ff5ca8"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .card { fill: #0b0d17; stroke: #2a2f55; }
+    .num  { font: 800 54px 'Inter', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: url(#accent); }
+    .lbl  { font: 600 16px 'Inter', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #eef0ff; }
+    .sub  { font: 400 13px 'Inter', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #9aa0c8; }
+  </style>
+  <rect width="1200" height="220" rx="20" fill="#070812"/>
+
+  <rect class="card" x="20"  y="20" width="275" height="180" rx="16"/>
+  <rect class="card" x="313" y="20" width="275" height="180" rx="16"/>
+  <rect class="card" x="606" y="20" width="275" height="180" rx="16"/>
+  <rect class="card" x="899" y="20" width="281" height="180" rx="16"/>
+
+  <text class="num" x="157"  y="94" text-anchor="middle">99.7%</text>
+  <text class="lbl" x="157"  y="128" text-anchor="middle">prefix-cache hit</text>
+  <text class="sub" x="157"  y="152" text-anchor="middle">only 1.8M of 50.6M input</text>
+  <text class="sub" x="157"  y="171" text-anchor="middle">tokens were fresh</text>
+
+  <text class="num" x="450"  y="94" text-anchor="middle">−77.8k</text>
+  <text class="lbl" x="450"  y="128" text-anchor="middle">tokens per request</text>
+  <text class="sub" x="450"  y="152" text-anchor="middle">after one rewind (109.6k → 31.8k),</text>
+  <text class="sub" x="450"  y="171" text-anchor="middle">for 20.5k fresh tokens once</text>
+
+  <text class="num" x="743"  y="94" text-anchor="middle">5–7k</text>
+  <text class="lbl" x="743"  y="128" text-anchor="middle">typical working context</text>
+  <text class="sub" x="743"  y="152" text-anchor="middle">of 1M available; it keeps only</text>
+  <text class="sub" x="743"  y="171" text-anchor="middle">what the current task needs</text>
+
+  <text class="num" x="1039" y="94" text-anchor="middle">1 / 21</text>
+  <text class="lbl" x="1039" y="128" text-anchor="middle">restores per rewinds</text>
+  <text class="sub" x="1039" y="152" text-anchor="middle">its own summaries were</text>
+  <text class="sub" x="1039" y="171" text-anchor="middle">almost always enough</text>
+</svg>
