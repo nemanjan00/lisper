@@ -44,6 +44,7 @@
 (load-file "lisp/interrupt.lisp")
 (load-file "lisp/compact.lisp")
 (load-file "lisp/goal.lisp")
+(load-file "lisp/session-cmds.lisp")
 
 ;; Take over the terminal when there is one (no-op otherwise; set
 ;; LISPING_NO_TUI=1 to opt out).
@@ -77,6 +78,7 @@
 ;; /compact [focus]: summarize the whole conversation in one model call.
 (compact-start)
 (goal-start)
+(session-cmds-start)   ; /clear, /new, #shell-command
 
 ;; Interrupt the running turn: Esc Esc, Ctrl-C on an empty input, /stop.
 (interrupt-start)
