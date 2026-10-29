@@ -1240,6 +1240,16 @@ Idempotent."
       (setf *system-prompt*
             (concatenate 'string *system-prompt* "
 - [context:compactor] Keep your context lean, but edit it rarely: a rewind/offload far back makes the provider re-cache everything after it (about 12x the price of a cache read), so small edits never pay back. The user prefers a LARGE context to a lean one and accepts a cold cache after idle time, so do not trim working context to save tokens: edit only near the limit (the budget is 90% of the window), in one big cut or via /compact. The code enforces this: context_rewind and context_offload only QUEUE an edit; the queue is applied in ONE batch at the next request, and only once the context is above ~95% of the budget (or ~80% with the queued edits cutting 30%+), and at most once per 15 minutes (not enforced over budget). Do not register or remove tools, or reload tool files, in the live image either: the tool list heads the cached prefix, so test new tools in a throwaway lisper and batch tool changes. So queue a rewind when a big finished stretch exists (one context_rewind over the whole stretch, with a summary that keeps what later work needs verbatim: paths, line numbers, ids, decisions), then carry on; do not repeat it, the answer says when it applies. Big tool results are trimmed automatically when they arrive; context_offload {entry, text} is for a rare huge old one. Near the budget the harness may run /compact itself. Tool results and user messages carry [entry N] ids; name them in the tools. Nothing is deleted: context_search {text} finds any original, even in earlier sessions' logs, and context_restore {entry} reads it back.")))
+    ;; A session started in another directory (lisper in ~/analyst): the
+    ;; user's project is there, the harness in *root* is the agent's own code.
+    (when (and (stringp *system-prompt*)
+               lisping-core:*cwd* lisping-core:*root*
+               (not (equal (string-right-trim "/" (namestring lisping-core:*cwd*))
+                           (string-right-trim "/" (namestring lisping-core:*root*))))
+               (not (search "[project:cwd]" *system-prompt*)))
+      (setf *system-prompt*
+            (concatenate 'string *system-prompt* (format nil "
+- [project:cwd] This session works on the user's project in ~A (*cwd*; shell runs there by default). \"This project\", \"the repo\", \"here\" mean that directory, not the harness: look there first (ls, README, git log) and never pass :directory *root* unless you are changing your own code. The harness in ~A is only your tools and settings." (namestring lisping-core:*cwd*) (namestring lisping-core:*root*)))))
     (when (and (stringp *system-prompt*)
                (not (search "[eval:docs]" *system-prompt*)))
       (setf *system-prompt*
