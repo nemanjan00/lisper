@@ -1,6 +1,7 @@
 #!/bin/sh
 # Compact PC sensor summary for a :cmd pane (lisp/panes.lisp re-runs it).
 # CPU load/temps, fans, board, NVMe, GPU, memory.  Missing tools are skipped.
+# Pane: "sensors" (:cmd, every 3 s).  Needs lm-sensors; nvidia-smi for the GPU.
 
 bar() {  # bar PERCENT [WIDTH] -> ████░░░░
   awk -v p="${1:-0}" -v w="${2:-10}" 'BEGIN{n=int(p*w/100+0.5); if(n>w)n=w; if(n<0)n=0;
@@ -28,8 +29,8 @@ if command -v sensors >/dev/null 2>&1; then
     /^Composite:/ {gsub(/\+/,"",$2); nvme=$2}
     /RPM/ {fan[++nf]=$1" "$2" RPM"}
     END{
-      if (mb!="" || vrm!="") printf "BOARD board %s  vrm %s\n", mb, vrm
-      if (nvme!="") printf "NVME %s\n", nvme
+      if (mb!="" || vrm!="") printf "MOBO board %s  vrm %s\n", mb, vrm
+      if (nvme!="") printf "NVMe %s\n", nvme
       for(i=1;i<=nf;i++) printf "FAN  %s\n", fan[i]
     }'
 fi
