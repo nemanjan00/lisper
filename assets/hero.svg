@@ -72,7 +72,7 @@
   <!-- code strip -->
   <rect x="300" y="366" width="600" height="42" rx="10" fill="#05060d" stroke="#2a2f55"/>
   <text x="330" y="393" font-family="'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="16" fill="#3ddc97" textLength="420" lengthAdjust="spacing">&gt; (register-tool "my-next-superpower" ...)</text>
-  <rect x="734" y="379" width="9" height="20" fill="#00d4ff">
+  <rect x="760" y="379" width="9" height="20" fill="#00d4ff">
     <animate attributeName="opacity" values="1;0;1" dur="1.1s" repeatCount="indefinite"/>
   </rect>
 </svg>
