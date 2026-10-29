@@ -35,6 +35,7 @@
 (load-file "lisp/mcp.lisp")
 (load-file "lisp/theme.lisp")
 (load-file "lisp/diff.lisp")
+(load-file "lisp/agents.lisp")
 (load-file "lisp/nudge.lisp")
 (load-file "lisp/models.lisp")
 (load-file "lisp/history.lisp")
@@ -77,6 +78,8 @@
 (nudge-start)
 ;; Diffs of file-writing tools under their call (/diff on|off).
 (diff-start)
+;; AGENTS.md from the cwd up to the project root goes into the system prompt.
+(agents-start)
 
 ;; /compact [focus]: summarize the whole conversation in one model call.
 (compact-start)
