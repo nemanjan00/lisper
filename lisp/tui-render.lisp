@@ -733,7 +733,9 @@ drops out, then the right group, rather than overlapping the left."
          (hint (if (tui-ui-prefix ui)
                    "C-b cancel | q quit | r redraw | Left/Right pane | 1-9 pane"
                    "C-b prefix"))
-         (name-seg (list "lisping-ai" 0 2))
+         (name-seg (list (let ((s (or lisping-core:*session* "lisping-ai")))
+                           (if (> (length s) 24) (concatenate 'string (subseq s 0 23) "…") s))
+                         0 2))
          (model-seg (list (if (fboundp 'models-label) (funcall 'models-label) (format nil "~A" *model*)) 0 4))
          (todo-seg (list (format nil "~D todo~:P" (count-if-not #'cdr *todos*)) 7 5))
          (focus-seg (list (format nil "~A" *pane-focus*) 7 0))
