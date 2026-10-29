@@ -67,7 +67,12 @@ TUI-MOUSE until one returns T.")
                  (when (eq *tui* ui) (tui-crash c))))))
   (when (and *tui* (eq *tui* ui) *tui-quit*)
     (setf *tui-quit* nil)
-    (tui-stop)))
+    (tui-stop)
+    ;; C-d / C-b q close the whole harness, not just the screen: save the
+    ;; session, run *before-exit* (children, servers), exit 0 so the
+    ;; supervisor stops too.
+    (unless lisping-core::*test-boot*
+      (lisping-core:quit 0))))
 
 (defun tui-read-key (ui)
   (let ((tty (tui-ui-tty ui)))
