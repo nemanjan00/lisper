@@ -36,6 +36,7 @@
 (load-file "lisp/theme.lisp")
 (load-file "lisp/diff.lisp")
 (load-file "lisp/agents.lisp")
+(load-file "lisp/calls.lisp")
 (load-file "lisp/nudge.lisp")
 (load-file "lisp/models.lisp")
 (load-file "lisp/history.lisp")
